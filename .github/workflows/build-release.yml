@@ -1,0 +1,136 @@
+name: Nova V7.11 Build and Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nova-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout UI-only repository
+        uses: actions/checkout@v4
+
+      - name: Check overlay before downloading official source
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 -m py_compile ui/apply.py scripts/verify_apk.py
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential file git curl maven meson nasm ninja-build pkg-config python3 python3-pip python3-setuptools unzip wget
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager 'platforms;android-37' 'build-tools;37.0.0'
+          curl -fLsS https://storage.googleapis.com/git-repo-downloads/repo -o repo
+          sudo install -m 0755 repo /usr/local/bin/repo
+          if [ -n "${ANDROID_NDK_LATEST_HOME:-}" ]; then
+            echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+            echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          fi
+
+      - name: Download pinned official Nova 6.5.5 sources
+        run: |
+          mkdir nova
+          cd nova
+          repo init -u https://github.com/nova-video-player/aos-AVP -b v6.5.5 -m default.xml
+          mkdir -p .repo/local_manifests
+          cp ../upstream/locked.xml .repo/local_manifests/locked.xml
+          repo sync -j4 --fail-fast
+          test "$(git -C Video rev-parse HEAD)" = e394eda85058d076c1b85adf7b64a788068d2c8a
+
+      - name: Verify upstream and apply only the V7.11 UI overlay
+        run: |
+          python3 ui/apply.py nova/Video --verify-only
+          python3 ui/apply.py nova/Video
+          test -e nova/Video/res/values/nova_ui_override.xml
+
+      - name: Compile one universal no-Amazon release APK
+        run: |
+          cd nova/Video
+          chmod +x gradlew
+          ./gradlew -Puniversal assembleNoamazonRelease --no-daemon --stacktrace
+          cd ../..
+          mkdir -p dist
+          mapfile -t apks < <(find nova/Video/build/outputs/apk/noamazon/release -type f -name '*.apk' | sort)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            printf 'Expected exactly one release APK; got %s\n' "${#apks[@]}"
+            printf '%s\n' "${apks[@]}"
+            exit 1
+          fi
+          cp "${apks[0]}" dist/unsigned.apk
+
+      - name: Sign with private stable key (required for publishing)
+        env:
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$NOVA_KEYSTORE_BASE64" || -z "$NOVA_STORE_PASSWORD" || -z "$NOVA_KEY_ALIAS" || -z "$NOVA_KEY_PASSWORD" ]]; then
+            echo 'PUBLISH_READY=false' >> "$GITHUB_ENV"
+            echo '::warning::Compilation completed, but no APK was published: configure four NOVA signing Secrets as documented in README_CN.md.'
+            exit 0
+          fi
+          set -euo pipefail
+          printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nova-release.jks"
+          chmod 600 "$RUNNER_TEMP/nova-release.jks"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name zipalign | sort -V | tail -n1)"
+          test -x "$SIGNER" && test -x "$ALIGN"
+          "$ALIGN" -p -f 4 dist/unsigned.apk dist/aligned.apk
+          "$SIGNER" sign \
+            --ks "$RUNNER_TEMP/nova-release.jks" \
+            --ks-key-alias "$NOVA_KEY_ALIAS" \
+            --ks-pass env:NOVA_STORE_PASSWORD \
+            --key-pass env:NOVA_KEY_PASSWORD \
+            --out 'dist/Nova Video Player.apk' dist/aligned.apk
+          python3 scripts/verify_apk.py 'dist/Nova Video Player.apk' --apksigner "$SIGNER"
+          rm -f "$RUNNER_TEMP/nova-release.jks" dist/unsigned.apk dist/aligned.apk
+          echo 'PUBLISH_READY=true' >> "$GITHUB_ENV"
+
+      - name: Publish exactly one APK asset to the single rolling Release
+        if: env.PUBLISH_READY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 1
+          if gh release view current >/dev/null 2>&1; then
+            gh release view current --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+              if [ -n "$asset" ]; then gh release delete-asset current "$asset" --yes; fi
+            done
+            gh release upload current 'dist/Nova Video Player.apk' --clobber
+            gh release edit current --title 'Nova Video Player' --notes 'V7.11: official Nova 6.5.5 source + pinned UI overlay. Signed build; uninstall differently signed older builds before installation.'
+          else
+            gh release create current 'dist/Nova Video Player.apk' \
+              --target "$GITHUB_SHA" \
+              --title 'Nova Video Player' \
+              --notes 'V7.11: official Nova 6.5.5 source + pinned UI overlay. Signed build; uninstall differently signed older builds before installation.'
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -f current "$GITHUB_SHA"
+          git push origin +refs/tags/current
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova Video Player.apk'
+          echo 'Published exactly one Release asset: Nova Video Player.apk'

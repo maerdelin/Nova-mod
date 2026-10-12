@@ -1,40 +1,53 @@
-# Nova TV 稳定基准版 V6.3
+# Nova Video Player V7.11 — 唯一维护版本
 
-**当前唯一维护基线：V6.3。** 用户已在蓝叠上确认 V6.3 界面和交互正常，退出时暂未再出现“屡次停止运行”弹窗。以 2026-10-12 的反馈为准；不代表所有 Android TV 设备均已完成测试。
+本 Git 仓库的 `main` **只保留 V7.11 的一套 UI 改动代码**，不再保存 V6.3、V7.1–V7.10 等旧版补丁、测试构建包、APK 或整套官方代码。
 
-本仓库仅保留 V6.3 的最终有效修改，不继续保留早期的 R16/R17/R23、V1–V6.2 实验构建代码。后续功能都应基于本版推进，不回退到曾出现空白或闪退的版本。
+## 目录结构
 
-## 最终功能
-
-- 基于 Nova Video Player **6.5.5** 官方 APK，强制原生 Android TV 界面。
-- 首页仅保留原生一行四卡片：**网络、内部存储、播放列表、首选项**，所有按钮沿用原版点击功能。
-- 保留 Leanback `HEADERS_ENABLED`，仅将 `lb_browse_headers_width` 和 `lb_browse_rows_margin_start` 设为 `0dp`；不使用曾导致空白页的 `HEADERS_DISABLED` / `HEADERS_HIDDEN`。
-- 启动默认焦点位于右侧第一个“网络”卡片，左右切换保持真实卡片焦点；返回首页时重新恢复右侧焦点，隐藏的左栏不能抢焦点。
-- 关闭 `setHeadersTransitionOnBackEnabled`，避免返回键尝试展开零宽 Header。V6.3 的蓝叠退出体验已由使用者确认正常。
-
-## 版本固定校验值
-
-| 项目 | SHA-256 |
-|---|---|
-| 官方基准 `nova(1).apk` | `2912258dafe8e5bb7e057885b7e2228c581d8a30682ced87036ee11db409443e` |
-| **最终可安装 V6.3 APK** | `0978bbf6b8e54ee83fe9c5df221e994c0f3942a574817742f1fda874c7221231` |
-| 最终交付 ZIP | `4848fc0bddd47482d36840ca416f111dda460c38f287ba0ea9c8e2495e44f857` |
-| `classes.dex` | `923c098958b91877f1da7e84c04556b1aa019048d674e208d01bfd8dab6a40ae` |
-| `resources.arsc` | `e6b1e698d366582c9fe4fda32094f945ff70f2aaa61033034da94ee1ae7caa19` |
-| 当前 APK 签名证书 | `665ac18c38c750ad258e769795c73667219229e74971a0422a470d29cf6cf0ec` |
-
-## 重建与验证
-
-本仓库的 `tools/rebuild_unsigned.py` 保存了相对于 **唯一指定的官方 APK** 的精确字节差异，以免把中途失败的构建历史作为后续基础。运行：
-
-```sh
-python3 tools/rebuild_unsigned.py 'nova(1).apk' NovaTV-V6.3-unsigned.apk
+```text
+.github/workflows/build-release.yml   # GitHub Actions 云编译、签名和单 APK Release
+ui/apply.py                           # V7.11 唯一 UI 逻辑补丁，校验上游代码版本
+upstream/locked.xml                   # 锁定官方 Nova 6.5.5 全部 21 个底层源码仓库版本
+scripts/verify_apk.py                 # APK ZIP、classes.dex、签名检查
+tests/test_overlay.py                 # 补丁安全性和清单单元测试
 ```
 
-工具会强制检查官方 APK SHA-256，并生成与稳定版 **逐字节一致的 `classes.dex` 和 `resources.arsc`**。该产物是**未签名 APK**，不能直接安装。须用自己合法持有的签名密钥签名；用新密钥签名不能覆盖现有 V6.3。
+## 当前 UI 修改
 
-**重要：** 最终已签名、经用户验证的安装包存在原 ChatGPT 对话交付附件 `NovaTV_V6_3_ExitCrash_Fix_ZIP.zip` 中。本次 GitHub 连接器仅能上传文本 / Git 对象，无法从本地工作环境直接上传约 30 MB 的 APK 二进制；因此此 Git 记录以精确二进制补丁、校验值及可复现的未签名内容为准，**不虚称 APK 本体已存进仓库**。不上传私有签名密钥。
+- 首页：原生 Android TV 单行网络/内部存储/播放列表/首选项四卡片；支持动态 USB 卡片；保留 Leanback headers enabled 但宽度和偏移 0dp，焦点初始化在网络卡片，返回时不展开左侧栏；隐藏首页搜索图标（保留 Logo）。
+- 网络：保存的快捷方式在前，添加网络地址按钮在后；无快捷方式时只显示一个按钮；保存目录后刷新快捷方式；进入已保存目录时直达内容而不是详情页。
+- 目录：视频点击后直接播放（不跳详情页）；快捷方式显示相对服务器端点的完整多级路径，不改变真实 URI。
+- 协议：WebDAV、SMB 排最前，默认 WebDAV，内部实际协议 ID 正确映射；协议输入框扩大到 160dip。
+- 文案和裁切：浏览网络共享改为添加网络地址；标题取消对齐底部约束，按搜索圆按钮 52dp 的 10% 上移 **5.2dp**。
 
-## 发布原则
+## 云构建说明
 
-今后每次变更均以本版本为唯一基准，测试启动、遥控器焦点、网络 / 本地存储 / 播放列表 / 设置，以及返回首页与退出场景。静态检查通过不能代替蓝叠运行验证。
+GitHub Actions 每次在 `main` 更新或手动运行时会：
+
+1. 使用官方 [Nova Video Player 6.5.5](https://github.com/nova-video-player/aos-AVP/tree/v6.5.5) 的多仓库 `repo` 工具拉取代码。
+2. 使用 `upstream/locked.xml` 固定 21 个项目的精确 Git SHA（不会随官方主分支意外升级）。`ui/apply.py` 校验 10 个 UI 源文件原始 Git blob SHA，任何不匹配立即停止，避免错改底层。
+3. 执行源码级 UI 补丁，然后用 Gradle `-Puniversal assembleNoamazonRelease` 生成一个通用 release APK。
+4. 检查 APK、用你自己的稳定证书签名；仅当签名 Secrets 已配置时，发布到唯一的滚动 Release `current`，资产文件名为 **`Nova Video Player.apk`**；不会额外上传 ZIP / 源码附件 / 第二个 APK。GitHub 自动生成的“Source code (zip/tar.gz)”是平台内置下载入口，无法通过 Release 文件过滤去除。
+
+### 首次配置私有签名（必须）
+
+在仓库 **Settings → Secrets and variables → Actions → New repository secret** 添加这四项：
+
+| Secret | 值 |
+|---|---|
+| `NOVA_KEYSTORE_BASE64` | 本地 `.jks` 文件的 Base64 全文 |
+| `NOVA_STORE_PASSWORD` | keystore 密码 |
+| `NOVA_KEY_ALIAS` | 证书别名 |
+| `NOVA_KEY_PASSWORD` | key 密码 |
+
+Windows PowerShell 生成 Base64：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\\path\\to\\nova-release.jks"))
+```
+
+没有签名密钥时，仅进行 UI 补丁验证及云编译，**不会假装已发布可安装 APK**。不要提交 keystore 或密码到代码仓库。
+
+**关于更新安装：** 本次已验证 V7.11 APK 使用之前的开发签名，当前仓库没有该签名私钥。采用新签名后，**不能直接覆盖安装原版 V7.11**，需要先备份数据、卸载旧包再安装。要保持无缝升级必须使用原证书私钥。
+
+**关于“同一个 APK”：** 这是从固定官方源码重编译的 *源码等效方案*，不是原 V7.11 APK 的字节复制。即便构建成功，也必须在电视/模拟器验证首页焦点、USB、WebDAV/SMB 和字幕/标题显示，不能把静态检查当成运行验收。
