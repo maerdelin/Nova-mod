@@ -165,17 +165,20 @@ def process(path: str, src: str) -> str:
             '            android:layout_width="160dip"', path)
 
     if path.endswith('/MainFragment.java'):
-        # Changing headers state AFTER view creation leaves some real TVs showing
-        # only the title background. Configure the initial state in onCreate.
+        # Leanback creates its RowsSupportFragment without an initial adapter ONLY
+        # when headers are disabled. HEADERS_HIDDEN keeps mCanShowHeaders=true,
+        # leaving scale_frame empty on a real TV when the adapter arrives late.
+        # Set HEADERS_DISABLED before onCreateView (rather than in onViewCreated).
+        # This also prevents focus-induced RecyclerView headers transitions.
         src = replace_one(src,
             '        super.onCreate(savedInstanceState);\n        currentLocale =',
             '        super.onCreate(savedInstanceState);\n'
-            '        setHeadersState(HEADERS_HIDDEN); // Initialize rows-first BEFORE Leanback creates views\n'
+            '        setHeadersState(HEADERS_DISABLED); // Create rows fragment even before adapter exists\n'
             '        currentLocale =', path)
         src = replace_one(src, '        setHeadersState(HEADERS_ENABLED);',
             '        // Header state already configured in onCreate, never reset during view layout.', path)
         src = replace_one(src, '        setHeadersTransitionOnBackEnabled(true);',
-            '        setHeadersTransitionOnBackEnabled(false); // Keep hidden 0dp header from reopening', path)
+            '        setHeadersTransitionOnBackEnabled(false); // Headers disabled permanently: no sidebar or focus transition', path)
         search_start = '        setOnSearchClickedListener(new View.OnClickListener() {'
         search_end = '        if (mActivity != null) setOnItemViewClickedListener'
         pos = src.index(search_start, src.index('    private void setupEventListeners() {'))
@@ -258,7 +261,7 @@ def main() -> None:
             file.write_bytes(output)
         override.write_text('''<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Keep Leanback header container at zero width, with HEADERS_HIDDEN initialized before view creation. -->
+    <!-- Headers are disabled before view creation; keep their unused dock width at 0dp. -->
     <dimen name="lb_browse_headers_width">0dp</dimen>
     <dimen name="lb_browse_rows_margin_start">0dp</dimen>
 </resources>
