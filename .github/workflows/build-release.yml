@@ -1,4 +1,4 @@
-name: Nova V7.11 Build and Release
+name: Nova TV Build and Release
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: nova-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -149,12 +149,12 @@ jobs:
               if [ -n "$asset" ]; then gh release delete-asset current "$asset" --yes; fi
             done
             gh release upload current 'dist/Nova Video Player.apk' --clobber
-            gh release edit current --title 'Nova Video Player' --notes 'V7.11: official Nova 6.5.5 source + pinned UI overlay. Signed build; uninstall differently signed older builds before installation.'
+            gh release edit current --title 'Nova Video Player' --notes 'Nova 14TV startup candidate: official Nova 6.5.5 + V7.11 UI, Leanback headers disabled before view creation. Device testing required; uninstall differently signed builds before installation.'
           else
             gh release create current 'dist/Nova Video Player.apk' \
               --target "$GITHUB_SHA" \
               --title 'Nova Video Player' \
-              --notes 'V7.11: official Nova 6.5.5 source + pinned UI overlay. Signed build; uninstall differently signed older builds before installation.'
+              --notes 'Nova 14TV startup candidate: official Nova 6.5.5 + V7.11 UI, Leanback headers disabled before view creation. Device testing required; uninstall differently signed builds before installation.'
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
