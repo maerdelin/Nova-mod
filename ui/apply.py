@@ -165,6 +165,8 @@ def process(path: str, src: str) -> str:
             '            android:layout_width="160dip"', path)
 
     if path.endswith('/MainFragment.java'):
+        src = replace_one(src, '        setHeadersState(HEADERS_ENABLED);',
+            '        setHeadersState(HEADERS_HIDDEN); // Show rows from initial layout; avoid focus-triggered headers transition on 14TV', path)
         src = replace_one(src, '        setHeadersTransitionOnBackEnabled(true);',
             '        setHeadersTransitionOnBackEnabled(false); // Keep hidden 0dp header from reopening', path)
         search_start = '        setOnSearchClickedListener(new View.OnClickListener() {'
