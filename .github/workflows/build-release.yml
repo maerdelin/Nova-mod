@@ -46,7 +46,10 @@ jobs:
           SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n1)"
           test -x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --licenses > /dev/null || true
-          "$SDK_MANAGER" 'platforms;android-37' 'build-tools;37.0.0'
+          "$SDK_MANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+          # Upstream currently requests preview SDK 37, which is unavailable on stable channel.
+          # Use the stable compile SDK; this does not change runtime min/target SDK.
+          echo 'ANDROID_COMPILE_SDK=36' >> "$GITHUB_ENV"
           curl -fLsS https://storage.googleapis.com/git-repo-downloads/repo -o repo
           sudo install -m 0755 repo /usr/local/bin/repo
           if [ -n "${ANDROID_NDK_LATEST_HOME:-}" ]; then
@@ -69,6 +72,13 @@ jobs:
           python3 ui/apply.py nova/Video --verify-only
           python3 ui/apply.py nova/Video
           test -e nova/Video/res/values/nova_ui_override.xml
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('nova/Video/build.gradle')
+          data = p.read_text()
+          assert data.count('compileSdk = 37') == 1, 'Upstream compileSdk anchor changed'
+          p.write_text(data.replace('compileSdk = 37', 'compileSdk = 36'))
+          PY
 
       - name: Compile one universal no-Amazon release APK
         run: |
