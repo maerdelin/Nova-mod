@@ -137,6 +137,15 @@ jobs:
           rm -f "$KEYSTORE" dist/unsigned.apk dist/aligned.apk
           echo 'PUBLISH_READY=true' >> "$GITHUB_ENV"
 
+      - name: Upload signed APK for testing even if Release publishing fails
+        if: env.PUBLISH_READY == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-TV-14TV-Startup-Test
+          path: dist/Nova Video Player.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish exactly one APK asset to the single rolling Release
         if: env.PUBLISH_READY == 'true'
         env:
