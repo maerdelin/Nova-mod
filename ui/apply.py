@@ -165,8 +165,15 @@ def process(path: str, src: str) -> str:
             '            android:layout_width="160dip"', path)
 
     if path.endswith('/MainFragment.java'):
+        # Changing headers state AFTER view creation leaves some real TVs showing
+        # only the title background. Configure the initial state in onCreate.
+        src = replace_one(src,
+            '        super.onCreate(savedInstanceState);\n        currentLocale =',
+            '        super.onCreate(savedInstanceState);\n'
+            '        setHeadersState(HEADERS_HIDDEN); // Initialize rows-first BEFORE Leanback creates views\n'
+            '        currentLocale =', path)
         src = replace_one(src, '        setHeadersState(HEADERS_ENABLED);',
-            '        setHeadersState(HEADERS_HIDDEN); // Show rows from initial layout; avoid focus-triggered headers transition on 14TV', path)
+            '        // Header state already configured in onCreate, never reset during view layout.', path)
         src = replace_one(src, '        setHeadersTransitionOnBackEnabled(true);',
             '        setHeadersTransitionOnBackEnabled(false); // Keep hidden 0dp header from reopening', path)
         search_start = '        setOnSearchClickedListener(new View.OnClickListener() {'
@@ -251,7 +258,7 @@ def main() -> None:
             file.write_bytes(output)
         override.write_text('''<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Keep Leanback HEADERS_ENABLED, but give its sidebar zero width. -->
+    <!-- Keep Leanback header container at zero width, with HEADERS_HIDDEN initialized before view creation. -->
     <dimen name="lb_browse_headers_width">0dp</dimen>
     <dimen name="lb_browse_rows_margin_start">0dp</dimen>
 </resources>
