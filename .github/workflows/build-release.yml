@@ -71,7 +71,7 @@ jobs:
         run: |
           mkdir nova
           cd nova
-          repo init -u https://github.com/nova-video-player/aos-AVP -b v6.5.5 -m default.xml
+          repo init -u https://github.com/nova-video-player/aos-AVP -b refs/tags/v6.5.5 -m default.xml
           mkdir -p .repo/local_manifests
           cp ../upstream/locked.xml .repo/local_manifests/locked.xml
           repo sync -j4 --fail-fast
