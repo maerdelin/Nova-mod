@@ -1,4 +1,4 @@
-name: Nova V7.14 Exact Tested APK
+name: Nova V7.14 Four Fixed Home Cards (ARM32)
 
 on:
   push:
@@ -13,22 +13,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  recover-verify-publish:
-    name: Reconstruct and cryptographically verify 14TV-tested V7.14
+  v714-fourcards:
+    name: Preserve tested V7.14 and remove dynamic fifth card
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Checkout ONLY verified V7.14 rebuild code
+      - name: Checkout clean V7.14 reference and one-method fix
         uses: actions/checkout@v4
 
-      - name: Install required reconstruction tool
+      - name: Validate reference and patch tools
         run: |
           set -euo pipefail
           if ! command -v zstd; then sudo apt-get update && sudo apt-get install -y zstd; fi
           python3 -m unittest discover -s tests -v
-          python3 -m py_compile scripts/v714_exact.py
+          python3 -m py_compile scripts/v714_exact.py scripts/four_cards.py scripts/verify_four_cards.py
 
-      - name: Download exactly pinned official 6.5.5 armeabi-v7a APK
+      - name: Download pinned official Nova 6.5.5 ARM32 baseline
         run: |
           set -euo pipefail
           mkdir -p inputs dist
@@ -37,56 +37,95 @@ jobs:
             'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-armeabi-v7a-release.apk'
           echo '2912258dafe8e5bb7e057885b7e2228c581d8a30682ced87036ee11db409443e  inputs/official.apk' | sha256sum --check --strict
 
-      - name: Reconstruct byte-identical V7.14 from machine-level changes
+      - name: First reconstruct original tested V7.14 byte for byte
         run: |
           set -euo pipefail
           python3 scripts/v714_exact.py inputs/official.apk dist/NovaTV_V7_14_14TV_Exact.apk
           echo 'c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff  dist/NovaTV_V7_14_14TV_Exact.apk' | sha256sum --check --strict
           test "$(stat -c %s dist/NovaTV_V7_14_14TV_Exact.apk)" -eq 29767890
+          python3 -m unittest discover -s tests -v
 
-      - name: Verify exact reference bytes and embedded original signing block
+      - name: Apply only the non-scraped dynamic card suppression
         run: |
           set -euo pipefail
-          # This tested APK has no v1 JAR manifest; the runner's apksigner
-          # rejects it with "Missing META-INF/MANIFEST.MF". Do not re-sign,
-          # silently mutate or incorrectly claim apksigner verification.
-          # Exact SHA-256 ensures BOTH the archived contents and the original
-          # signing block are identical to the user-tested reference.
-          python3 - <<'PY'
-          import hashlib, zipfile
-          from pathlib import Path
-          p=Path('dist/NovaTV_V7_14_14TV_Exact.apk')
-          raw=p.read_bytes()
-          assert len(raw)==29767890
-          assert hashlib.sha256(raw).hexdigest()=='c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff'
-          with zipfile.ZipFile(p) as z:
-              assert len(z.infolist())==1937
-              assert z.testzip() is None
-          assert b'APK Sig Block 42' in raw, 'Original APK signing block missing'
-          print('PASS: byte-identical tested APK; original signing block present; ZIP integrity intact')
-          print('NOTE: apksigner on this historic baseline reports Missing META-INF/MANIFEST.MF; original certificate validation not asserted.')
-          PY
+          python3 scripts/four_cards.py dist/NovaTV_V7_14_14TV_Exact.apk dist/fourcards-unsigned.apk
+          python3 scripts/verify_four_cards.py dist/NovaTV_V7_14_14TV_Exact.apk dist/fourcards-unsigned.apk
 
-      - name: Publish only the exact tested 32-bit V7.14 APK
+      - name: Zipalign, sign new test APK and verify signature
+        env:
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name zipalign | sort -V | tail -n1)"
+          test -x "$SIGNER" && test -x "$ALIGN"
+          KEYSTORE="$RUNNER_TEMP/nova-fourcard-test.jks"
+          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
+            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+            SIGNING_MODE='configured stable key'
+            echo 'Using configured repository signing certificate.'
+          elif [[ -n "$NOVA_KEYSTORE_BASE64" || -n "$NOVA_STORE_PASSWORD" || -n "$NOVA_KEY_ALIAS" || -n "$NOVA_KEY_PASSWORD" ]]; then
+            echo '::error::Some NOVA signing secrets are present but not all four. Refusing partial signing setup.'
+            exit 1
+          else
+            # Ephemeral certificate ensures this test APK is installable, but
+            # cannot upgrade the old tested version without uninstalling first.
+            SIGNING_MODE='NEW test certificate; uninstall previous signed Nova first'
+            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+            NOVA_KEY_ALIAS='nova-v714-fourcard-test'
+            keytool -genkeypair -noprompt -v -keystore "$KEYSTORE" \
+              -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 \
+              -dname 'CN=Nova 14TV Four Card Test, O=Nova Mod Testing' \
+              -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD" >/dev/null
+            echo '::warning::Generated new temporary signing certificate; this APK requires uninstalling previous differently signed Nova first.'
+          fi
+          chmod 600 "$KEYSTORE"
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          "$ALIGN" -p -f 4 dist/fourcards-unsigned.apk dist/fourcards-aligned.apk
+          "$SIGNER" sign \
+            --min-sdk-version 23 \
+            --v1-signing-enabled true --v2-signing-enabled true \
+            --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
+            --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
+            --out dist/NovaTV_V7_14_4Card_Test.apk dist/fourcards-aligned.apk
+          "$SIGNER" verify --verbose --print-certs dist/NovaTV_V7_14_4Card_Test.apk
+          python3 scripts/verify_four_cards.py dist/NovaTV_V7_14_14TV_Exact.apk dist/NovaTV_V7_14_4Card_Test.apk
+          echo "NOVA_SIGN_MODE=$SIGNING_MODE" >> "$GITHUB_ENV"
+          sha256sum dist/NovaTV_V7_14_4Card_Test.apk
+          rm -f "$KEYSTORE" dist/fourcards-unsigned.apk dist/fourcards-aligned.apk
+
+      - name: Preserve signed test APK as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-V7.14-FourCards-ARM32-Signed
+          path: dist/NovaTV_V7_14_4Card_Test.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish exactly one signed four-card APK in Release
         env:
           GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
           GH_REPO: maerdelin/Nova-mod
         run: |
           set -euo pipefail
-          APK='dist/NovaTV_V7_14_14TV_Exact.apk'
-          NOTES='EXACT byte-for-byte reproduction of the V7.14 APK tested on 14TV. SHA-256: c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff. Android armeabi-v7a (32-bit) ONLY; NOT universal. 29,767,890 bytes. Regenerated from official Nova 6.5.5 using pinned machine-level patches and preserves the original tested signing block. This is a reproducible binary reconstruction, not a claim to recover private handwritten source or a newly Gradle-compiled APK. Do not install on unsupported x86-only devices.'
+          APK='dist/NovaTV_V7_14_4Card_Test.apk'
+          test -s "$APK"
+          NOTES="V7.14.1 ARM32 TEST — original 29,767,890-byte 14TV-verified V7.14 reconstructed with identical SHA-256, then one method is changed: MainFragment.updateNonScrapedVideosVisibility returns immediately so media scans cannot append the fifth Non-Scraped Videos tile. The four accepted home tiles, V7.14 boot/focus, network, file browsing, WebDAV and all other archived contents are retained; checked bytewise. Signed APK passed Android apksigner verification. Signing mode: $NOVA_SIGN_MODE. This change is NOT yet 14TV smoke-tested. This is an ARM32 testing APK, not Universal or x86."
           if gh release view current >/dev/null 2>&1; then
             gh release upload current "$APK" --clobber
             gh release view current --json assets --jq '.assets[].name' | while IFS= read -r name; do
-              if [ -n "$name" ] && [ "$name" != 'NovaTV_V7_14_14TV_Exact.apk' ]; then
+              if [ -n "$name" ] && [ "$name" != 'NovaTV_V7_14_4Card_Test.apk' ]; then
                 gh release delete-asset current "$name" --yes
               fi
             done
-            gh release edit current --title 'Nova V7.14 (14TV-tested exact 32-bit APK)' --notes "$NOTES"
+            gh release edit current --title 'Nova TV V7.14.1 Four Fixed Cards (ARM32 Test)' --notes "$NOTES"
           else
             gh release create current "$APK" \
-              --title 'Nova V7.14 (14TV-tested exact 32-bit APK)' --notes "$NOTES"
+              --title 'Nova TV V7.14.1 Four Fixed Cards (ARM32 Test)' --notes "$NOTES"
           fi
-          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'NovaTV_V7_14_14TV_Exact.apk'
-          echo 'PASS: Published exact 14TV-tested V7.14 APK to Release current.'
-          gh release view current --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'NovaTV_V7_14_4Card_Test.apk'
+          gh release view current --json url,assets --jq '{url:.url, assets:[.assets[].name]}'
