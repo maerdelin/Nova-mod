@@ -2,7 +2,7 @@
 """Surgical 14TV V7.14 home fix: never add the fifth Non-Scraped Videos card.
 
 Takes ONLY the byte-for-byte authenticated 14TV V7.14 reference APK. Changes
-one instruction in MainFragment.updateNonScrapedVideosVisibility to return-void,
+only the two bytes of the existing if-lez decision in MainFragment.updateNonScrapedVideosVisibility to an unconditional goto/16 with the same target (the original remove-card code path),
 recomputes DEX header SHA-1 and Adler-32, and repacks an UNSIGNED APK for
 fresh Android signing. All other DEX instruction bytes, APK entry payloads,
 resources and network/storage behaviors are preserved.
@@ -29,7 +29,11 @@ CODE_ITEM_OFFSET = 4139156
 INSTRUCTION_OFFSET = CODE_ITEM_OFFSET + 16
 EXPECTED_CODE_HEADER = (7, 2, 4, 0, 97)
 EXPECTED_INSTRUCTIONS_PREFIX = bytes.fromhex('7110db4706000a065450f95e54510a5f')
-RETURN_VOID = b'\x0e\x00'
+BRANCH_CODE_UNIT = 36
+EXPECTED_IF_LEZ = bytes.fromhex('3d 06 29 00')  # if-lez v6, +41 code units
+HIDE_BY_GOTO = bytes.fromhex('29 00 29 00')    # goto/16 +41, targets the same existing removal block
+REMOVE_BLOCK_UNIT = 77
+REMOVE_BLOCK_PREFIX = bytes.fromhex('72 10 7e db 01 00')  # original logger call at start of removal block
 
 
 def h256(blob: bytes) -> str:
@@ -71,14 +75,19 @@ def patch_dex(dex: bytes) -> bytes:
     assert dex[INSTRUCTION_OFFSET:INSTRUCTION_OFFSET + len(EXPECTED_INSTRUCTIONS_PREFIX)] == EXPECTED_INSTRUCTIONS_PREFIX
 
     fixed = bytearray(dex)
-    fixed[INSTRUCTION_OFFSET:INSTRUCTION_OFFSET+2] = RETURN_VOID
+    branch_at = INSTRUCTION_OFFSET + BRANCH_CODE_UNIT * 2
+    remove_at = INSTRUCTION_OFFSET + REMOVE_BLOCK_UNIT * 2
+    assert dex[branch_at:branch_at+4] == EXPECTED_IF_LEZ, 'Unexpected original non-scraped count branch'
+    assert BRANCH_CODE_UNIT + struct.unpack('<h', EXPECTED_IF_LEZ[2:4])[0] == REMOVE_BLOCK_UNIT
+    assert dex[remove_at:remove_at+len(REMOVE_BLOCK_PREFIX)] == REMOVE_BLOCK_PREFIX, 'Removal target has changed'
+    fixed[branch_at:branch_at+4] = HIDE_BY_GOTO
     fixed[12:32] = hashlib.sha1(fixed[32:]).digest()
     struct.pack_into('<I', fixed, 8, zlib.adler32(fixed[12:]) & 0xffffffff)
     result = bytes(fixed)
-    assert result[INSTRUCTION_OFFSET:INSTRUCTION_OFFSET + 2] == RETURN_VOID
+    assert result[branch_at:branch_at + 4] == HIDE_BY_GOTO
     # All other method/DEX data is byte-identical to V7.14.
-    assert result[32:INSTRUCTION_OFFSET] == dex[32:INSTRUCTION_OFFSET]
-    assert result[INSTRUCTION_OFFSET+2:] == dex[INSTRUCTION_OFFSET+2:]
+    assert result[32:branch_at] == dex[32:branch_at]
+    assert result[branch_at+4:] == dex[branch_at+4:]
     assert hashlib.sha1(result[32:]).digest() == result[12:32]
     assert zlib.adler32(result[12:]) & 0xffffffff == struct.unpack_from('<I',result,8)[0]
     return result
@@ -110,8 +119,8 @@ def rebuild_unsigned(reference:Path, output:Path) -> None:
             if name!='classes.dex':
                 assert test.read(name)==ref.read(name),f'Unexpected change to {name}'
         assert test.read('classes.dex')==patch_dex(ref.read('classes.dex'))
-    print('PASS: original V7.14 contents retained; only MainFragment.updateNonScrapedVideosVisibility() returns early')
-    print('PASS: no fifth Non-Scraped Videos card is added during media scans')
+    print('PASS: original V7.14 contents retained; only MainFragment non-scraped card's conditional switches to the pre-existing removal branch')
+    print('PASS: count check, adapter setup, and existing remove-card method are preserved')
     print('UNSIGNED OUTPUT:',output,'bytes=',output.stat().st_size,'sha256=',h256(output.read_bytes()))
 
 
