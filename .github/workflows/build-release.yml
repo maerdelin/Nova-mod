@@ -169,13 +169,8 @@ jobs:
             gh release edit current --title 'Nova Video Player' --notes 'V7.14 source rebuild: official Nova 6.5.5, 14TV Rows Fragment bootstrap and focus guard, approved V7.11 UI. Original patched V7.14 APK was tested on 14TV; source rebuild still requires testing.'
           else
             gh release create current 'dist/Nova Video Player.apk' \
-              --target "$GITHUB_SHA" \
               --title 'Nova Video Player' \
               --notes 'V7.14 source rebuild: official Nova 6.5.5, 14TV Rows Fragment bootstrap and focus guard, approved V7.11 UI. Original patched V7.14 APK was tested on 14TV; source rebuild still requires testing.'
           fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -f current "$GITHUB_SHA"
-          git push origin +refs/tags/current
-          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova Video Player.apk'
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova.Video.Player.apk'
           echo 'Published exactly one Release asset: Nova Video Player.apk'
