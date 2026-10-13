@@ -1,0 +1,214 @@
+{
+  "version": "Nova TV V7.14 14TV tested reference",
+  "user_tested_apk": "NovaTV_V7_14_Rows_Fragment_Fix_Test.apk",
+  "reference_size": 29767890,
+  "reference_sha256": "c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff",
+  "official_source_name": "nova(1).apk",
+  "official_source_size": 29927845,
+  "official_source_sha256": "2912258dafe8e5bb7e057885b7e2228c581d8a30682ced87036ee11db409443e",
+  "modified_zip_entries": {
+    "classes.dex": {
+      "from": "8312bf151b722f7b4ca667a08f502028d424a2dceb36c3c476b4aa2862293e9e",
+      "to": "8e29be5b361d21256f7c32e33b35d9ddfe3916454713762573440f3043da4a3d",
+      "size_old": 9558648,
+      "size_v714": 9558972
+    },
+    "res/2Z.xml": {
+      "from": "6d0d3ae853e6c86517ec823743e85419cb889ca5fb3fb6ef275cad97dbc4b527",
+      "to": "aa0d3a905234def6068f31cd226cffc01086d32c0f64e9d32485af0f3481bb61",
+      "size_old": 2836,
+      "size_v714": 2836
+    },
+    "res/Bq.xml": {
+      "from": "bb47ceadeaf794394054c3a9f0ceb5a6f13c1d398c6a618c7d074e890a23e04d",
+      "to": "765f7ce2c3e79aa6af2ca67a82502e2a2f43ef661834670f39706e484d68be5a",
+      "size_old": 4964,
+      "size_v714": 4964
+    },
+    "resources.arsc": {
+      "from": "f6d8a8f0f53d87cb1ce4b7302440eed1ed983b96ba4cdc5f0b37d16cd84c1b79",
+      "to": "b269f04b58158a92037df0d0ea6a7e9a94ec92e33aa22141f483d985bf567079",
+      "size_old": 3926508,
+      "size_v714": 3926500
+    }
+  },
+  "modified_dex_methods": [
+    {
+      "method_id": 12824,
+      "signature": "Lcom/archos/filecorelibrary/localstorage/JavaFile2;->getName",
+      "original_instruction_units": 3,
+      "verified_instruction_units": 57,
+      "original_instructions_sha256": "c16e6d44f292d97edc28fa8a3a779caf0b1e781d817f8e5cd92ec938a033eb2b",
+      "verified_instructions_sha256": "335d91dcd1e605d678e391bfbb98e1102a7c59a89399f45bbdc2ac153a278c77"
+    },
+    {
+      "method_id": 15899,
+      "signature": "Lcom/archos/mediacenter/video/UiChoiceDialog;->applicationIsInLeanbackMode",
+      "original_instruction_units": 115,
+      "verified_instruction_units": 115,
+      "original_instructions_sha256": "43dc5c66737144b7be485456235e7c4c023cfe1ae95e3e01aea889fd35a408cd",
+      "verified_instructions_sha256": "9da306889daba39e691b720439cce9fcb1111b90c3ac5cfdec9ac7afc62b0f1d"
+    },
+    {
+      "method_id": 19448,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment$MainViewClickedListener;->onItemClicked",
+      "original_instruction_units": 560,
+      "verified_instruction_units": 560,
+      "original_instructions_sha256": "6ab7ff0b88d87934592010c1189945d4ae75f682a2dcf2e05f7f49486bf54822",
+      "verified_instructions_sha256": "7bd9269db116b439247493bf6be266d19069b254a07b4a5d4ea60950fb4cf74e"
+    },
+    {
+      "method_id": 19458,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment;->addRow",
+      "original_instruction_units": 13,
+      "verified_instruction_units": 13,
+      "original_instructions_sha256": "1b74101cb81434f1c999ba2b69c9c7e4649393c8a5b5f73fa3165acbf0e37898",
+      "verified_instructions_sha256": "0ae9ead0f1c6f55b15d67d4ea7033f6117332f9f840064520ac54807aba01a52"
+    },
+    {
+      "method_id": 19477,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment;->lambda$new$2",
+      "original_instruction_units": 4,
+      "verified_instruction_units": 4,
+      "original_instructions_sha256": "6cc11c7c94afedfb21fe9117365ad861892dc0842cc9a889303c75f6a0709727",
+      "verified_instructions_sha256": "211b6c9eb4e14adedaa0afa1b6eb499358b4e2db0286aead3da96e6a672cc32c"
+    },
+    {
+      "method_id": 19493,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment;->loadRows",
+      "original_instruction_units": 1096,
+      "verified_instruction_units": 1096,
+      "original_instructions_sha256": "3b4bcc8257cb360c67a4e1805c6699fd6d23dc0492092efaaa5c79df7cda73b6",
+      "verified_instructions_sha256": "ca13a3c7cd14aba4bf33ab08d4986659eb589ba8301b44400cb9a62bb94ee779"
+    },
+    {
+      "method_id": 19505,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment;->onViewCreated",
+      "original_instruction_units": 485,
+      "verified_instruction_units": 485,
+      "original_instructions_sha256": "cf8aa63fccccb7f1ca47a726324d40702c6492f8f7cd60bdc9c79dc4b8c8f477",
+      "verified_instructions_sha256": "24ee2418d722bd2362f435517e0dc20dbe6732411f45a5f16362c746b180dc86"
+    },
+    {
+      "method_id": 19521,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment;->setupEventListeners",
+      "original_instruction_units": 28,
+      "verified_instruction_units": 28,
+      "original_instructions_sha256": "a1047bc61e30de6484c932a476d38dea6a00fc545af8c010f4a5346258c8610a",
+      "verified_instructions_sha256": "ab74407782f292ae52142dcc858180ad48570f8f47ab69feb7d6c6903c2d66f2"
+    },
+    {
+      "method_id": 19534,
+      "signature": "Lcom/archos/mediacenter/video/leanback/MainFragment;->updateUsbAndSdcardVisibility",
+      "original_instruction_units": 324,
+      "verified_instruction_units": 324,
+      "original_instructions_sha256": "ebf5c58b2b01bef9145c9b81f69a3544e517dabe87d5eac2c5389ec86b2ed350",
+      "verified_instructions_sha256": "2f1f2f55a25cc36dc00826631c776d440c559c052bc5154f70a14e32a0625e39"
+    },
+    {
+      "method_id": 19644,
+      "signature": "Lcom/archos/mediacenter/video/leanback/adapter/GenericNetworkShortcutMapper;->bind",
+      "original_instruction_units": 39,
+      "verified_instruction_units": 39,
+      "original_instructions_sha256": "5af506e401673b3d8a2dd3c8565b18144feed714bb6f3d7e65226636ad23c69e",
+      "verified_instructions_sha256": "34522f9fe242b477773155a99507f78b5edd21fd156dff46dcd0c02bccbe2f14"
+    },
+    {
+      "method_id": 20632,
+      "signature": "Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;->onListingUpdate",
+      "original_instruction_units": 22,
+      "verified_instruction_units": 88,
+      "original_instructions_sha256": "af8317abcb587f00bb2eceff0c0235ca31711b02d4d150b9813aac79e0754f12",
+      "verified_instructions_sha256": "0dd72f8740f354b0cb4d222111d540ffd01f42a64e5eb70f9071e2cf3721064b"
+    },
+    {
+      "method_id": 20640,
+      "signature": "Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;->openDetailsActivity",
+      "original_instruction_units": 105,
+      "verified_instruction_units": 105,
+      "original_instructions_sha256": "ce8be01f63a423436d035d03865252a2b3e54faa4eb583b6b95399830b0da883",
+      "verified_instructions_sha256": "78e9322312024d2c5c87aca27e725ab22ccdd77a1537458c79690768dae65bc0"
+    },
+    {
+      "method_id": 20887,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$1;->onItemClicked",
+      "original_instruction_units": 449,
+      "verified_instruction_units": 449,
+      "original_instructions_sha256": "a0d166da2afa17f8832da9ffe79e26192e1cc29cd331a8eff93d83ad5141ef76",
+      "verified_instructions_sha256": "78fca97fb6653817a672c7b29ee72adaf8f25ebd93b9ea46d1183324569f7c10"
+    },
+    {
+      "method_id": 20906,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask;->lambda$execute$0",
+      "original_instruction_units": 134,
+      "verified_instruction_units": 134,
+      "original_instructions_sha256": "4cb1b4f81172442fbd3548c94fb6c477a718738dd4fd24026e08100f8a619510",
+      "verified_instructions_sha256": "86c4cfd0f2fc543489f4b120dab6a3298311b6130597e98865a7ac9cd28853bf"
+    },
+    {
+      "method_id": 20913,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$ShortcutsLoaderTask;->execute",
+      "original_instruction_units": 16,
+      "verified_instruction_units": 16,
+      "original_instructions_sha256": "7f424f01a2204cb1eac18d4445791c8b4e60fbc7c44cf0dc6a8193a6c000fcf8",
+      "verified_instructions_sha256": "ddf85bb1c4eec161ade630b1299f79f05596e0001538ffcfc51ab3cad577a545"
+    },
+    {
+      "method_id": 20926,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment;->loadRows",
+      "original_instruction_units": 206,
+      "verified_instruction_units": 206,
+      "original_instructions_sha256": "66891025e3e816dbd58cc0fad1affee9f7f4652d155ddd8e5183f0bca3845aac",
+      "verified_instructions_sha256": "9519ea4e6117804cc4ed0a34f69b59c4a3d465ce882ff168fecdd4b5c6def66b"
+    },
+    {
+      "method_id": 20930,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment;->onCreate",
+      "original_instruction_units": 60,
+      "verified_instruction_units": 60,
+      "original_instructions_sha256": "fb929c4a51fe08a35e4b2605f40723213b85e4a8d6a6b2793c0d7dc25c48aede",
+      "verified_instructions_sha256": "84dfe5e3e0c4377af171087aac9e329a35801acf7d02c36673f5c7354cb75786"
+    },
+    {
+      "method_id": 20934,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment;->onResume",
+      "original_instruction_units": 68,
+      "verified_instruction_units": 68,
+      "original_instructions_sha256": "9baba9525a11c83013d6f16bf38e95a09310ba58870607a68b0251c2006289a1",
+      "verified_instructions_sha256": "5940e7b7a5c6fed01b36be280944ecae82f6cf6c8b074ba3383465154ae650d6"
+    },
+    {
+      "method_id": 20952,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkServerCredentialsDialog$1;->onItemSelected",
+      "original_instruction_units": 46,
+      "verified_instruction_units": 46,
+      "original_instructions_sha256": "a7518e23000311680fcdfec677fd282741b8e2c704a00e07c499768dfa653cb2",
+      "verified_instructions_sha256": "f865e04a0b019596138da476f1403206773cc1a2a8a70ba90690677792505e20"
+    },
+    {
+      "method_id": 20957,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkServerCredentialsDialog$3;->onClick",
+      "original_instruction_units": 712,
+      "verified_instruction_units": 712,
+      "original_instructions_sha256": "29329b7a71e38aaddbfee16c377fc1d28be66b41c09057a2af9b42fc2b3eaab4",
+      "verified_instructions_sha256": "167c109357c59c830cc0e6cc748b06be0c5413ac49e1f95e1e884597c4c3f32b"
+    },
+    {
+      "method_id": 20972,
+      "signature": "Lcom/archos/mediacenter/video/leanback/network/NetworkServerCredentialsDialog;->onCreateDialog",
+      "original_instruction_units": 522,
+      "verified_instruction_units": 522,
+      "original_instructions_sha256": "82ec1547f557ca1bdcb3a0127349d298949acea6526c91425ec928bb43f81a0f",
+      "verified_instructions_sha256": "11a31f39f1f88945484b1fb93224a7878866234a32d1544db802ec67a3d42826"
+    },
+    {
+      "method_id": 53542,
+      "signature": "Loe;->f",
+      "original_instruction_units": 101,
+      "verified_instruction_units": 101,
+      "original_instructions_sha256": "33ab7604cbedb6b42bf0faf5c62296aaf9dd000aa3550e3beb45d71a6c80af76",
+      "verified_instructions_sha256": "dd0bc4c8109d2eb11f5b7f7244681fd4d8bd0535a7861de054e4e4782f0fc2d9"
+    }
+  ],
+  "description": "Machine-level parity manifest, compared against the exact previously tested APK. Full original Java source is not recoverable losslessly from an APK."
+}

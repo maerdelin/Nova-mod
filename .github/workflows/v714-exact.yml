@@ -1,0 +1,77 @@
+name: Nova V7.14 Exact Tested APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nova-v714-exact-release
+  cancel-in-progress: false
+
+jobs:
+  recover-verify-publish:
+    name: Reconstruct and cryptographically verify 14TV-tested V7.14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout ONLY verified V7.14 rebuild code
+        uses: actions/checkout@v4
+
+      - name: Install required reconstruction tool
+        run: |
+          set -euo pipefail
+          if ! command -v zstd; then sudo apt-get update && sudo apt-get install -y zstd; fi
+          python3 -m unittest discover -s tests -v
+          python3 -m py_compile scripts/v714_exact.py
+
+      - name: Download exactly pinned official 6.5.5 armeabi-v7a APK
+        run: |
+          set -euo pipefail
+          mkdir -p inputs dist
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
+            --output inputs/official.apk \
+            'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-armeabi-v7a-release.apk'
+          echo '2912258dafe8e5bb7e057885b7e2228c581d8a30682ced87036ee11db409443e  inputs/official.apk' | sha256sum --check --strict
+
+      - name: Reconstruct byte-identical V7.14 from machine-level changes
+        run: |
+          set -euo pipefail
+          python3 scripts/v714_exact.py inputs/official.apk dist/NovaTV_V7_14_14TV_Exact.apk
+          echo 'c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff  dist/NovaTV_V7_14_14TV_Exact.apk' | sha256sum --check --strict
+          test "$(stat -c %s dist/NovaTV_V7_14_14TV_Exact.apk)" -eq 29767890
+
+      - name: Validate original 14TV-tested APK signature (no new signing key)
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          test -x "$SIGNER"
+          "$SIGNER" verify --verbose --print-certs dist/NovaTV_V7_14_14TV_Exact.apk
+          echo 'PASS: Android signature intact and reference SHA256 exact.'
+
+      - name: Publish only the exact tested 32-bit V7.14 APK
+        env:
+          GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
+          GH_REPO: maerdelin/Nova-mod
+        run: |
+          set -euo pipefail
+          APK='dist/NovaTV_V7_14_14TV_Exact.apk'
+          NOTES='EXACT byte-for-byte reproduction of the V7.14 APK tested on 14TV. SHA-256: c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff. Android armeabi-v7a (32-bit) ONLY; NOT universal. 29,767,890 bytes. Regenerated from official Nova 6.5.5 using pinned machine-level patches and preserves the original tested signing block. This is a reproducible binary reconstruction, not a claim to recover private handwritten source or a newly Gradle-compiled APK. Do not install on unsupported x86-only devices.'
+          if gh release view current >/dev/null 2>&1; then
+            gh release upload current "$APK" --clobber
+            gh release view current --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              if [ -n "$name" ] && [ "$name" != 'NovaTV_V7_14_14TV_Exact.apk' ]; then
+                gh release delete-asset current "$name" --yes
+              fi
+            done
+            gh release edit current --title 'Nova V7.14 (14TV-tested exact 32-bit APK)' --notes "$NOTES"
+          else
+            gh release create current "$APK" \
+              --title 'Nova V7.14 (14TV-tested exact 32-bit APK)' --notes "$NOTES"
+          fi
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'NovaTV_V7_14_14TV_Exact.apk'
+          echo 'PASS: Published exact 14TV-tested V7.14 APK to Release current.'
+          gh release view current --json url,assets --jq '{url: .url, assets: [.assets[].name]}'

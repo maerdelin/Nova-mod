@@ -1,11 +1,7 @@
-# Official sources are downloaded by CI. Keep only the UI overlay here.
-/nova/
-/out/
-/dist/
+dist/
+inputs/
 *.apk
-*.aab
 *.jks
 *.keystore
-keystore.properties
 __pycache__/
 *.pyc
