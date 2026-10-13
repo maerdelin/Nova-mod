@@ -53,6 +53,7 @@ jobs:
       - name: Publish APK as sole asset on current Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: maerdelin/Nova-mod
         run: |
           set -euo pipefail
           APK='dist/Nova Video Player.apk'
