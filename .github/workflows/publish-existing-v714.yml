@@ -1,0 +1,70 @@
+name: Publish existing signed Nova V7.14 APK
+
+# Fast path reuses the exact signed APK produced by the completed V7.14 build.
+# Future source pushes continue through build-release.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-existing-v714.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: nova-v714-artifact-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download signed APK from completed V7.14 source build
+        uses: actions/download-artifact@v4
+        with:
+          name: Nova-TV-V7.14-Source-Build
+          run-id: 38338896424
+          github-token: ${{ github.token }}
+          path: dist
+
+      - name: Verify downloaded release APK and Android signature
+        run: |
+          set -euo pipefail
+          APK='dist/Nova Video Player.apk'
+          test -s "$APK"
+          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          p = Path('dist/Nova Video Player.apk')
+          with ZipFile(p) as apk:
+              assert {'AndroidManifest.xml', 'classes.dex'}.issubset(set(apk.namelist()))
+              assert apk.testzip() is None, 'APK ZIP CRC error'
+          print('APK archive and essential files verified:', p.stat().st_size, 'bytes')
+          PY
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          test -x "$SIGNER"
+          "$SIGNER" verify --verbose "$APK"
+          sha256sum "$APK"
+
+      - name: Publish APK as sole asset on current Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APK='dist/Nova Video Player.apk'
+          NOTES='Nova V7.14 source rebuild from pinned Nova 6.5.5 with approved V7.11 UI and 14TV startup fix. Built from b368801b1a37e0928352846b585c33c67067b315; signed APK verified by GitHub Actions. Rebuilt APK needs device testing; CI generated a new test certificate when stable signing secrets were absent. Uninstall differently signed installs before installing (back up data first).'
+          if gh release view current >/dev/null 2>&1; then
+            gh release upload current "$APK" --clobber
+            gh release edit current --title 'Nova Video Player' --notes "$NOTES"
+          else
+            gh release create current "$APK" \
+              --target b368801b1a37e0928352846b585c33c67067b315 \
+              --title 'Nova Video Player' --notes "$NOTES"
+          fi
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova Video Player.apk'
+          gh release view current --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
+          echo 'Published signed V7.14 APK to GitHub Release.'

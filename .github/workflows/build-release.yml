@@ -3,6 +3,9 @@ name: Nova TV Build and Release
 on:
   push:
     branches: [main]
+    # Workflow-only maintenance does not require a full rebuild/re-sign.
+    paths-ignore:
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -136,6 +139,7 @@ jobs:
             --out 'dist/Nova Video Player.apk' dist/aligned.apk
           python3 scripts/verify_apk.py 'dist/Nova Video Player.apk' --apksigner "$SIGNER"
           rm -f "$KEYSTORE" dist/unsigned.apk dist/aligned.apk
+          find dist -maxdepth 1 -type f -name '*.idsig' -delete
           echo 'PUBLISH_READY=true' >> "$GITHUB_ENV"
 
       - name: Upload signed APK for testing even if Release publishing fails
@@ -153,7 +157,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 1
+          echo 'Signed release directory:'
+          find dist -maxdepth 1 -type f -print
+          test -s 'dist/Nova Video Player.apk'
+          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
           if gh release view current >/dev/null 2>&1; then
             gh release view current --json assets --jq '.assets[].name' | while IFS= read -r asset; do
               if [ -n "$asset" ]; then gh release delete-asset current "$asset" --yes; fi
