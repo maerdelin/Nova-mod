@@ -98,34 +98,68 @@ jobs:
           sha256sum dist/NovaTV_V7_14_4Card_Test.apk
           rm -f "$KEYSTORE" dist/fourcards-unsigned.apk dist/fourcards-aligned.apk
 
+      - name: Download SHA-pinned official Universal Nova APK
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
+            --output inputs/official-universal.apk \
+            'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-universal-release.apk'
+          echo 'f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5  inputs/official-universal.apk' | sha256sum --check --strict
+
+      - name: Preserve V7.14.1 functionality while adding three native ABIs
+        run: |
+          set -euo pipefail
+          python3 scripts/build_universal.py merge dist/NovaTV_V7_14_4Card_Test.apk inputs/official-universal.apk dist/nova-universal-unsigned.apk
+          python3 scripts/build_universal.py verify dist/NovaTV_V7_14_4Card_Test.apk inputs/official-universal.apk dist/nova-universal-unsigned.apk
+
+      - name: Sign and verify Universal APK
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/nova-universal.jks"
+          NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+          NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+          NOVA_KEY_ALIAS='nova-v7141-universal'
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          keytool -genkeypair -noprompt -keystore "$KEYSTORE" \
+            -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 \
+            -dname 'CN=Nova V7.14.1 Universal Test, O=Nova Mod Testing' \
+            -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD" >/dev/null
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name zipalign | sort -V | tail -n1)"
+          "$ALIGN" -p -f 4 dist/nova-universal-unsigned.apk dist/nova-universal-aligned.apk
+          "$SIGNER" sign --min-sdk-version 23 --v1-signing-enabled true --v2-signing-enabled true \
+            --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
+            --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
+            --out dist/NovaTV_V7_14_4Card_Universal_Test.apk dist/nova-universal-aligned.apk
+          "$SIGNER" verify --verbose --print-certs dist/NovaTV_V7_14_4Card_Universal_Test.apk
+          python3 scripts/build_universal.py verify dist/NovaTV_V7_14_4Card_Test.apk inputs/official-universal.apk dist/NovaTV_V7_14_4Card_Universal_Test.apk
+          sha256sum dist/NovaTV_V7_14_4Card_Universal_Test.apk
+
       - name: Preserve signed test APK as build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-FourCards-ARM32-Signed
-          path: dist/NovaTV_V7_14_4Card_Test.apk
+          name: Nova-V7.14-FourCards-Universal-Signed
+          path: dist/NovaTV_V7_14_4Card_Universal_Test.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish exactly one signed four-card APK in Release
+      - name: Publish Universal APK only after full ABI and functional verification
         env:
           GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
           GH_REPO: maerdelin/Nova-mod
         run: |
           set -euo pipefail
-          APK='dist/NovaTV_V7_14_4Card_Test.apk'
-          test -s "$APK"
-          NOTES="V7.14.1 ARM32 TEST — original 29,767,890-byte 14TV-verified V7.14 reconstructed with identical SHA-256, then one method is changed: MainFragment.updateNonScrapedVideosVisibility returns immediately so media scans cannot append the fifth Non-Scraped Videos tile. The four accepted home tiles, V7.14 boot/focus, network, file browsing, WebDAV and all other archived contents are retained; checked bytewise. Signed APK passed Android apksigner verification. Signing mode: $NOVA_SIGN_MODE. This change is NOT yet 14TV smoke-tested. This is an ARM32 testing APK, not Universal or x86."
+          APK='dist/NovaTV_V7_14_4Card_Universal_Test.apk'
+          NOTES='V7.14.1 four-card Universal TEST. All 1,937 signed ARM32 V7.14.1 APK entries retained byte-for-byte and only official pinned Nova 6.5.5 arm64-v8a, x86 and x86_64 native libraries added. Validated all four ABIs and Android signature. New test signing certificate, uninstall differently signed installed Nova first. Universal APK has NOT been smoke-tested on each platform; core code is the same.'
           if gh release view current >/dev/null 2>&1; then
             gh release upload current "$APK" --clobber
             gh release view current --json assets --jq '.assets[].name' | while IFS= read -r name; do
-              if [ -n "$name" ] && [ "$name" != 'NovaTV_V7_14_4Card_Test.apk' ]; then
+              if [ -n "$name" ] && [ "$name" != 'NovaTV_V7_14_4Card_Universal_Test.apk' ]; then
                 gh release delete-asset current "$name" --yes
               fi
             done
-            gh release edit current --title 'Nova TV V7.14.1 Four Fixed Cards (ARM32 Test)' --notes "$NOTES"
+            gh release edit current --title 'Nova TV V7.14.1 Four Fixed Cards (Universal Test)' --notes "$NOTES"
           else
-            gh release create current "$APK" \
-              --title 'Nova TV V7.14.1 Four Fixed Cards (ARM32 Test)' --notes "$NOTES"
+            gh release create current "$APK" --title 'Nova TV V7.14.1 Four Fixed Cards (Universal Test)' --notes "$NOTES"
           fi
-          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'NovaTV_V7_14_4Card_Test.apk'
-          gh release view current --json url,assets --jq '{url:.url, assets:[.assets[].name]}'
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'NovaTV_V7_14_4Card_Universal_Test.apk'
