@@ -16,7 +16,10 @@ class StableFourCardTests(unittest.TestCase):
         self.assertEqual(PATCH.METHOD_ID,19531)
         self.assertEqual(PATCH.METHOD_NAME,'updateNonScrapedVideosVisibility')
         self.assertEqual(PATCH.METHOD_CLASS,'Lcom/archos/mediacenter/video/leanback/MainFragment;')
-        self.assertEqual(PATCH.RETURN_VOID,bytes.fromhex('0e00'))
+        self.assertEqual(PATCH.EXPECTED_IF_LEZ,bytes.fromhex('3d062900'))
+        self.assertEqual(PATCH.HIDE_BY_GOTO,bytes.fromhex('29002900'))
+        self.assertEqual(PATCH.BRANCH_CODE_UNIT,36)
+        self.assertEqual(PATCH.REMOVE_BLOCK_UNIT,77)
         self.assertEqual(PATCH.EXPECTED_CODE_HEADER,(7,2,4,0,97))
 
     def test_patch_against_previous_verified_14tv_apk_if_available(self):
@@ -27,10 +30,10 @@ class StableFourCardTests(unittest.TestCase):
         with zipfile.ZipFile(source) as apk:
             old=apk.read('classes.dex')
         new=PATCH.patch_dex(old)
-        self.assertEqual(new[PATCH.INSTRUCTION_OFFSET:PATCH.INSTRUCTION_OFFSET+2],b'\x0e\x00')
+        self.assertEqual(new[PATCH.INSTRUCTION_OFFSET+72:PATCH.INSTRUCTION_OFFSET+76],PATCH.HIDE_BY_GOTO)
         self.assertEqual(old[:8],new[:8])
-        self.assertEqual(new[32:PATCH.INSTRUCTION_OFFSET],old[32:PATCH.INSTRUCTION_OFFSET])
-        self.assertEqual(new[PATCH.INSTRUCTION_OFFSET+2:],old[PATCH.INSTRUCTION_OFFSET+2:])
+        self.assertEqual(new[32:PATCH.INSTRUCTION_OFFSET+72],old[32:PATCH.INSTRUCTION_OFFSET+72])
+        self.assertEqual(new[PATCH.INSTRUCTION_OFFSET+76:],old[PATCH.INSTRUCTION_OFFSET+76:])
         self.assertNotEqual(hashlib.sha256(old).digest(),hashlib.sha256(new).digest())
 
 if __name__=='__main__':unittest.main()
