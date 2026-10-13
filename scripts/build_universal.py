@@ -3,7 +3,7 @@
 
 No attempt to misrepresent a binary reconstruction as original source compilation.
 Only official Nova v6.5.5 extra-architecture native libraries are added to
-the SHA-256-pinned user-confirmed V7.14 three-button APK. No DEX, resources or assets are altered.
+the SHA-256-pinned user-confirmed V7.14 three-button APK. Only the pinned local-root listing method in classes.dex is patched; resources and other assets are not altered.
 """
 import argparse, hashlib, io, zipfile
 from pathlib import Path
@@ -31,6 +31,44 @@ def fix_usb_guard(dex):
     if hashlib.sha256(result).hexdigest()!=USB_FIXED_DEX_SHA:
         raise RuntimeError('USB-fixed DEX digest unexpected')
     return result
+
+
+REMOVABLE_CODE_OFFSET=6496464+16
+REMOVABLE_CODE_UNITS=88
+REMOVABLE_METHOD_CODE=bytes.fromhex(
+    '20a09b0b38004c0055a0fd6138004800380b46007100ab2e00000c0007086e10a92e08000c006e10aa2e08000c09722094a890006e10ac2e08000c09722094a890002202011a702098a7b20072109ca800000c03120472106ba803000a0138011e0072106ca803000c053805f6ff1f0529192206c918702062a256006e1077a206000a073807e9ff22073e077020113267006e3099a7420728df080b5babfe6112105ca0fb617010b2500a0000000e00'
+)
+REMOVABLE_METHOD_SHA='ee37f720d41edba53c6504c6f429c2fcb5befbc9b25bfef0ad6d1735c46dbd8a'
+REMOVABLE_FIXED_DEX_SHA='e4902f10e4329bf39302bf1b001cff2e72fe953f1185e19a3ff8b4bad01d2999'
+
+def patch_local_root_removable(dex):
+    """Retain the original 88-unit onListingUpdate method layout.
+
+    Add SD/USB/OTHER volumes at the beginning of *local* root browsing only.
+    The original local root callback still supplies its existing internal folders;
+    network and child directories are left untouched. The getter results are
+    modifiable ArrayList copies in pinned ExtStorageManager.
+    """
+    import struct, zlib
+    if hashlib.sha256(dex).hexdigest()!=USB_FIXED_DEX_SHA:
+        raise RuntimeError('Wrong input DEX for local-root removable patch')
+    if struct.unpack_from('<4H2I',dex,6496464)!=(12,2,4,0,0,88):
+        raise RuntimeError('Unexpected onListingUpdate code layout')
+    if dex[REMOVABLE_CODE_OFFSET:REMOVABLE_CODE_OFFSET+4]!=USB_GUARD_NEW:
+        raise RuntimeError('Unexpected prior USB guard instruction')
+    if len(REMOVABLE_METHOD_CODE)!=REMOVABLE_CODE_UNITS*2 or hashlib.sha256(REMOVABLE_METHOD_CODE).hexdigest()!=REMOVABLE_METHOD_SHA:
+        raise RuntimeError('Incorrect removable-storage replacement method')
+    patched=bytearray(dex)
+    patched[REMOVABLE_CODE_OFFSET:REMOVABLE_CODE_OFFSET+2*REMOVABLE_CODE_UNITS]=REMOVABLE_METHOD_CODE
+    patched[12:32]=hashlib.sha1(patched[32:]).digest()
+    struct.pack_into('<I',patched,8,zlib.adler32(patched[12:]) & 0xffffffff)
+    result=bytes(patched)
+    if len(result)!=len(dex) or hashlib.sha256(result).hexdigest()!=REMOVABLE_FIXED_DEX_SHA:
+        raise RuntimeError('Patched local-root removable DEX digest mismatch')
+    return result
+
+def final_dex(dex):
+    return patch_local_root_removable(fix_usb_guard(dex))
 
 def signature_metadata(n):
     n=n.upper()
@@ -87,7 +125,7 @@ def merge(arm32_path,universal_path,out_path):
                 o.external_attr=inf.external_attr
                 o.create_system=inf.create_system
                 data=base.read(inf.filename)
-                if inf.filename=='classes.dex':data=fix_usb_guard(data)
+                if inf.filename=='classes.dex':data=final_dex(data)
                 out.writestr(o,data,compress_type=o.compress_type,compresslevel=6)
             for n in additions:
                 inf=official.getinfo(n)
@@ -114,7 +152,7 @@ def verify(arm32_path,universal_path,candidate_path):
             raise RuntimeError('Unexpected missing/extra/duplicate functional APK entries: '+repr((expected-actual,actual-expected)))
         for n in original:
             data=base.read(n)
-            if n=='classes.dex':data=fix_usb_guard(data)
+            if n=='classes.dex':data=final_dex(data)
             if data!=candidate.read(n):
                 raise RuntimeError('Modified functional asset outside USB-only patch: '+n)
         for n in expected_extra:
@@ -124,7 +162,7 @@ def verify(arm32_path,universal_path,candidate_path):
             n=sum(1 for item in actual if abi(item)==target)
             if n==0:raise RuntimeError('Missing native ABI '+target)
             print('PASS: ABI',target,n,'libraries')
-    print('PASS: user-confirmed three-button baseline retained except USB root guard repair')
+    print('PASS: three-button baseline retained except targeted local-root removable-storage listing patch')
     print('PASS: official SHA-pinned Nova 6.5.5 native libraries added for other three ABIs')
 
 if __name__=='__main__':
