@@ -58,12 +58,15 @@ jobs:
           set -euo pipefail
           APK='dist/Nova Video Player.apk'
           NOTES='Nova V7.14 source rebuild from pinned Nova 6.5.5 with approved V7.11 UI and 14TV startup fix. Built from b368801b1a37e0928352846b585c33c67067b315; signed APK verified by GitHub Actions. Rebuilt APK needs device testing; CI generated a new test certificate when stable signing secrets were absent. Uninstall differently signed installs before installing (back up data first).'
+          # Do not target the old V7.14 source commit: GITHUB_TOKEN cannot create a
+          # release targeting an older workflow-changing commit (HTTP 403).
+          # Without --target GitHub tags the current default-branch HEAD.
+          # APK provenance remains pinned in NOTES and is checked above.
           if gh release view current >/dev/null 2>&1; then
             gh release upload current "$APK" --clobber
             gh release edit current --title 'Nova Video Player' --notes "$NOTES"
           else
             gh release create current "$APK" \
-              --target b368801b1a37e0928352846b585c33c67067b315 \
               --title 'Nova Video Player' --notes "$NOTES"
           fi
           test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova Video Player.apk'
