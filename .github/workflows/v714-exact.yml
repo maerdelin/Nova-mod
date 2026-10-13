@@ -135,31 +135,44 @@ jobs:
           python3 scripts/build_universal.py verify dist/NovaTV_V7_14_4Card_Test.apk inputs/official-universal.apk dist/NovaTV_V7_14_4Card_Universal_Test.apk
           sha256sum dist/NovaTV_V7_14_4Card_Universal_Test.apk
 
-      - name: Preserve signed test APK as build artifact
+      - name: Preserve both signed APKs as build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-FourCards-Universal-Signed
-          path: dist/NovaTV_V7_14_4Card_Universal_Test.apk
-          retention-days: 30
+          name: Nova-V7.14.1-ARM32-and-Universal-Signed
+          path: |
+            dist/NovaTV_V7_14_4Card_Test.apk
+            dist/NovaTV_V7_14_4Card_Universal_Test.apk
+          retention-days: 90
           if-no-files-found: error
 
-      - name: Publish Universal APK only after full ABI and functional verification
+      - name: Archive original 32-bit four-card build without overwriting history
         env:
           GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
           GH_REPO: maerdelin/Nova-mod
         run: |
           set -euo pipefail
-          APK='dist/NovaTV_V7_14_4Card_Universal_Test.apk'
-          NOTES='V7.14.1 four-card Universal TEST. All 1,937 signed ARM32 V7.14.1 APK entries retained byte-for-byte and only official pinned Nova 6.5.5 arm64-v8a, x86 and x86_64 native libraries added. Validated all four ABIs and Android signature. New test signing certificate, uninstall differently signed installed Nova first. Universal APK has NOT been smoke-tested on each platform; core code is the same.'
-          if gh release view current >/dev/null 2>&1; then
-            gh release upload current "$APK" --clobber
-            gh release view current --json assets --jq '.assets[].name' | while IFS= read -r name; do
-              if [ -n "$name" ] && [ "$name" != 'NovaTV_V7_14_4Card_Universal_Test.apk' ]; then
-                gh release delete-asset current "$name" --yes
-              fi
-            done
-            gh release edit current --title 'Nova TV V7.14.1 Four Fixed Cards (Universal Test)' --notes "$NOTES"
+          TAG='v7.14.1-arm32-build-38346082452'
+          mkdir -p dist/archived-arm32
+          gh run download 38346082452 -n Nova-V7.14-FourCards-ARM32-Signed -D dist/archived-arm32
+          FILE='dist/archived-arm32/NovaTV_V7_14_4Card_Test.apk'
+          echo 'e567475ab29ee509b9eae007b743e27e549fe8d1444d938b1473d206a9b1b6d4  dist/archived-arm32/NovaTV_V7_14_4Card_Test.apk' | sha256sum --check --strict
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Historical release already exists; preserving all its assets."
           else
-            gh release create current "$APK" --title 'Nova TV V7.14.1 Four Fixed Cards (Universal Test)' --notes "$NOTES"
+            gh release create "$TAG" "$FILE" --target f40cf7942011f52de0232dc6f391ff3421d44c24 --title 'V7.14.1 ARM32 Four Cards (Original Build 38346082452)' --notes 'Original signed ARM32 four-card test APK, restored from Actions run 38346082452. SHA-256 e567475ab29ee509b9eae007b743e27e549fe8d1444d938b1473d206a9b1b6d4. Not claimed device-tested; temporary test certificate.'
           fi
-          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'NovaTV_V7_14_4Card_Universal_Test.apk'
+
+      - name: Publish ARM32 test APK to an immutable per-run Release
+        env:
+          GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
+          GH_REPO: maerdelin/Nova-mod
+        run: |
+          set -euo pipefail
+          APK='dist/NovaTV_V7_14_4Card_Test.apk'
+          TAG="v7.14.1-arm32-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists: refusing to overwrite or delete any historical APK."
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "Nova V7.14.1 ARM32 Four Cards (Run ${GITHUB_RUN_ID})" --notes 'Signed ARM32 test APK only; Android device runtime validation still required. The separate Universal APK had a reported launch crash and is NOT published by this workflow. Historical Releases are never modified or removed.'
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fx 'NovaTV_V7_14_4Card_Test.apk'
