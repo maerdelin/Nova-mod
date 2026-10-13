@@ -119,7 +119,7 @@ def rebuild_unsigned(reference:Path, output:Path) -> None:
             if name!='classes.dex':
                 assert test.read(name)==ref.read(name),f'Unexpected change to {name}'
         assert test.read('classes.dex')==patch_dex(ref.read('classes.dex'))
-    print('PASS: original V7.14 contents retained; only MainFragment non-scraped card's conditional switches to the pre-existing removal branch')
+    print("PASS: non-scraped card branch redirects to existing removal path; other assets unchanged")
     print('PASS: count check, adapter setup, and existing remove-card method are preserved')
     print('UNSIGNED OUTPUT:',output,'bytes=',output.stat().st_size,'sha256=',h256(output.read_bytes()))
 
