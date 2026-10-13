@@ -9,9 +9,9 @@ import struct
 
 TARGET='res/Am.xml'
 INPUT_SHA='328d0fba66e5debd7b491b994048eacacf622bd31e88377abd0693b4e7fb4c74'
-OUTPUT_SHA='23af2a9b483d1ae1c56a7bd0f17f8047c230c7a434288d0201697e8471969467'
+OUTPUT_SHA='b246497606d126efa7e56156952bfd059538b9ffb18afb7a1c4cc44380293262'
 GRAVITY_ATTR=0x010100B3
-CARD_GROUP_WIDTH_DP=760
+CARD_GROUP_WIDTH_DP=620
 
 def hdr(data,at=0):return struct.unpack_from('<HHI',data,at)
 def sha(data):return hashlib.sha256(data).hexdigest()
