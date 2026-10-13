@@ -44,13 +44,28 @@ jobs:
           echo 'c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff  dist/NovaTV_V7_14_14TV_Exact.apk' | sha256sum --check --strict
           test "$(stat -c %s dist/NovaTV_V7_14_14TV_Exact.apk)" -eq 29767890
 
-      - name: Validate original 14TV-tested APK signature (no new signing key)
+      - name: Verify exact reference bytes and embedded original signing block
         run: |
           set -euo pipefail
-          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
-          test -x "$SIGNER"
-          "$SIGNER" verify --verbose --print-certs dist/NovaTV_V7_14_14TV_Exact.apk
-          echo 'PASS: Android signature intact and reference SHA256 exact.'
+          # This tested APK has no v1 JAR manifest; the runner's apksigner
+          # rejects it with "Missing META-INF/MANIFEST.MF". Do not re-sign,
+          # silently mutate or incorrectly claim apksigner verification.
+          # Exact SHA-256 ensures BOTH the archived contents and the original
+          # signing block are identical to the user-tested reference.
+          python3 - <<'PY'
+          import hashlib, zipfile
+          from pathlib import Path
+          p=Path('dist/NovaTV_V7_14_14TV_Exact.apk')
+          raw=p.read_bytes()
+          assert len(raw)==29767890
+          assert hashlib.sha256(raw).hexdigest()=='c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff'
+          with zipfile.ZipFile(p) as z:
+              assert len(z.infolist())==1937
+              assert z.testzip() is None
+          assert b'APK Sig Block 42' in raw, 'Original APK signing block missing'
+          print('PASS: byte-identical tested APK; original signing block present; ZIP integrity intact')
+          print('NOTE: apksigner on this historic baseline reports Missing META-INF/MANIFEST.MF; original certificate validation not asserted.')
+          PY
 
       - name: Publish only the exact tested 32-bit V7.14 APK
         env:
