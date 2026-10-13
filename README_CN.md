@@ -1,3 +1,21 @@
+# Nova V7.14 AutoMode — 蓝叠已确认解锁 TV 模式基准
+
+**当前用户确认可用的 Universal APK：** `Nova_V7_14_OfficialAutoMode_Signed_TEST.apk` （GitHub Actions 产物内部文件名 `NovaTV_V7_14_AutoMode_R16_Test.apk`）。
+
+- **APK SHA-256**：`087d968ae8a1d052436c1f056d5359bfdd96a6254dafa2c48d46014f1cf7fdeb`
+- **classes.dex SHA-256**：`be158200a3070bf13f31f7bbc4c7a1ed667e42a8b221a6e027ebd0122f5ce636`
+- **用户验证**：2026-10-13，蓝叠普通 Android 环境确认解除强制 TV 模式。
+- **成功的测试构建**：[GitHub Actions #38422340154](https://github.com/maerdelin/Nova-mod/actions/runs/38422340154)，提交 `f3187981327a9bd5f3cba2bdb38987b8e469067e`。
+- **APK 构建方式**：固定官方 Nova 6.5.5 APK + SHA 固定的 V7.14 三按钮基准 + USB、居中、隐藏首页标题补丁；最后由 `scripts/restore_auto_mode.py` 恢复官方 `UiChoiceDialog.applicationIsInLeanbackMode` 的原始 115 指令单元。不是 Gradle 源码重编译。
+- **代码验收**：`scripts/build_universal.py` 在生成和校验两条路径均执行 `final_mode_unlocked_dex`；云端工作流直接读取**签名后** APK 并验证 DEX SHA 与原始模式判定字节。
+- **重要签名限制**：本次已确认包在 Actions 上采用临时测试证书。未来重新签名的包可能 SHA 不同，也可能无法直接覆盖安装；不能把“代码一致、签名验证成功”说成“APK 字节一致”。需要原签名私钥才能保证稳定升级安装。
+- **回退版本**：纯 TV 版保存在 `baseline/v714-tv-locked-pre-unlock-20261013`，原 SHA `2ea3832a203e9377281a5459b6ab8a2dd9dbf8a4`。
+- **R37 说明**：不移植旧 R37 UI；本版本只恢复官方模式选择，保留后续新版路线的 V7.14 TV UI。
+
+---
+
+## 历史 V7.14 ARM32 真机基准（保留）
+
 # Nova TV V7.14 — 已实测 14TV APK 的精确恢复基线
 
 **唯一可信功能基准：** `NovaTV_V7_14_Rows_Fragment_Fix_Test.apk`，29,767,890 字节，SHA-256 `c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff`。
