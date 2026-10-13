@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v zstd; then sudo apt-get update && sudo apt-get install -y zstd; fi
-          python3 -m py_compile scripts/v714_exact.py scripts/four_cards.py scripts/verify_four_cards.py
+          python3 -m py_compile scripts/v714_exact.py scripts/four_cards.py scripts/verify_four_cards.py scripts/hide_recent_card.py
           python3 -m unittest discover -s tests -v
 
       - name: Download pinned official Nova 6.5.5 ARM32 baseline
@@ -117,6 +117,65 @@ jobs:
           TAG="v7.14-hide-nonscraped-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
           if gh release view "$TAG" >/dev/null 2>&1; then echo "Release already exists; refusing overwrite"; exit 1; fi
           gh release create "$TAG" dist/NovaTV_V7_14_4Card_Test.apk --target "$GITHUB_SHA" --title "V7.14 ARM32 Hide Non-Scraped Test (${GITHUB_RUN_ID})" --notes 'EXPERIMENTAL, NOT DEVICE TESTED. One existing if-lez replaced with a goto/16 to original non-scraped card removal block. Original V7.14 baseline retained. Do not overwrite previous installs signed by a different key.'
+
+
+      - name: Make exactly three home buttons from signed four-button base
+        run: |
+          set -euo pipefail
+          python3 scripts/hide_recent_card.py build dist/NovaTV_V7_14_4Card_Test.apk dist/three-buttons-unsigned.apk
+          python3 scripts/hide_recent_card.py verify dist/NovaTV_V7_14_4Card_Test.apk dist/three-buttons-unsigned.apk
+
+      - name: Zipalign, sign, and verify three-button APK
+        env:
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name zipalign | sort -V | tail -n1)"
+          KEYSTORE="$RUNNER_TEMP/nova-three-buttons.jks"
+          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
+            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          elif [[ -n "$NOVA_KEYSTORE_BASE64" || -n "$NOVA_STORE_PASSWORD" || -n "$NOVA_KEY_ALIAS" || -n "$NOVA_KEY_PASSWORD" ]]; then
+            echo "::error::Incomplete signing secrets"; exit 1
+          else
+            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+            NOVA_KEY_ALIAS="nova-three-buttons-test"
+            keytool -genkeypair -noprompt -keystore "$KEYSTORE" -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=Nova Three Buttons Test" -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD" >/dev/null
+            echo "::warning::Temporary test certificate; backup before uninstalling a differently signed version"
+          fi
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          "$ALIGN" -p -f 4 dist/three-buttons-unsigned.apk dist/three-buttons-aligned.apk
+          "$SIGNER" sign --min-sdk-version 23 --v1-signing-enabled true --v2-signing-enabled true --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk dist/three-buttons-aligned.apk
+          "$SIGNER" verify --verbose --print-certs dist/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk
+          python3 scripts/hide_recent_card.py verify dist/NovaTV_V7_14_4Card_Test.apk dist/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk
+          sha256sum dist/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk
+          rm -f "$KEYSTORE"
+
+      - name: Archive three-button signed test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-V7.14-ThreeButtons-ARM32-Signed
+          path: dist/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Publish independent three-button test Release
+        env:
+          GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
+          GH_REPO: maerdelin/Nova-mod
+        run: |
+          set -euo pipefail
+          TAG="v7.14-three-buttons-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release exists - will never replace historical assets"
+            exit 1
+          fi
+          gh release create "$TAG" dist/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk --target "$GITHUB_SHA" --title "Nova V7.14 ARM32 Three Buttons Test (Run ${GITHUB_RUN_ID})" --notes 'Test candidate, NOT yet verified on 14TV hardware. Removes only Recent Plays tile by NOPing 6-byte add call on four-button baseline. Network Storage, Local Storage, Settings remain. Non-scraped card fix preserved. Signed with temporary test certificate if no repository signing secrets. Prior releases untouched.'
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fx 'NovaTV_V7_14_ThreeButtons_ARM32_Test.apk'
 
       - name: Archive signed exact APK as artifact
         uses: actions/upload-artifact@v4
