@@ -31,6 +31,16 @@ class OverlayTests(unittest.TestCase):
         self.assertTrue(all(len(p.attrib['revision']) == 40 for p in projects))
         self.assertEqual(len({p.attrib['name'] for p in projects}), 21)
 
+    def test_v714_rows_fragment_and_focus_guard(self):
+        patcher = (ROOT / 'ui/apply.py').read_text(encoding='utf-8')
+        self.assertIn('setHeadersState(HEADERS_DISABLED)', patcher)
+        self.assertIn('getRowsSupportFragment()', patcher)
+        self.assertIn('homeRoot.post(() ->', patcher)
+        self.assertNotIn("'        setSelectedPosition(0, false, new ListRowPresenter.SelectItemViewHolderTask(0));", patcher)
+        binary_patch = (ROOT / 'scripts/v714_patch_dex.py').read_text(encoding='utf-8')
+        self.assertIn('c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff', binary_patch)
+        self.assertIn('07 35 28 18 38 05 fe ff', binary_patch)
+
     def test_title_no_bottom_constraint(self):
         xml = '        android:layout_alignTop="@id/title_orb"\n        android:layout_alignBottom="@id/title_orb"\n'
         out = ui.process('res/layout/lb_my_title_view.xml', xml)

@@ -25,7 +25,7 @@ jobs:
       - name: Check overlay before downloading official source
         run: |
           python3 -m unittest discover -s tests -v
-          python3 -m py_compile ui/apply.py scripts/verify_apk.py
+          python3 -m py_compile ui/apply.py scripts/verify_apk.py scripts/verify_v714_source.py scripts/v714_patch_dex.py
 
       - name: Java 17
         uses: actions/setup-java@v4
@@ -77,10 +77,11 @@ jobs:
           repo sync -j4 --fail-fast
           test "$(git -C Video rev-parse HEAD)" = e394eda85058d076c1b85adf7b64a788068d2c8a
 
-      - name: Verify upstream and apply only the V7.11 UI overlay
+      - name: Apply V7.14 source overlay and verify 14TV Rows Fragment bootstrap
         run: |
           python3 ui/apply.py nova/Video --verify-only
           python3 ui/apply.py nova/Video
+          python3 scripts/verify_v714_source.py nova/Video
           test -e nova/Video/res/values/nova_ui_override.xml
           grep -q 'compileSdk = 37' nova/Video/build.gradle
           echo 'Confirmed: official compileSdk 37 preserved.'
@@ -141,7 +142,7 @@ jobs:
         if: env.PUBLISH_READY == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-TV-14TV-Startup-Test
+          name: Nova-TV-V7.14-Source-Build
           path: dist/Nova Video Player.apk
           if-no-files-found: error
           retention-days: 14
@@ -158,12 +159,12 @@ jobs:
               if [ -n "$asset" ]; then gh release delete-asset current "$asset" --yes; fi
             done
             gh release upload current 'dist/Nova Video Player.apk' --clobber
-            gh release edit current --title 'Nova Video Player' --notes 'Nova 14TV startup candidate: official Nova 6.5.5 + V7.11 UI, Leanback headers disabled before view creation. Device testing required; uninstall differently signed builds before installation.'
+            gh release edit current --title 'Nova Video Player' --notes 'V7.14 source rebuild: official Nova 6.5.5, 14TV Rows Fragment bootstrap and focus guard, approved V7.11 UI. Original patched V7.14 APK was tested on 14TV; source rebuild still requires testing.'
           else
             gh release create current 'dist/Nova Video Player.apk' \
               --target "$GITHUB_SHA" \
               --title 'Nova Video Player' \
-              --notes 'Nova 14TV startup candidate: official Nova 6.5.5 + V7.11 UI, Leanback headers disabled before view creation. Device testing required; uninstall differently signed builds before installation.'
+              --notes 'V7.14 source rebuild: official Nova 6.5.5, 14TV Rows Fragment bootstrap and focus guard, approved V7.11 UI. Original patched V7.14 APK was tested on 14TV; source rebuild still requires testing.'
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

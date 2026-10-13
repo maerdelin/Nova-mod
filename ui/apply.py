@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Nova V7.11 Android-TV UI overlay on the pinned, unmodified upstream source.
+"""Nova V7.14 Android-TV UI overlay on the pinned, unmodified upstream source.
 
 Edits only front-end Java/XML.  Refuses unknown upstream baselines.  This is a
-source-level adaptation of the user-approved V7.11 UI, NOT an APK byte patch.
+source-level adaptation of the V7.11 UI plus the V7.14 14TV startup fix.
 """
 from __future__ import annotations
 
@@ -165,15 +165,16 @@ def process(path: str, src: str) -> str:
             '            android:layout_width="160dip"', path)
 
     if path.endswith('/MainFragment.java'):
-        # Leanback creates its RowsSupportFragment without an initial adapter ONLY
-        # when headers are disabled. HEADERS_HIDDEN keeps mCanShowHeaders=true,
-        # leaving scale_frame empty on a real TV when the adapter arrives late.
-        # Set HEADERS_DISABLED before onCreateView (rather than in onViewCreated).
-        # This also prevents focus-induced RecyclerView headers transitions.
+        # V7.14 (14TV-tested): the packaged Leanback createMainFragment originally
+        # skipped creating RowsSupportFragment when its adapter was still null.
+        # The tested APK redirects that branch into the existing Rows fallback.
+        # Source rebuilds implement the same startup condition by disabling
+        # headers in onCreate, BEFORE Leanback creates the view.
+        # Keep the exact tested byte patch in scripts/v714_patch_dex.py as well.
         src = replace_one(src,
             '        super.onCreate(savedInstanceState);\n        currentLocale =',
             '        super.onCreate(savedInstanceState);\n'
-            '        setHeadersState(HEADERS_DISABLED); // Create rows fragment even before adapter exists\n'
+            '        setHeadersState(HEADERS_DISABLED); // V7.14: create Rows fragment even with null adapter\n'
             '        currentLocale =', path)
         src = replace_one(src, '        setHeadersState(HEADERS_ENABLED);',
             '        // Header state already configured in onCreate, never reset during view layout.', path)
@@ -216,8 +217,20 @@ def process(path: str, src: str) -> str:
             playlist + '\n        mFileBrowsingRowAdapter.add(new Box(Box.ID.PREFERENCES, getString(R.string.preferences), R.drawable.ic_cog_outline));')
         src = replace_one(src, '        setAdapter(mRowsAdapter);\n',
             '        setAdapter(mRowsAdapter);\n'
-            '        // Default focus on Network, not on invisible Leanback headers.\n'
-            '        setSelectedPosition(0, false, new ListRowPresenter.SelectItemViewHolderTask(0));\n', path)
+            '        // Never use BrowseSupportFragment selection-with-task here: it calls\n'
+            '        // startHeadersTransition(false), illegal with HEADERS_DISABLED.\n'
+            '        // Post the first focus request until after the initial layout.\n'
+            '        View homeRoot = getView();\n'
+            '        if (homeRoot != null) {\n'
+            '            homeRoot.post(() -> {\n'
+            '                androidx.leanback.app.RowsSupportFragment rows = getRowsSupportFragment();\n'
+            '                if (rows != null && rows.getVerticalGridView() != null) {\n'
+            '                    rows.setSelectedPosition(0, false,\n'
+            '                        new ListRowPresenter.SelectItemViewHolderTask(0));\n'
+            '                    rows.getVerticalGridView().requestFocus();\n'
+            '                }\n'
+            '            });\n'
+            '        }\n', path)
         src = replace_one(src, '                    case NETWORK ->\n'
             '                            vActivity.startActivity(new Intent(vActivity, NetworkRootActivity.class));',
             '                    case NETWORK ->\n'
@@ -266,7 +279,7 @@ def main() -> None:
     <dimen name="lb_browse_rows_margin_start">0dp</dimen>
 </resources>
 ''', encoding='utf-8')
-    print(f'PASS: verified {len(updated)} pinned upstream files; V7.11 UI overlay '+
+    print(f'PASS: verified {len(updated)} pinned upstream files; V7.14 UI overlay '+
           ('ready' if a.verify_only else 'applied'))
 
 if __name__ == '__main__':
