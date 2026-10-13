@@ -6,6 +6,7 @@ Only official Nova v6.5.5 extra-architecture native libraries are added to
 the SHA-256-pinned user-confirmed V7.14 three-button APK. Only the pinned local-root listing method in classes.dex is patched; resources and other assets are not altered.
 """
 import argparse, hashlib, io, zipfile
+from center_home_layout import TARGET as CENTER_LAYOUT, patch as center_home_layout
 from pathlib import Path
 
 OFFICIAL_UNIVERSAL_SHA='f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5'
@@ -126,6 +127,7 @@ def merge(arm32_path,universal_path,out_path):
                 o.create_system=inf.create_system
                 data=base.read(inf.filename)
                 if inf.filename=='classes.dex':data=final_dex(data)
+                if inf.filename==CENTER_LAYOUT:data=center_home_layout(data)
                 out.writestr(o,data,compress_type=o.compress_type,compresslevel=6)
             for n in additions:
                 inf=official.getinfo(n)
@@ -135,7 +137,7 @@ def merge(arm32_path,universal_path,out_path):
                 o.create_system=inf.create_system
                 out.writestr(o,official.read(n),compress_type=o.compress_type,compresslevel=6)
     verify(arm32_path,universal_path,out_path)
-    print('PASS: Three-button Universal four-ABI unsigned build; only native libraries added',out_path.stat().st_size)
+    print('PASS: Three-button Universal four-ABI unsigned build; only native libraries and pinned home layout centering patch',out_path.stat().st_size)
 
 def verify(arm32_path,universal_path,candidate_path):
     check_base(arm32_path,universal_path)
@@ -153,8 +155,9 @@ def verify(arm32_path,universal_path,candidate_path):
         for n in original:
             data=base.read(n)
             if n=='classes.dex':data=final_dex(data)
+            if n==CENTER_LAYOUT:data=center_home_layout(data)
             if data!=candidate.read(n):
-                raise RuntimeError('Modified functional asset outside USB-only patch: '+n)
+                raise RuntimeError('Modified functional asset outside USB and centered home layout patch: '+n)
         for n in expected_extra:
             if official.read(n)!=candidate.read(n):
                 raise RuntimeError('Modified official Nova 6.5.5 native library: '+n)
