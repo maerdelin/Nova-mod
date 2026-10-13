@@ -1,8 +1,8 @@
-name: Nova V7.14 Auto Mode R16 Restore - Signed Candidate
+name: Nova V7.14 AutoMode - User Confirmed Baseline
 
 on:
   push:
-    branches: [fix/v714-unlock-tv-autodetect-20261013]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: nova-autodetect-r16-candidate
+  group: nova-v714-autodetect-main
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
       - name: Validate scripts and pinned official sources
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py scripts/restore_auto_mode.py
+          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py scripts/restore_auto_mode.py tests/test_auto_mode.py
           python3 -m unittest discover -s tests -v
           mkdir -p inputs dist
           curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
@@ -82,7 +82,7 @@ jobs:
       - name: Archive signed APK (90 days)
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-AutoMode-R16-Signed-TEST
+          name: Nova-V7.14-AutoMode-Main-Signed
           path: |
             dist/NovaTV_V7_14_AutoMode_R16_Test.apk
             dist/SHA256SUMS_AutoMode.txt
