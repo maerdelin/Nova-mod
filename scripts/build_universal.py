@@ -12,6 +12,25 @@ OFFICIAL_UNIVERSAL_SHA='f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9
 USER_CONFIRMED_ARM32_SHA='b48c77f62c265b9da979010a1e88829773cd82a3b900f479584f0f0aa752786d'
 USER_CONFIRMED_DEX_SHA='a69ea18e18ced34514adf1fe11c62023c9bb60de3c34809119da64ad9e49c78f'
 ABIS={'armeabi-v7a','arm64-v8a','x86','x86_64'}
+USB_GUARD_OFFSET=6496480
+USB_GUARD_OLD=bytes.fromhex('20a09b0b')
+USB_GUARD_NEW=bytes.fromhex('20b01d1a')
+USB_FIXED_DEX_SHA='beb6979f8d68b401f0968a3f4f7d6837fbb58000771d941e6d1fdfc9d096a519'
+
+def fix_usb_guard(dex):
+    import struct, zlib
+    if hashlib.sha256(dex).hexdigest()!=USER_CONFIRMED_DEX_SHA:
+        raise RuntimeError('Incorrect three-button DEX input')
+    if dex[USB_GUARD_OFFSET:USB_GUARD_OFFSET+4]!=USB_GUARD_OLD:
+        raise RuntimeError('Unexpected USB root guard instruction')
+    patched=bytearray(dex)
+    patched[USB_GUARD_OFFSET:USB_GUARD_OFFSET+4]=USB_GUARD_NEW
+    patched[12:32]=hashlib.sha1(patched[32:]).digest()
+    struct.pack_into('<I',patched,8,zlib.adler32(patched[12:]) & 0xffffffff)
+    result=bytes(patched)
+    if hashlib.sha256(result).hexdigest()!=USB_FIXED_DEX_SHA:
+        raise RuntimeError('USB-fixed DEX digest unexpected')
+    return result
 
 def signature_metadata(n):
     n=n.upper()
@@ -67,7 +86,9 @@ def merge(arm32_path,universal_path,out_path):
                 o.compress_type=inf.compress_type
                 o.external_attr=inf.external_attr
                 o.create_system=inf.create_system
-                out.writestr(o,base.read(inf.filename),compress_type=o.compress_type,compresslevel=6)
+                data=base.read(inf.filename)
+                if inf.filename=='classes.dex':data=fix_usb_guard(data)
+                out.writestr(o,data,compress_type=o.compress_type,compresslevel=6)
             for n in additions:
                 inf=official.getinfo(n)
                 o=zipfile.ZipInfo(n,inf.date_time)
@@ -92,8 +113,10 @@ def verify(arm32_path,universal_path,candidate_path):
         if actual != expected or len(candidate.namelist())!=len(set(candidate.namelist())):
             raise RuntimeError('Unexpected missing/extra/duplicate functional APK entries: '+repr((expected-actual,actual-expected)))
         for n in original:
-            if base.read(n)!=candidate.read(n):
-                raise RuntimeError('Modified user-confirmed three-button functional asset: '+n)
+            data=base.read(n)
+            if n=='classes.dex':data=fix_usb_guard(data)
+            if data!=candidate.read(n):
+                raise RuntimeError('Modified functional asset outside USB-only patch: '+n)
         for n in expected_extra:
             if official.read(n)!=candidate.read(n):
                 raise RuntimeError('Modified official Nova 6.5.5 native library: '+n)
@@ -101,7 +124,7 @@ def verify(arm32_path,universal_path,candidate_path):
             n=sum(1 for item in actual if abi(item)==target)
             if n==0:raise RuntimeError('Missing native ABI '+target)
             print('PASS: ABI',target,n,'libraries')
-    print('PASS: every functional input ZIP payload identical to user-confirmed three-button ARM32 APK')
+    print('PASS: user-confirmed three-button baseline retained except USB root guard repair')
     print('PASS: official SHA-pinned Nova 6.5.5 native libraries added for other three ABIs')
 
 if __name__=='__main__':
