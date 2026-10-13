@@ -69,6 +69,7 @@ def verify(arm32_path,universal_path,candidate_path):
         old=set(base.namelist())
         if not old.issubset(candidate.namelist()):raise RuntimeError('V7.14 assets missing')
         for n in old:
+            if n in {'META-INF/MANIFEST.MF','META-INF/CERT.SF','META-INF/CERT.RSA'}:continue  # new v1 signer updates only signature metadata
             if base.read(n)!=candidate.read(n):raise RuntimeError('Modified tested V7.14 entry: '+n)
         expected={n for n in official.namelist() if abi(n) in ABIS-{'armeabi-v7a'}}
         actual=set(candidate.namelist())-old
