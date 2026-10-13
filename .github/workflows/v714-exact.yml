@@ -1,4 +1,4 @@
-name: Nova V7.14 Three Buttons - Removable Storage Inside Local Root
+name: Nova V7.14 Three Buttons - Removable First Verifier Fix
 
 on:
   push:
@@ -73,18 +73,18 @@ jobs:
           "$SIGNER" sign --min-sdk-version 23 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
             --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
             --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
-            --out dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk dist/aligned-universal.apk
-          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk
-          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk
-          sha256sum dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk | tee dist/SHA256SUMS.txt
+            --out dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk dist/aligned-universal.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk
+          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk
+          sha256sum dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk | tee dist/SHA256SUMS.txt
           rm -f "$KEYSTORE"
 
       - name: Archive signed APK (90 days)
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-ThreeButtons-Universal-RemovableFirst-Signed
+          name: Nova-V7.14-ThreeButtons-Universal-RemovableFirst-VerifierFixed-Signed
           path: |
-            dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk
+            dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk
             dist/SHA256SUMS.txt
           retention-days: 90
           if-no-files-found: error
@@ -95,17 +95,17 @@ jobs:
           GH_REPO: maerdelin/Nova-mod
         run: |
           set -euo pipefail
-          TAG="v7.14-three-buttons-universal-removable-first-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          TAG="v7.14-three-buttons-universal-removable-first-verifierfix-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "::error::Release $TAG already exists"
             exit 1
           fi
           gh release create "$TAG" \
-            dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk dist/SHA256SUMS.txt \
+            dist/NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
             --title "Nova V7.14 Three Buttons - Universal Four ABI (Run ${GITHUB_RUN_ID})" \
             --notes 'EXPERIMENTAL: SD/USB/OTHER removable volumes are added as top child folders of Local Storage root only (not home and not network). Tested locally with deterministic DEX-level and archive checks; Android Emulator / USB hardware runtime test is still required. The three-button home, WebDAV/SMB and other V7.14 resources are left unchanged. This fixes the earlier USB-only method by calling getExtSdcards, getExtUsbStorages and getExtOtherStorages. Only 176 bytes of the existing DEX method are replaced (in-place, unchanged method size). Native ABIs are from official Nova 6.5.5; signing key may require uninstalling existing differently-signed installs after backing up data.'
-          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fx 'NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_Test.apk'
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fx 'NovaTV_V7_14_ThreeButtons_Universal_RemovableFirst_VerifierFixed.apk'
           gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fx 'SHA256SUMS.txt'
 
       - name: Keep at most three Releases - newest Universal, confirmed ARM32, tested V7.14
@@ -114,7 +114,7 @@ jobs:
           GH_REPO: maerdelin/Nova-mod
         run: |
           set -euo pipefail
-          CURRENT="v7.14-three-buttons-universal-removable-first-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          CURRENT="v7.14-three-buttons-universal-removable-first-verifierfix-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
           KEEP_1='v7.14-three-buttons-run-38359455887-attempt-1'
           KEEP_2='v7.14-14tv-exact-run-38359455887-attempt-1'
           gh release view "$CURRENT" >/dev/null
