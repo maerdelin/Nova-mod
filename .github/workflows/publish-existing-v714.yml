@@ -69,7 +69,7 @@ jobs:
             gh release create current "$APK" \
               --title 'Nova Video Player' --notes "$NOTES"
           fi
-          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova Video Player.apk'
+          test "$(gh release view current --json assets --jq '[.assets[].name] | join("|")')" = 'Nova.Video.Player.apk'
           gh release view current --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
           echo 'Published signed V7.14 APK to GitHub Release.'
 
