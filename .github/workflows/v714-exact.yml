@@ -1,4 +1,4 @@
-name: Nova V7.14 Three Buttons - Hide Home Title All Locales
+name: Nova V7.14 AutoMode - User Confirmed Baseline
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: nova-universal-three-buttons
+  group: nova-v714-autodetect-main
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
       - name: Validate scripts and pinned official sources
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py
+          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py scripts/restore_auto_mode.py tests/test_auto_mode.py
           python3 -m unittest discover -s tests -v
           mkdir -p inputs dist
           curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
@@ -73,35 +73,34 @@ jobs:
           "$SIGNER" sign --min-sdk-version 23 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
             --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
             --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
-            --out dist/NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_NoRowHeader_Test.apk dist/aligned-universal.apk
-          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_NoRowHeader_Test.apk
-          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_NoRowHeader_Test.apk
-          sha256sum dist/NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_NoRowHeader_Test.apk | tee dist/SHA256SUMS_NoRowHeader.txt
+            --out dist/NovaTV_V7_14_AutoMode_R16_Test.apk dist/aligned-universal.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_AutoMode_R16_Test.apk
+          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_AutoMode_R16_Test.apk
+          sha256sum dist/NovaTV_V7_14_AutoMode_R16_Test.apk | tee dist/SHA256SUMS_AutoMode.txt
           rm -f "$KEYSTORE"
 
       - name: Archive signed APK (90 days)
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-ThreeButtons-Universal-CenteredHome-NoHeader-Signed
+          name: Nova-V7.14-AutoMode-Main-Signed
           path: |
-            dist/NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_NoRowHeader_Test.apk
-            dist/SHA256SUMS_NoRowHeader.txt
+            dist/NovaTV_V7_14_AutoMode_R16_Test.apk
+            dist/SHA256SUMS_AutoMode.txt
           retention-days: 90
           if-no-files-found: error
 
-      - name: Publish no-header variant beside original user-tested centered APK
-        env:
-          GH_TOKEN: ${{ secrets.NOVA_RELEASE_TOKEN || github.token }}
-          GH_REPO: maerdelin/Nova-mod
+      - name: Prove signed APK contains unlocked UI mode selector
         run: |
           set -euo pipefail
-          STABLE='v7.14-three-buttons-universal-centered-home-run-38385405192-attempt-1'
-          BASE='NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_Test.apk'
-          NEW='NovaTV_V7_14_ThreeButtons_Universal_CenteredHome_NoRowHeader_Test.apk'
-          gh release view "$STABLE" --json assets --jq '.assets[].name' | grep -Fx "$BASE"
-          gh release upload "$STABLE" "dist/$NEW" dist/SHA256SUMS_NoRowHeader.txt
-          gh release view "$STABLE" --json assets --jq '.assets[].name' | grep -Fx "$BASE"
-          gh release view "$STABLE" --json assets --jq '.assets[].name' | grep -Fx "$NEW"
-          REMAINING="$(gh api repos/maerdelin/Nova-mod/releases --jq 'length')"
-          test "$REMAINING" -le 3
-          echo "PASS: original centered-home APK untouched; $REMAINING Releases remain"
+          python3 - <<'PY'
+          import hashlib, zipfile
+          from scripts.restore_auto_mode import OUTPUT_DEX_SHA, MODE_CODE_ITEM, ORIGINAL_MODE_CODE
+          apk='dist/NovaTV_V7_14_AutoMode_R16_Test.apk'
+          with zipfile.ZipFile(apk) as z:
+              assert z.testzip() is None
+              d=z.read('classes.dex')
+              assert hashlib.sha256(d).hexdigest()==OUTPUT_DEX_SHA
+              assert d[MODE_CODE_ITEM+16:MODE_CODE_ITEM+16+len(ORIGINAL_MODE_CODE)]==ORIGINAL_MODE_CODE
+              assert z.read('res/Am.xml')
+              print('PASS: signed APK actually contains the original non-forced R16 mode method')
+          PY
