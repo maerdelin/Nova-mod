@@ -27,7 +27,7 @@ jobs:
           import hashlib,zipfile
           with zipfile.ZipFile('dist/v10-unsigned.apk') as z:
             assert z.testzip() is None
-            assert hashlib.sha256(z.read('classes.dex')).hexdigest()=='cd99203580a0f5f7fe4b56286c89398ad31b807b1350ebffc38baefd058deb37'
+            assert hashlib.sha256(z.read('classes.dex')).hexdigest()=='4661583beae1342a12cf097e044e7814ea9ee5fe6a67ccf2f9b96c1fb2f97bc4'
             assert hashlib.sha256(z.read('res/Am.xml')).hexdigest()=='b246497606d126efa7e56156952bfd059538b9ffb18afb7a1c4cc44380293262'
             print('PASS exact V10 mobile DEX, proven V6 TV XML unchanged')
           PY
