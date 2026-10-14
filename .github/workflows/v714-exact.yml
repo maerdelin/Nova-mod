@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -108,3 +108,31 @@ jobs:
                   assert hashlib.sha256(z.read(path)).hexdigest()==expected,(path,expected)
               print('PASS: signed APK matches exact user-tested V6 DEX and protected TV home/common layout; R16 automatic mode retained')
           PY
+
+      - name: Publish verified V6 APK to Releases
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v7.14-v6-network-centered"
+          title="Nova V7.14 V6 - User-Verified Network Centering"
+          apk="dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk"
+          sums="dist/SHA256SUMS_V6.txt"
+          test -s "$apk" && test -s "$sums"
+          sha256sum --check --strict "$sums"
+          echo "All V6 signed DEX, AutoMode and protected layout checks passed; now publishing."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$apk" "$sums" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" \
+              --notes "V6 user-verified TV home + network storage centering and AutoMode. Signed Universal APK for armeabi-v7a, arm64-v8a, x86, x86_64. For an upgrade, signing certificates must match; CI may use a fresh test certificate when signing secrets are not set."
+          else
+            gh release create "$tag" "$apk" "$sums" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "$title" --latest \
+              --notes "V6 user-verified TV home + network storage centering and AutoMode. Signed Universal APK for armeabi-v7a, arm64-v8a, x86, x86_64. For an upgrade, signing certificates must match; CI may use a fresh test certificate when signing secrets are not set."
+          fi
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -f make_latest=true >/dev/null
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isLatest,assets \
+            --jq '{tag: .tagName, latest: .isLatest, assets: [.assets[].name]}'
+          echo "PASS: Latest V6 release has published APK and checksums."
