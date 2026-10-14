@@ -133,6 +133,8 @@ jobs:
           fi
           id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -f make_latest=true >/dev/null
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isLatest,assets \
-            --jq '{tag: .tagName, latest: .isLatest, assets: [.assets[].name]}'
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,assets \
+            --jq '{tag: .tagName, assets: [.assets[].name]}'
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          test "$latest" = "$tag" || { echo "::error::Latest release is $latest, expected $tag"; exit 1; }
           echo "PASS: Latest V6 release has published APK and checksums."
