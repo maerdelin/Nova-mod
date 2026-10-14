@@ -21,12 +21,13 @@ jobs:
           python3 -m py_compile scripts/mobile_v10_binary_patch.py
           curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
             -o inputs/v6.apk 'https://github.com/maerdelin/Nova-mod/releases/download/v7.14-v6-network-centered/NovaTV_V7_14_V6_NetworkCentered_Universal.apk'
-          python3 scripts/mobile_v10_binary_patch.py inputs/v6.apk dist/v10-unsigned.apk
+          python3 scripts/mobile_v10_binary_patch.py inputs/v6.apk dist/v10-intermediate.apk
+          python3 scripts/mobile_v11_center.py dist/v10-intermediate.apk dist/v10-unsigned.apk
           python3 - <<'PY'
           import hashlib,zipfile
           with zipfile.ZipFile('dist/v10-unsigned.apk') as z:
             assert z.testzip() is None
-            assert hashlib.sha256(z.read('classes.dex')).hexdigest()=='96b324978d5002fbedcf438fd9ac5a5df964ae57fc91e604652fb90162acab24'
+            assert hashlib.sha256(z.read('classes.dex')).hexdigest()=='cd99203580a0f5f7fe4b56286c89398ad31b807b1350ebffc38baefd058deb37'
             assert hashlib.sha256(z.read('res/Am.xml')).hexdigest()=='b246497606d126efa7e56156952bfd059538b9ffb18afb7a1c4cc44380293262'
             print('PASS exact V10 mobile DEX, proven V6 TV XML unchanged')
           PY
