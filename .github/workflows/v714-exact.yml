@@ -1,16 +1,18 @@
-name: Nova V7.14 AutoMode - User Confirmed Baseline
+name: Nova V7.14 V6 - User Verified Network Centering
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
-  group: nova-v714-autodetect-main
+  group: nova-v714-v6-network-centering
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +26,7 @@ jobs:
       - name: Validate scripts and pinned official sources
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py scripts/restore_auto_mode.py tests/test_auto_mode.py
+          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py scripts/restore_auto_mode.py scripts/network_center_v6.py tests/test_auto_mode.py tests/test_network_center_v6.py
           python3 -m unittest discover -s tests -v
           mkdir -p inputs dist
           curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
@@ -36,13 +38,13 @@ jobs:
             'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-universal-release.apk'
           echo 'f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5  inputs/official-universal.apk' | sha256sum --check --strict
 
-      - name: Merge official ABI libraries with localized root removable-storage directory patch
+      - name: Build V6 Universal: original TV home, unlocked AutoMode, network row centered
         run: |
           set -euo pipefail
           python3 scripts/build_universal.py merge inputs/confirmed-arm32.apk inputs/official-universal.apk dist/unsigned-universal.apk
           python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/unsigned-universal.apk
 
-      - name: Zipalign, sign, verify Universal APK
+      - name: Zipalign, sign, and verify user-confirmed V6 Universal APK
         env:
           NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
           NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
@@ -73,34 +75,36 @@ jobs:
           "$SIGNER" sign --min-sdk-version 23 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
             --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
             --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
-            --out dist/NovaTV_V7_14_AutoMode_R16_Test.apk dist/aligned-universal.apk
-          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_AutoMode_R16_Test.apk
-          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_AutoMode_R16_Test.apk
-          sha256sum dist/NovaTV_V7_14_AutoMode_R16_Test.apk | tee dist/SHA256SUMS_AutoMode.txt
+            --out dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk dist/aligned-universal.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk
+          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk
+          sha256sum dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk | tee dist/SHA256SUMS_V6.txt
           rm -f "$KEYSTORE"
 
       - name: Archive signed APK (90 days)
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-AutoMode-Main-Signed
+          name: Nova-V7.14-V6-NetworkCentered-Main-Signed
           path: |
-            dist/NovaTV_V7_14_AutoMode_R16_Test.apk
-            dist/SHA256SUMS_AutoMode.txt
+            dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk
+            dist/SHA256SUMS_V6.txt
           retention-days: 90
           if-no-files-found: error
 
-      - name: Prove signed APK contains unlocked UI mode selector
+      - name: Verify signed V6 APK: exact DEX, unlocked mode, centered home and network
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import hashlib, zipfile
-          from scripts.restore_auto_mode import OUTPUT_DEX_SHA, MODE_CODE_ITEM, ORIGINAL_MODE_CODE
-          apk='dist/NovaTV_V7_14_AutoMode_R16_Test.apk'
+          from scripts.network_center_v6 import OUTPUT_DEX_SHA, PROTECTED_LAYOUT_SHA
+          from scripts.restore_auto_mode import MODE_CODE_ITEM, ORIGINAL_MODE_CODE
+          apk='dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk'
           with zipfile.ZipFile(apk) as z:
               assert z.testzip() is None
               d=z.read('classes.dex')
               assert hashlib.sha256(d).hexdigest()==OUTPUT_DEX_SHA
               assert d[MODE_CODE_ITEM+16:MODE_CODE_ITEM+16+len(ORIGINAL_MODE_CODE)]==ORIGINAL_MODE_CODE
-              assert z.read('res/Am.xml')
-              print('PASS: signed APK actually contains the original non-forced R16 mode method')
+              for path,expected in PROTECTED_LAYOUT_SHA.items():
+                  assert hashlib.sha256(z.read(path)).hexdigest()==expected,(path,expected)
+              print('PASS: signed APK matches exact user-tested V6 DEX and protected TV home/common layout; R16 automatic mode retained')
           PY

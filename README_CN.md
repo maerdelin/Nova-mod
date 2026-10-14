@@ -1,53 +1,41 @@
-# Nova V7.14 AutoMode — 蓝叠已确认解锁 TV 模式基准
+# Nova V7.14 V6 — 用户实测完美版本（当前主分支基准）
 
-**当前用户确认可用的 Universal APK：** `Nova_V7_14_OfficialAutoMode_Signed_TEST.apk` （GitHub Actions 产物内部文件名 `NovaTV_V7_14_AutoMode_R16_Test.apk`）。
+**主分支默认版本：V6 网络存储精准居中 + TV 首页三按钮居中 + 自动 TV/平板模式。**
 
-- **APK SHA-256**：`087d968ae8a1d052436c1f056d5359bfdd96a6254dafa2c48d46014f1cf7fdeb`
-- **classes.dex SHA-256**：`be158200a3070bf13f31f7bbc4c7a1ed667e42a8b221a6e027ebd0122f5ce636`
-- **用户验证**：2026-10-13，蓝叠普通 Android 环境确认解除强制 TV 模式。
-- **成功的测试构建**：[GitHub Actions #38422340154](https://github.com/maerdelin/Nova-mod/actions/runs/38422340154)，提交 `f3187981327a9bd5f3cba2bdb38987b8e469067e`。
-- **APK 构建方式**：固定官方 Nova 6.5.5 APK + SHA 固定的 V7.14 三按钮基准 + USB、居中、隐藏首页标题补丁；最后由 `scripts/restore_auto_mode.py` 恢复官方 `UiChoiceDialog.applicationIsInLeanbackMode` 的原始 115 指令单元。不是 Gradle 源码重编译。
-- **代码验收**：`scripts/build_universal.py` 在生成和校验两条路径均执行 `final_mode_unlocked_dex`；云端工作流直接读取**签名后** APK 并验证 DEX SHA 与原始模式判定字节。
-- **重要签名限制**：本次已确认包在 Actions 上采用临时测试证书。未来重新签名的包可能 SHA 不同，也可能无法直接覆盖安装；不能把“代码一致、签名验证成功”说成“APK 字节一致”。需要原签名私钥才能保证稳定升级安装。
-- **回退版本**：纯 TV 版保存在 `baseline/v714-tv-locked-pre-unlock-20261013`，原 SHA `2ea3832a203e9377281a5459b6ab8a2dd9dbf8a4`。
-- **R37 说明**：不移植旧 R37 UI；本版本只恢复官方模式选择，保留后续新版路线的 V7.14 TV UI。
+用户在 2026-10-14 使用蓝叠确认 V6 网络存储页面居中效果完美；此前也确认首页三按钮居中、Android UI 模式自动判定正常。
 
----
+- **用户实测 APK 文件名：** `Nova_V7_14_Network_Only_Centered_v6_ResourceExactCenter_TEST.apk`
+- **用户实测整包 SHA-256：** `957819f313352ff54adcaac9000037d082e2f42a5823e03f5e3eb6dffb344d6d`
+- **V6 classes.dex SHA-256：** `1f0194f96282bc3494e0ed17505a52d2cd552782cee5d534584480058b836e38`
+- **首页布局 res/Am.xml SHA-256：** `b246497606d126efa7e56156952bfd059538b9ffb18afb7a1c4cc44380293262`
+- **共用列表布局 res/mC.xml SHA-256：** `559a5e7d1b679338e5fb9be9eface0ee1edc7ef4ca454651b851ed9084b6a1bc`
 
-## 历史 V7.14 ARM32 真机基准（保留）
+## 网络卡片居中的 V6 实现
 
-# Nova TV V7.14 — 已实测 14TV APK 的精确恢复基线
+V6 复用已经成功的 V4 容器居中链路，只将容器宽度公式改为**实际 Android 资源尺寸**：
 
-**唯一可信功能基准：** `NovaTV_V7_14_Rows_Fragment_Fix_Test.apk`，29,767,890 字节，SHA-256 `c9977d28e57b6a58e2f4d09da959a1b41db2028020d3175facfe792e108e77ff`。
-
-本仓库 `main` 不再使用旧的 `ui/apply.py`、旧的发布工作流或把未经真机验证的 Java 近似改动误称为 V7.14。此版的优先目标是**保证交付的 APK 与真正通过 14TV 测试的 APK 每一字节都相同**。
-
-## 重建方式（严格区分源码编译与 APK 重建）
-
-`./scripts/v714_exact.py` 是完整可执行的**精确 APK 重建代码**，使用官方 6.5.5 `armeabi-v7a` 发布包作为不可变基底，将从已测试 V7.14 提取的修改原样重放：
-
-- DEX：还原完整的 Java/Dalvik 字节码差异，共 22 个发生变化的方法（`reference/v714-parity-manifest.json` 记录方法级 SHA256）。包括 14TV 启动、网络页面、存储、首页卡片、文件/播放列表等改动。
-- Android 资源：还原 7 处文案、资源表中的相关索引及两个布局 XML 的精确字节改动。
-- 重新打包：使用原本的 ZIP 顺序、对齐和压缩方式，并恢复**用户原来已测试 APK 的 Android 签名块**，不是生成一套新证书。
-- 最后必须完全满足原测试 APK 的 29,767,890 字节和整包 SHA-256。任何不一致立即失败，不发布。
-
-官方输入：`https://github.com/nova-video-player/aos-AVP/releases/tag/v6.5.5`，特定 `armeabi-v7a` APK 的 SHA-256 固定为 `2912258dafe8e5bb7e057885b7e2228c581d8a30682ced87036ee11db409443e`。
-
-手动离线重建：
-
-```sh
-python3 scripts/v714_exact.py /path/to/official-armeabi-v7a.apk /path/to/NovaTV_V7_14_14TV_Exact.apk
+```
+卡片总数 N = 已保存网络快捷方式数量 + 添加网络地址按钮
+卡片宽度 = 210dp
+卡片间距 = 16dp
+列表左右内边距 = 各 56dp
+居中容器宽度 = 210*N + 16*(N-1) + 2*56 = 226*N + 96 dp
+实际容器宽度 = min(设备可用屏幕宽度, 居中容器宽度)
 ```
 
-需要 Python 3 与 `zstd` CLI。GitHub Actions 自动下载官方包、重建、做哈希与 Android 签名验证，再上传到 `current` Release。`upstream/locked.xml` 仅记录当初官方 21 个 Git 仓库的固定版本以备源码审计，不参与这条精确重建链。
+当卡片数量增加到超过屏幕时仍可正常左右滚动。V6 只在网络二级页面更新容器位置，**不会改动已经完美的首页和 Leanback 共用 XML**。内部更新回调的合成按键会被拦截，不会再因空 KeyEvent 调用父类造成闪退。
 
-## 重要技术限制
+## 主分支云编译
 
-1. **APK 不能逆向出开发者最初写的、完全相同的 Java/Kotlin 源码。** 当前仓库交付的是官方开源基线引用 + 22 个方法/Android 资源的**完整、可重复执行的精确二进制改动代码**，可重新生成字节完全一致的成品，不应误称为完整原始 Java 源代码。
-2. 此 V7.14 基准 APK 只支持 **ARM 32 位（armeabi-v7a）**。这保证 14TV 实测行为与成品一致；对 X86TV/ARM64/Universal 的修改仍需要**独立验证**。不能把从另一架构 Gradle 编译得到的 APK 冒充同一实测版。
-3. 稳定性结论只适用于用户此前测试的 14TV APK；`classes.dex` 与 APK 整包哈希一致可证明字节一致，但不能替代新平台的运行验证。
-4. Git 历史提交可追溯；旧的脚本、旧发布工作流已从 `main` 当前文件树清理，不做危险的历史强制改写。
+仓库唯一的主构建流程 ` .github/workflows/v714-exact.yml ` 已改为**编译 V6**。它会：
 
-## 版本回归防护
+1. 从固定 SHA 的 V7.14 ARM32 三按钮 APK 与官方 Nova 6.5.5 Universal APK 重建 4 ABI 包。
+2. 保持已有 USB、首页布局、隐藏标题与自动模式修复；在此基础上应用 `scripts/network_center_v6.py`。
+3. 检查打包和签名后的 `classes.dex` 等于用户实测 V6 的固定 SHA，并检查首页和公共布局的哈希不变。
+4. 产出 `NovaTV_V7_14_V6_NetworkCentered_Universal.apk`，上传到 GitHub Actions 构建产物。
 
-`tests/test_v714_reference.py` 固定：四个被修改的 ZIP 成员、22 个 DEX 方法、原始与目标哈希、完整原始签名以及唯一发布工作流。云端验证不通过绝不会替换 Release。
+**注意：** 构建产物使用的签名证书若与实测 APK 不同，则新 APK 整包 SHA 会变化，也可能无法直接覆盖安装；不能将 DEX 内容一致当作签名一致。为了保护现有用户数据，请注意签名不一致的安装风险。
+
+历史 AutoMode 及早期失败版本不再作为主分支构建目标，但 Git 历史仍保留以便必要时回滚。**不要清空 Git 历史或删除 V6 基准。**
+
+这个仓库交付的是可重复执行的 APK 二进制重建/补丁代码，并不是从 APK 还原出的原始 Java/Kotlin 源码。

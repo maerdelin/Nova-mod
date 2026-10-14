@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Build four-ABI Universal APK from exact user-confirmed working V7.14 three-button ARM32 APK.
+"""Build the user-confirmed V7.14 V6 network-centered four-ABI Universal APK.
 
 No attempt to misrepresent a binary reconstruction as original source compilation.
 Only official Nova v6.5.5 extra-architecture native libraries are added to
-the SHA-256-pinned user-confirmed V7.14 three-button APK. Only the pinned local-root listing method in classes.dex is patched; resources and other assets are not altered.
+the SHA-256-pinned user-confirmed V7.14 three-button APK. USB/local-root, verified home, official AutoMode and network-only patches are applied in a fixed SHA-guarded sequence.
 """
 import argparse, hashlib, io, zipfile
 from center_home_layout import TARGET as CENTER_LAYOUT, patch as center_home_layout
 from hide_home_header import patch as hide_home_header
 from restore_auto_mode import patch as restore_auto_mode
+from network_center_v6 import patch_dex as network_center_v6
 from pathlib import Path
 
 OFFICIAL_UNIVERSAL_SHA='f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5'
@@ -74,9 +75,13 @@ def final_dex(dex):
     return patch_local_root_removable(fix_usb_guard(dex))
 
 
-def final_mode_unlocked_dex(dex):
-    """Apply original V7.14 UI patches, then restore R16 dynamic TV/tablet mode."""
-    return restore_auto_mode(hide_home_header(final_dex(dex)))
+def final_v6_dex(dex):
+    """Build the complete user-confirmed V6: TV home, automatic UI mode, and network centering.
+
+    The network-only fixed-size DEX patch is applied LAST against the SHA-pinned,
+    previously verified AutoMode DEX. No change to the V7.14 home layout.
+    """
+    return network_center_v6(restore_auto_mode(hide_home_header(final_dex(dex))))
 
 def signature_metadata(n):
     n=n.upper()
@@ -133,7 +138,7 @@ def merge(arm32_path,universal_path,out_path):
                 o.external_attr=inf.external_attr
                 o.create_system=inf.create_system
                 data=base.read(inf.filename)
-                if inf.filename=='classes.dex':data=final_mode_unlocked_dex(data)
+                if inf.filename=='classes.dex':data=final_v6_dex(data)
                 if inf.filename==CENTER_LAYOUT:data=center_home_layout(data)
                 out.writestr(o,data,compress_type=o.compress_type,compresslevel=6)
             for n in additions:
@@ -144,7 +149,7 @@ def merge(arm32_path,universal_path,out_path):
                 o.create_system=inf.create_system
                 out.writestr(o,official.read(n),compress_type=o.compress_type,compresslevel=6)
     verify(arm32_path,universal_path,out_path)
-    print('PASS: Three-button Universal four-ABI unsigned build; only native libraries and pinned TV/home patches plus restored R16 mode selector',out_path.stat().st_size)
+    print('PASS: V6 Network-Centered four-ABI unsigned build; protected TV home unchanged',out_path.stat().st_size)
 
 def verify(arm32_path,universal_path,candidate_path):
     check_base(arm32_path,universal_path)
@@ -161,10 +166,10 @@ def verify(arm32_path,universal_path,candidate_path):
             raise RuntimeError('Unexpected missing/extra/duplicate functional APK entries: '+repr((expected-actual,actual-expected)))
         for n in original:
             data=base.read(n)
-            if n=='classes.dex':data=final_mode_unlocked_dex(data)
+            if n=='classes.dex':data=final_v6_dex(data)
             if n==CENTER_LAYOUT:data=center_home_layout(data)
             if data!=candidate.read(n):
-                raise RuntimeError('Modified functional asset outside removable storage, centered layout, home-header and R16 mode restore: '+n)
+                raise RuntimeError('Modified functional asset outside SHA-pinned V6 local root, home, AutoMode and network centering: '+n)
         for n in expected_extra:
             if official.read(n)!=candidate.read(n):
                 raise RuntimeError('Modified official Nova 6.5.5 native library: '+n)
@@ -172,7 +177,7 @@ def verify(arm32_path,universal_path,candidate_path):
             n=sum(1 for item in actual if abi(item)==target)
             if n==0:raise RuntimeError('Missing native ABI '+target)
             print('PASS: ABI',target,n,'libraries')
-    print('PASS: three-button baseline retained except pinned local-root, home XML/header and R16 auto-mode selector patches')
+    print('PASS: protected home unchanged; pinned V6 network centering, local-root, header and automatic mode present')
     print('PASS: official SHA-pinned Nova 6.5.5 native libraries added for other three ABIs')
 
 if __name__=='__main__':
