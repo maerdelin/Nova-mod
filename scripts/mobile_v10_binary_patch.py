@@ -15,7 +15,8 @@ MEMBERS=['classes.dex','res/Tl.xml','res/2a.xml','res/_J.xml','res/yt.xml']
 SOURCE_V6_DEX='1f0194f96282bc3494e0ed17505a52d2cd552782cee5d534584480058b836e38'
 def digest(b):return hashlib.sha256(b).digest()
 def rebuild(base,out):
-    with zipfile.ZipFile(base) as check:\n        if hashlib.sha256(check.read('classes.dex')).hexdigest()!=SOURCE_V6_DEX:raise RuntimeError('Wrong V6 DEX input')
+    with zipfile.ZipFile(base) as check:
+        if hashlib.sha256(check.read('classes.dex')).hexdigest()!=SOURCE_V6_DEX:raise RuntimeError('Wrong V6 DEX input')
     patches=zlib.decompress(base64.b64decode(V10_PATCH_BASE64))
     p=0; replacements={}
     with zipfile.ZipFile(base) as orig:
