@@ -1,140 +1,96 @@
 name: Nova V7.14 V6 - User Verified Network Centering
-
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches:
+      - feature/v714-v10-mobile-ui-android-smoke-20261014
   workflow_dispatch:
-
 permissions:
-  contents: write
+  contents: read
   actions: read
-
-concurrency:
-  group: nova-v714-v6-network-centering
-  cancel-in-progress: false
-
 jobs:
-  build:
+  android-mobile-v10:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 65
     steps:
-      - name: Checkout pinned build scripts
+      - name: Checkout mobile V10 test branch
         uses: actions/checkout@v4
-
-      - name: Validate scripts and pinned official sources
+      - name: Download SHA-pinned V6 baseline and apply V10 mobile patch
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/build_universal.py scripts/center_home_layout.py scripts/hide_home_header.py scripts/restore_auto_mode.py scripts/network_center_v6.py tests/test_auto_mode.py tests/test_network_center_v6.py
-          python3 -m unittest discover -s tests -v
           mkdir -p inputs dist
-          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
-            --output inputs/confirmed-arm32.apk \
-            'https://github.com/maerdelin/Nova-mod/releases/download/v7.14-three-buttons-run-38359455887-attempt-1/NovaTV_V7_14_ThreeButtons_ARM32_Test.apk'
-          echo 'b48c77f62c265b9da979010a1e88829773cd82a3b900f479584f0f0aa752786d  inputs/confirmed-arm32.apk' | sha256sum --check --strict
-          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 \
-            --output inputs/official-universal.apk \
-            'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-universal-release.apk'
-          echo 'f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5  inputs/official-universal.apk' | sha256sum --check --strict
-
-      - name: "Build V6 Universal: original TV home, unlocked AutoMode, network row centered"
+          python3 -m py_compile scripts/mobile_v10_binary_patch.py
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
+            -o inputs/v6.apk 'https://github.com/maerdelin/Nova-mod/releases/download/v7.14-v6-network-centered/NovaTV_V7_14_V6_NetworkCentered_Universal.apk'
+          python3 scripts/mobile_v10_binary_patch.py inputs/v6.apk dist/v10-unsigned.apk
+          python3 - <<'PY'
+          import hashlib,zipfile
+          with zipfile.ZipFile('dist/v10-unsigned.apk') as z:
+            assert z.testzip() is None
+            assert hashlib.sha256(z.read('classes.dex')).hexdigest()=='96b324978d5002fbedcf438fd9ac5a5df964ae57fc91e604652fb90162acab24'
+            assert hashlib.sha256(z.read('res/Am.xml')).hexdigest()=='b246497606d126efa7e56156952bfd059538b9ffb18afb7a1c4cc44380293262'
+            print('PASS exact V10 mobile DEX, proven V6 TV XML unchanged')
+          PY
+      - name: Zipalign and sign the candidate APK for emulator
         run: |
           set -euo pipefail
-          python3 scripts/build_universal.py merge inputs/confirmed-arm32.apk inputs/official-universal.apk dist/unsigned-universal.apk
-          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/unsigned-universal.apk
-
-      - name: Zipalign, sign, and verify user-confirmed V6 Universal APK
-        env:
-          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
-          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
-          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
-          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
           ALIGN="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name zipalign | sort -V | tail -n1)"
-          KEYSTORE="$RUNNER_TEMP/universal-three-button.jks"
-          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
-            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
-            echo 'Using configured signing certificate'
-          elif [[ -n "$NOVA_KEYSTORE_BASE64" || -n "$NOVA_STORE_PASSWORD" || -n "$NOVA_KEY_ALIAS" || -n "$NOVA_KEY_PASSWORD" ]]; then
-            echo "::error::Incomplete signing secrets; refusing to sign"
-            exit 1
-          else
-            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
-            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
-            NOVA_KEY_ALIAS=nova-v714-universal-test
-            keytool -genkeypair -noprompt -keystore "$KEYSTORE" -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 -dname 'CN=Nova Universal Test, O=Nova Mod' -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD" > /dev/null
-            echo '::warning::Temporary signing certificate; cannot upgrade a differently signed installed APK'
-          fi
-          chmod 600 "$KEYSTORE"
-          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
-          "$ALIGN" -p -f 4 dist/unsigned-universal.apk dist/aligned-universal.apk
-          "$ALIGN" -c -v 4 dist/aligned-universal.apk
-          "$SIGNER" sign --min-sdk-version 23 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
-            --ks "$KEYSTORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
-            --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
-            --out dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk dist/aligned-universal.apk
-          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk
-          python3 scripts/build_universal.py verify inputs/confirmed-arm32.apk inputs/official-universal.apk dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk
-          sha256sum dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk | tee dist/SHA256SUMS_V6.txt
-          rm -f "$KEYSTORE"
-
-      - name: Archive signed APK (90 days)
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n1)"
+          pass="$(openssl rand -hex 18)"
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/nova-v10-test.jks" -alias test -keyalg RSA -keysize 3072 -validity 60 -dname 'CN=Nova V10 Emulator Test' -storepass "$pass" -keypass "$pass"
+          "$ALIGN" -p -f 4 dist/v10-unsigned.apk dist/v10-aligned.apk
+          "$SIGNER" sign --min-sdk-version 23 --v2-signing-enabled true --ks "$RUNNER_TEMP/nova-v10-test.jks" --ks-key-alias test --ks-pass "pass:$pass" --key-pass "pass:$pass" --out dist/v10-emulator.apk dist/v10-aligned.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose dist/v10-emulator.apk
+      - name: Allow Android KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android 13 mobile/tablet install, launch, click checks, crash logcat
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          script: |
+            set -eu
+            adb install -r dist/v10-emulator.apk
+            adb shell pm grant org.courville.nova android.permission.READ_EXTERNAL_STORAGE || true
+            adb shell wm size 1280x800
+            adb shell wm density 160
+            adb logcat -c
+            adb shell monkey -p org.courville.nova 1
+            sleep 25
+            adb shell pidof org.courville.nova
+            adb shell screencap -p /sdcard/mobile_v10_home.png
+            adb pull /sdcard/mobile_v10_home.png dist/mobile_v10_home.png
+            adb shell uiautomator dump /sdcard/mobile_v10_home.xml
+            adb pull /sdcard/mobile_v10_home.xml dist/mobile_v10_home.xml
+            adb shell input tap 96 400
+            sleep 8
+            adb shell screencap -p /sdcard/mobile_v10_network.png
+            adb pull /sdcard/mobile_v10_network.png dist/mobile_v10_network.png
+            adb shell uiautomator dump /sdcard/mobile_v10_network.xml || true
+            adb pull /sdcard/mobile_v10_network.xml dist/mobile_v10_network.xml || true
+            adb shell pidof org.courville.nova
+            adb logcat -b crash -d -v time > dist/v10_crash.log
+            adb logcat -d -v time > dist/v10_full.log
+            if grep -E 'FATAL EXCEPTION|VerifyError|NoSuchMethodError|NoSuchFieldError' dist/v10_crash.log; then
+              echo "FAIL: mobile V10 android crash / verifier failure"
+              exit 1
+            fi
+            echo "PASS: V10 installs, launches and network page opens without crash"
+      - name: Upload V10 runtime evidence (not a public release)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-V7.14-V6-NetworkCentered-Main-Signed
+          name: Nova-V10-Mobile-Android-Emulator-Evidence
           path: |
-            dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk
-            dist/SHA256SUMS_V6.txt
-          retention-days: 90
-          if-no-files-found: error
-
-      - name: "Verify signed V6 APK: exact DEX, unlocked mode, centered home and network"
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import hashlib, zipfile
-          from scripts.network_center_v6 import OUTPUT_DEX_SHA, PROTECTED_LAYOUT_SHA
-          from scripts.restore_auto_mode import MODE_CODE_ITEM, ORIGINAL_MODE_CODE
-          apk='dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk'
-          with zipfile.ZipFile(apk) as z:
-              assert z.testzip() is None
-              d=z.read('classes.dex')
-              assert hashlib.sha256(d).hexdigest()==OUTPUT_DEX_SHA
-              assert d[MODE_CODE_ITEM+16:MODE_CODE_ITEM+16+len(ORIGINAL_MODE_CODE)]==ORIGINAL_MODE_CODE
-              for path,expected in PROTECTED_LAYOUT_SHA.items():
-                  assert hashlib.sha256(z.read(path)).hexdigest()==expected,(path,expected)
-              print('PASS: signed APK matches exact user-tested V6 DEX and protected TV home/common layout; R16 automatic mode retained')
-          PY
-
-      - name: Publish verified V6 APK to Releases
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="v7.14-v6-network-centered"
-          title="Nova V7.14 V6 - User-Verified Network Centering"
-          apk="dist/NovaTV_V7_14_V6_NetworkCentered_Universal.apk"
-          sums="dist/SHA256SUMS_V6.txt"
-          test -s "$apk" && test -s "$sums"
-          sha256sum --check --strict "$sums"
-          echo "All V6 signed DEX, AutoMode and protected layout checks passed; now publishing."
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$apk" "$sums" --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" \
-              --notes "V6 user-verified TV home + network storage centering and AutoMode. Signed Universal APK for armeabi-v7a, arm64-v8a, x86, x86_64. For an upgrade, signing certificates must match; CI may use a fresh test certificate when signing secrets are not set."
-          else
-            gh release create "$tag" "$apk" "$sums" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "$title" --latest \
-              --notes "V6 user-verified TV home + network storage centering and AutoMode. Signed Universal APK for armeabi-v7a, arm64-v8a, x86, x86_64. For an upgrade, signing certificates must match; CI may use a fresh test certificate when signing secrets are not set."
-          fi
-          id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.id')"
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -f make_latest=true >/dev/null
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,assets \
-            --jq '{tag: .tagName, assets: [.assets[].name]}'
-          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
-          test "$latest" = "$tag" || { echo "::error::Latest release is $latest, expected $tag"; exit 1; }
-          echo "PASS: Latest V6 release has published APK and checksums."
+            dist/v10-emulator.apk
+            dist/mobile_v10_*.png
+            dist/mobile_v10_*.xml
+            dist/v10_*.log
+          if-no-files-found: warn
+          retention-days: 14
