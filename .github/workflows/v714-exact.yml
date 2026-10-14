@@ -54,34 +54,7 @@ jobs:
           profile: pixel_6
           force-avd-creation: true
           emulator-boot-timeout: 900
-          script: |
-            set -eu
-            adb install -r dist/v10-emulator.apk
-            adb shell pm grant org.courville.nova android.permission.READ_EXTERNAL_STORAGE || true
-            adb shell wm size 1280x800
-            adb shell wm density 160
-            adb logcat -c
-            adb shell monkey -p org.courville.nova 1
-            sleep 25
-            adb shell pidof org.courville.nova
-            adb shell screencap -p /sdcard/mobile_v10_home.png
-            adb pull /sdcard/mobile_v10_home.png dist/mobile_v10_home.png
-            adb shell uiautomator dump /sdcard/mobile_v10_home.xml
-            adb pull /sdcard/mobile_v10_home.xml dist/mobile_v10_home.xml
-            adb shell input tap 96 400
-            sleep 8
-            adb shell screencap -p /sdcard/mobile_v10_network.png
-            adb pull /sdcard/mobile_v10_network.png dist/mobile_v10_network.png
-            adb shell uiautomator dump /sdcard/mobile_v10_network.xml || true
-            adb pull /sdcard/mobile_v10_network.xml dist/mobile_v10_network.xml || true
-            adb shell pidof org.courville.nova
-            adb logcat -b crash -d -v time > dist/v10_crash.log
-            adb logcat -d -v time > dist/v10_full.log
-            if grep -E 'FATAL EXCEPTION|VerifyError|NoSuchMethodError|NoSuchFieldError' dist/v10_crash.log; then
-              echo "FAIL: mobile V10 android crash / verifier failure"
-              exit 1
-            fi
-            echo "PASS: V10 installs, launches and network page opens without crash"
+          script: bash scripts/v10_android_smoke.sh
       - name: Upload V10 runtime evidence (not a public release)
         if: always()
         uses: actions/upload-artifact@v4
