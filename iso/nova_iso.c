@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "libbluray/bluray.h"
 
@@ -33,6 +34,8 @@ typedef struct {
     uint8_t *cache;
     int64_t cache_start;
     size_t cache_len;
+    uint64_t range_requests;
+    uint64_t fetched_bytes;
     pthread_mutex_t lock;
 } iso_input;
 
@@ -51,6 +54,12 @@ typedef struct {
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static iso_session *g_session = NULL;
+
+static int64_t mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 static int send_all(int fd, const void *buf, size_t len) {
     const uint8_t *p = (const uint8_t *)buf;
@@ -100,8 +109,15 @@ static int parse_local_url(const char *url, iso_input *in) {
 }
 
 static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *out) {
+    uint64_t req_id = ++in->range_requests;
+    int64_t t0 = mono_ms();
+    LOGI("RANGE_BEGIN id=%" PRIu64 " start=%" PRId64 " want=%zu totalFetched=%" PRIu64,
+         req_id, start, want, in->fetched_bytes);
     int fd = connect_loopback(in->port);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        LOGE("RANGE_CONNECT_FAIL id=%" PRIu64 " start=%" PRId64 " errno=%d", req_id, start, errno);
+        return -1;
+    }
 
     uint64_t end = (uint64_t)start + want - 1;
     char req[8192];
@@ -132,14 +148,21 @@ static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *o
         }
         if (body_at >= 0) break;
     }
-    if (body_at < 0) { close(fd); return -1; }
+    if (body_at < 0) {
+        LOGE("RANGE_HEADER_FAIL id=%" PRIu64 " start=%" PRId64, req_id, start);
+        close(fd);
+        return -1;
+    }
 
     header[(size_t)body_at > 0 ? (size_t)body_at - 1 : 0] = 0;
     int status = 0;
     if (sscanf((char *)header, "HTTP/%*s %d", &status) != 1 || (status != 206 && status != 200)) {
+        LOGE("RANGE_STATUS_FAIL id=%" PRIu64 " start=%" PRId64 " status=%d", req_id, start, status);
         close(fd);
         return -1;
     }
+    LOGI("RANGE_HEADERS id=%" PRIu64 " start=%" PRId64 " status=%d headerMs=%" PRId64,
+         req_id, start, status, mono_ms() - t0);
 
     size_t copied = used - (size_t)body_at;
     if (copied > want) copied = want;
@@ -156,6 +179,9 @@ static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *o
         copied += (size_t)n;
     }
     close(fd);
+    in->fetched_bytes += copied;
+    LOGI("RANGE_END id=%" PRIu64 " start=%" PRId64 " got=%zu ms=%" PRId64 " totalFetched=%" PRIu64,
+         req_id, start, copied, mono_ms() - t0, in->fetched_bytes);
     return (ssize_t)copied;
 }
 
@@ -171,6 +197,8 @@ static int iso_read_blocks(void *handle, void *buf, int lba, int num_blocks) {
         int64_t byte_pos = (int64_t)(lba + done) * UDF_BLOCK;
         if (in->cache_len == 0 || byte_pos < in->cache_start ||
             byte_pos + UDF_BLOCK > in->cache_start + (int64_t)in->cache_len) {
+            LOGI("CACHE_MISS lba=%d blocks=%d byte=%" PRId64 " oldStart=%" PRId64 " oldLen=%zu",
+                 lba + done, num_blocks - done, byte_pos, in->cache_start, in->cache_len);
             ssize_t got = fetch_range(in, byte_pos, CACHE_BYTES, in->cache);
             if (got < UDF_BLOCK) break;
             in->cache_start = byte_pos;
@@ -273,6 +301,7 @@ static int seek_exact(BLURAY *bd, uint64_t target) {
 }
 
 static void serve_client(iso_session *s, int fd) {
+    int64_t request_t0 = mono_ms();
     char req[HEADER_MAX];
     if (read_request(fd, req, sizeof(req)) < 0) return;
 
@@ -291,6 +320,8 @@ static void serve_client(iso_session *s, int fd) {
     }
 
     uint64_t count = end - start + 1;
+    LOGI("PLAYER_REQ method=%s path=%s start=%" PRIu64 " end=%" PRIu64 " count=%" PRIu64 " partial=%d",
+         method, path, start, end, count, partial);
     char hdr[1024];
     int n;
     if (partial) {
@@ -313,21 +344,43 @@ static void serve_client(iso_session *s, int fd) {
     if (!buf) return;
 
     pthread_mutex_lock(&s->io_lock);
+    LOGI("PLAYER_SEEK_BEGIN start=%" PRIu64, start);
     if (seek_exact(s->bd, start) < 0) {
+        LOGE("PLAYER_SEEK_FAIL start=%" PRIu64, start);
         pthread_mutex_unlock(&s->io_lock);
         free(buf);
         return;
     }
+    LOGI("PLAYER_SEEK_READY start=%" PRIu64 " ms=%" PRId64, start, mono_ms() - request_t0);
 
     uint64_t left = count;
+    uint64_t sent = 0;
+    int first_data = 1;
     while (left && !s->stopping) {
         int ask = (int)(left < IO_CHUNK ? left : IO_CHUNK);
         int got = bd_read(s->bd, buf, ask);
-        if (got <= 0) break;
-        if (send_all(fd, buf, (size_t)got) < 0) break;
+        if (got <= 0) {
+            LOGE("PLAYER_BD_READ_STOP got=%d sent=%" PRIu64 " left=%" PRIu64, got, sent, left);
+            break;
+        }
+        if (first_data) {
+            LOGI("PLAYER_FIRST_DATA got=%d ms=%" PRId64, got, mono_ms() - request_t0);
+            first_data = 0;
+        }
+        if (send_all(fd, buf, (size_t)got) < 0) {
+            LOGI("PLAYER_SOCKET_CLOSED sent=%" PRIu64 " left=%" PRIu64, sent, left);
+            break;
+        }
         left -= (uint64_t)got;
+        sent += (uint64_t)got;
+        if (sent && (sent % (16ULL * 1024 * 1024)) < (uint64_t)got) {
+            LOGI("PLAYER_PROGRESS sent=%" PRIu64 " left=%" PRIu64 " totalFetched=%" PRIu64,
+                 sent, left, s->input.fetched_bytes);
+        }
     }
     pthread_mutex_unlock(&s->io_lock);
+    LOGI("PLAYER_REQ_END sent=%" PRIu64 " expected=%" PRIu64 " ms=%" PRId64 " totalFetched=%" PRIu64,
+         sent, count, mono_ms() - request_t0, s->input.fetched_bytes);
     free(buf);
 }
 
@@ -369,6 +422,8 @@ static void session_destroy(iso_session *s) {
 }
 
 static iso_session *session_create(const char *url) {
+    int64_t open_t0 = mono_ms();
+    LOGI("OPEN_BEGIN url=%s", url);
     iso_session *s = calloc(1, sizeof(*s));
     if (!s) return NULL;
     s->listen_fd = -1;
@@ -383,11 +438,14 @@ static iso_session *session_create(const char *url) {
     }
 
     s->bd = bd_init();
+    LOGI("UDF_OPEN_BEGIN");
     if (!s->bd || !bd_open_stream(s->bd, &s->input, iso_read_blocks)) {
         LOGE("bd_open_stream failed");
         session_destroy(s);
         return NULL;
     }
+    LOGI("UDF_OPEN_END ms=%" PRId64 " ranges=%" PRIu64 " fetched=%" PRIu64,
+         mono_ms() - open_t0, s->input.range_requests, s->input.fetched_bytes);
 
     const BLURAY_DISC_INFO *di = bd_get_disc_info(s->bd);
     if (di && di->aacs_detected && !di->aacs_handled) {
@@ -396,8 +454,13 @@ static iso_session *session_create(const char *url) {
         return NULL;
     }
 
+    int64_t scan_t0 = mono_ms();
+    LOGI("PLAYLIST_SCAN_BEGIN ranges=%" PRIu64 " fetched=%" PRIu64,
+         s->input.range_requests, s->input.fetched_bytes);
     int titles = bd_get_titles(s->bd, TITLES_RELEVANT, 180);
     if (titles <= 0) titles = bd_get_titles(s->bd, TITLES_RELEVANT, 0);
+    LOGI("PLAYLIST_SCAN_END titles=%d ms=%" PRId64 " ranges=%" PRIu64 " fetched=%" PRIu64,
+         titles, mono_ms() - scan_t0, s->input.range_requests, s->input.fetched_bytes);
     if (titles <= 0) {
         LOGE("No Blu-ray titles found");
         session_destroy(s);
@@ -426,7 +489,7 @@ static iso_session *session_create(const char *url) {
     s->title_size = bd_get_title_size(s->bd);
     BLURAY_TITLE_INFO *ti = bd_get_title_info(s->bd, (uint32_t)main_title, 0);
     if (ti) {
-        LOGI("main title=%d playlist=%05u duration=%" PRIu64 "s clips=%u size=%" PRIu64,
+        LOGI("MAIN_TITLE title=%d playlist=%05u duration=%" PRIu64 "s clips=%u size=%" PRIu64,
              main_title, ti->playlist, ti->duration / 90000, ti->clip_count, s->title_size);
         bd_free_title_info(ti);
     }
@@ -461,6 +524,8 @@ static iso_session *session_create(const char *url) {
         return NULL;
     }
     s->thread_started = 1;
+    LOGI("OPEN_READY port=%d titleSize=%" PRIu64 " totalMs=%" PRId64 " ranges=%" PRIu64 " fetched=%" PRIu64,
+         s->port, s->title_size, mono_ms() - open_t0, s->input.range_requests, s->input.fetched_bytes);
     return s;
 }
 
