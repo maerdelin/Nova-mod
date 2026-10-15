@@ -2,6 +2,8 @@ name: Nova Video Player mod
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
   push:
     branches: [main]
 
@@ -25,12 +27,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq zstd
-          python3 -m py_compile scripts/build.py
+          python3 -m py_compile scripts/build.py scripts/check_upstream.py
           mkdir -p inputs dist
           curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
             -o inputs/official.apk \
             'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-universal-release.apk'
           echo 'f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5  inputs/official.apk' | sha256sum -c -
+      - name: Check newest official release and compatibility gate
+        run: python3 scripts/check_upstream.py
       - name: Reconstruct SHA-locked V9.8.2 functional APK
         run: python3 scripts/build.py build inputs/official.apk dist/unsigned.apk
       - name: Zipalign and sign APK
@@ -82,7 +86,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
       - name: Publish Release and keep latest three
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
