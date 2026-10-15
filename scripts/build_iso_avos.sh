@@ -34,32 +34,38 @@ fi
 # core.mk accidentally omits libyuv from NATIVE_PKG_LIST and the alias target.
 python3 - "$SRC/core.mk" <<'PY'
 from pathlib import Path
-import sys
+import re, sys
 
 p=Path(sys.argv[1])
 s=p.read_text()
-old='''NATIVE_PKG_LIST := \
-	FileCoreLibrary \
-	native/libnativehelper
-'''
-new='''NATIVE_PKG_LIST := \
-	FileCoreLibrary \
-	native/libyuv \
-	native/libnativehelper
-'''
-if old not in s:
-    raise SystemExit('v6.5.5 core.mk NATIVE_PKG_LIST shape changed')
-s=s.replace(old,new,1)
 
-old2='''native_libnativehelper: native_build_native/libnativehelper
-'''
-new2='''native_libyuv: native_build_native/libyuv
+pkg_start=s.find('NATIVE_PKG_LIST :=')
+pkg_end=s.find('NATIVE_LIST :=')
+if pkg_start < 0 or pkg_end < 0 or pkg_end <= pkg_start:
+    raise SystemExit('Unable to locate NATIVE_PKG_LIST section')
 
-native_libnativehelper: native_build_native/libnativehelper
-'''
-if old2 not in s:
-    raise SystemExit('v6.5.5 core.mk native_libnativehelper target missing')
-s=s.replace(old2,new2,1)
+pkg=s[pkg_start:pkg_end]
+if 'native/libyuv' not in pkg:
+    m=re.search(r'(^\s*native/libnativehelper\s*$)', pkg, re.M)
+    if not m:
+        raise SystemExit('Unable to locate native/libnativehelper entry in NATIVE_PKG_LIST')
+    abs_start=pkg_start+m.start(1)
+    s=s[:abs_start] + '\tnative/libyuv \\\n' + s[abs_start:]
+
+if not re.search(r'^native_libyuv\s*:', s, re.M):
+    m=re.search(r'^native_libnativehelper\s*:\s*native_build_native/libnativehelper\s*$', s, re.M)
+    if not m:
+        raise SystemExit('Unable to locate native_libnativehelper alias target')
+    s=s[:m.start()] + 'native_libyuv: native_build_native/libyuv\n\n' + s[m.start():]
+
+pkg_start=s.find('NATIVE_PKG_LIST :=')
+pkg_end=s.find('NATIVE_LIST :=')
+pkg=s[pkg_start:pkg_end]
+if 'native/libyuv' not in pkg:
+    raise SystemExit('Failed to add native/libyuv to NATIVE_PKG_LIST')
+if not re.search(r'^native_libyuv\s*:\s*native_build_native/libyuv\s*$', s, re.M):
+    raise SystemExit('Failed to add native_libyuv alias target')
+
 p.write_text(s)
 PY
 
