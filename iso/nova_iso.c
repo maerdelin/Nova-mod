@@ -106,8 +106,8 @@ static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *o
     uint64_t end = (uint64_t)start + want - 1;
     char req[8192];
     int q = snprintf(req, sizeof(req),
-        "GET %s HTTP/1.1\\r\\nHost: 127.0.0.1:%d\\r\\n"
-        "Range: bytes=%" PRId64 "-%" PRIu64 "\\r\\nConnection: close\\r\\n\\r\\n",
+        "GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+        "Range: bytes=%" PRId64 "-%" PRIu64 "\r\nConnection: close\r\n\r\n",
         in->path, in->port, start, end);
     if (q <= 0 || (size_t)q >= sizeof(req) || send_all(fd, req, (size_t)q) < 0) {
         close(fd);
@@ -124,8 +124,8 @@ static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *o
         used += (size_t)n;
         size_t begin = old > 3 ? old - 3 : 0;
         for (size_t i = begin; i + 3 < used; i++) {
-            if (header[i] == '\\r' && header[i+1] == '\\n' &&
-                header[i+2] == '\\r' && header[i+3] == '\\n') {
+            if (header[i] == '\r' && header[i+1] == '\n' &&
+                header[i+2] == '\r' && header[i+3] == '\n') {
                 body_at = (ssize_t)(i + 4);
                 break;
             }
@@ -201,7 +201,7 @@ static int read_request(int fd, char *buf, size_t cap) {
         buf[used] = 0;
         size_t begin = old > 3 ? old - 3 : 0;
         for (size_t i = begin; i + 3 < used; i++) {
-            if (buf[i] == '\\r' && buf[i+1] == '\\n' && buf[i+2] == '\\r' && buf[i+3] == '\\n')
+            if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n')
                 return 0;
         }
     }
@@ -210,15 +210,15 @@ static int read_request(int fd, char *buf, size_t cap) {
 
 static const char *find_header(const char *req, const char *name) {
     size_t nl = strlen(name);
-    const char *p = strstr(req, "\\r\\n");
+    const char *p = strstr(req, "\r\n");
     if (!p) return NULL;
     p += 2;
     while (*p) {
-        const char *e = strstr(p, "\\r\\n");
+        const char *e = strstr(p, "\r\n");
         if (!e || e == p) return NULL;
         if ((size_t)(e - p) > nl && !strncasecmp(p, name, nl) && p[nl] == ':') {
             p += nl + 1;
-            while (*p == ' ' || *p == '\\t') p++;
+            while (*p == ' ' || *p == '\t') p++;
             return p;
         }
         p = e + 2;
@@ -285,7 +285,7 @@ static void serve_client(iso_session *s, int fd) {
     uint64_t start, end;
     int partial;
     if (!s->title_size || parse_range(req, s->title_size, &start, &end, &partial) < 0) {
-        const char *bad = "HTTP/1.1 416 Range Not Satisfiable\\r\\nConnection: close\\r\\n\\r\\n";
+        const char *bad = "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\n\r\n";
         send_all(fd, bad, strlen(bad));
         return;
     }
@@ -295,17 +295,17 @@ static void serve_client(iso_session *s, int fd) {
     int n;
     if (partial) {
         n = snprintf(hdr, sizeof(hdr),
-            "HTTP/1.1 206 Partial Content\\r\\n"
-            "Content-Type: video/mp2t\\r\\nAccept-Ranges: bytes\\r\\n"
-            "Content-Length: %" PRIu64 "\\r\\n"
-            "Content-Range: bytes %" PRIu64 "-%" PRIu64 "/%" PRIu64 "\\r\\n"
-            "Connection: close\\r\\n\\r\\n",
+            "HTTP/1.1 206 Partial Content\r\n"
+            "Content-Type: video/mp2t\r\nAccept-Ranges: bytes\r\n"
+            "Content-Length: %" PRIu64 "\r\n"
+            "Content-Range: bytes %" PRIu64 "-%" PRIu64 "/%" PRIu64 "\r\n"
+            "Connection: close\r\n\r\n",
             count, start, end, s->title_size);
     } else {
         n = snprintf(hdr, sizeof(hdr),
-            "HTTP/1.1 200 OK\\r\\nContent-Type: video/mp2t\\r\\n"
-            "Accept-Ranges: bytes\\r\\nContent-Length: %" PRIu64 "\\r\\n"
-            "Connection: close\\r\\n\\r\\n", count);
+            "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n"
+            "Accept-Ranges: bytes\r\nContent-Length: %" PRIu64 "\r\n"
+            "Connection: close\r\n\r\n", count);
     }
     if (n <= 0 || send_all(fd, hdr, (size_t)n) < 0 || is_head) return;
 
