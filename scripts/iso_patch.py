@@ -22,6 +22,7 @@ PROXY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/Blura
 .source "BlurayIsoProxy.java"
 
 .field private static sInput:Lcom/archos/filecorelibrary/StreamOverHttp;
+.field private static sForceAvos:Z
 
 .method static constructor <clinit>()V
     .locals 1
@@ -39,6 +40,45 @@ PROXY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/Blura
     invoke-direct {p0}, Ljava/lang/Object;-><init>()V
 
     return-void
+.end method
+
+.method public static armForUri(Landroid/net/Uri;)V
+    .locals 3
+
+    const/4 v0, 0x0
+
+    if-eqz p0, :store
+
+    invoke-virtual {p0}, Landroid/net/Uri;->getPath()Ljava/lang/String;
+
+    move-result-object v1
+
+    if-eqz v1, :store
+
+    sget-object v2, Ljava/util/Locale;->ROOT:Ljava/util/Locale;
+
+    invoke-virtual {v1, v2}, Ljava/lang/String;->toLowerCase(Ljava/util/Locale;)Ljava/lang/String;
+
+    move-result-object v1
+
+    const-string v2, ".iso"
+
+    invoke-virtual {v1, v2}, Ljava/lang/String;->endsWith(Ljava/lang/String;)Z
+
+    move-result v0
+
+    :store
+    sput-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sForceAvos:Z
+
+    return-void
+.end method
+
+.method public static shouldForceAvos()Z
+    .locals 1
+
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sForceAvos:Z
+
+    return v0
 .end method
 
 .method private static closeLocked()V
@@ -192,6 +232,228 @@ def patch_player_text(text: str) -> tuple[str, str]:
     )
     new_body = body[:a.start()] + injected + body[a.end():]
     return text[:m.start()] + new_body + text[m.end():], m.group(0).splitlines()[0]
+
+
+def patch_force_avos_player_text(text: str) -> tuple[str, str]:
+    arm_sig = 'BlurayIsoProxy;->armForUri(Landroid/net/Uri;)V'
+    factory_old = ('Lcom/archos/medialib/MediaFactory;->createPlayer'
+                   '(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;')
+    factory_new = ('Lcom/archos/mediacenter/video/player/IsoPlayerFactory;->create'
+                   '(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;')
+
+    # Arm persistent ISO state whenever Player receives a new source URI.
+    set_uri = re.compile(
+        r'(^\.method public setVideoURI\(Landroid/net/Uri;Ljava/util/Map;\)V\s*    nums = [1]
+    for p in root.glob('smali_classes*'):
+        try:
+            nums.append(int(p.name.removeprefix('smali_classes')))
+        except ValueError:
+            pass
+    return root / f'smali_classes{max(nums) + 1}'
+
+def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = None):
+    mime = _one(root.glob('smali*/com/archos/filecorelibrary/MimeUtils.smali'), 'MimeUtils')
+    mime_text = mime.read_text()
+    old_count = mime_text.count(MIME_OLD)
+    new_count = mime_text.count(MIME_NEW)
+    if old_count == 1:
+        mime.write_text(mime_text.replace(MIME_OLD, MIME_NEW, 1))
+        mime_status = 'applied'
+    elif old_count == 0 and new_count == 1:
+        mime_status = 'already-applied'
+    else:
+        raise RuntimeError(f'ISO MIME mapping conflict old={old_count} new={new_count}')
+
+    player = _one(root.glob('smali*/com/archos/mediacenter/video/player/Player.smali'), 'Player')
+    patched, player_status = patch_player_text(player.read_text())
+    patched, player_factory_status = patch_force_avos_player_text(patched)
+    player.write_text(patched)
+
+    media_factory = _one(root.glob('smali*/com/archos/medialib/MediaFactory.smali'), 'MediaFactory')
+    mf_patched, media_factory_status = patch_media_factory_text(media_factory.read_text())
+    media_factory.write_text(mf_patched)
+
+    proxy_hits = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
+    if proxy_hits:
+        if len(proxy_hits) != 1 or proxy_hits[0].read_text() != PROXY_SMALI:
+            raise RuntimeError('BlurayIsoProxy class conflict')
+        proxy_path = proxy_hits[0]
+        proxy_status = 'already-applied'
+    else:
+        smali_dir = _next_smali_dir(root)
+        proxy_path = smali_dir / 'com/archos/mediacenter/video/player/BlurayIsoProxy.smali'
+        proxy_path.parent.mkdir(parents=True, exist_ok=True)
+        proxy_path.write_text(PROXY_SMALI)
+        proxy_status = 'applied'
+
+    iso_factory_hits = list(root.glob('smali*/com/archos/mediacenter/video/player/IsoPlayerFactory.smali'))
+    if iso_factory_hits:
+        if len(iso_factory_hits) != 1 or iso_factory_hits[0].read_text() != ISO_FACTORY_SMALI:
+            raise RuntimeError('IsoPlayerFactory class conflict')
+        iso_factory_path = iso_factory_hits[0]
+        iso_factory_status = 'already-applied'
+    else:
+        iso_factory_path = proxy_path.parent / 'IsoPlayerFactory.smali'
+        iso_factory_path.write_text(ISO_FACTORY_SMALI)
+        iso_factory_status = 'applied'
+
+    copied = []
+    avos_copied = []
+    expected_abis = ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')
+    for abi in expected_abis:
+        src = native_dir / abi / 'libnova_iso.so'
+        if not src.is_file() or src.stat().st_size < 10000:
+            raise RuntimeError('Missing/invalid native ISO bridge for ' + abi)
+        dst = root / 'lib' / abi / 'libnova_iso.so'
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        copied.append({'abi': abi, 'size': dst.stat().st_size})
+
+        avos_src = avos_dir / abi / 'libavos.so'
+        if not avos_src.is_file():
+            raise RuntimeError('Missing ISO-aware libavos for ' + abi)
+        avos_bytes = avos_src.read_bytes()
+        if not avos_bytes.startswith(b'\x7fELF'):
+            raise RuntimeError('ISO-aware libavos is not ELF for ' + abi)
+        if b'nova_iso=1' not in avos_bytes or b'skip_estimate_duration_from_pts' not in avos_bytes:
+            raise RuntimeError('ISO-aware FFmpeg markers missing from libavos for ' + abi)
+        avos_dst = root / 'lib' / abi / 'libavos.so'
+        if not avos_dst.is_file():
+            raise RuntimeError('Official libavos target missing for ' + abi)
+        shutil.copyfile(avos_src, avos_dst)
+        avos_copied.append({'abi': abi, 'size': avos_dst.stat().st_size})
+
+    result = {
+        'status': 'PASS',
+        'mime': mime_status,
+        'player': player_status,
+        'player_factory': player_factory_status,
+        'media_factory': media_factory_status,
+        'proxy': proxy_status,
+        'iso_player_factory': iso_factory_status,
+        'proxy_path': proxy_path.relative_to(root).as_posix(),
+        'iso_player_factory_path': iso_factory_path.relative_to(root).as_posix(),
+        'native': copied,
+        'iso_aware_avos': avos_copied,
+        'strategy': 'ISO forces AvosMediaPlayer only for ISO -> WebDAV StreamOverHttp -> libbluray -> ISO-marked localhost MPEG-TS -> ISO-only FFmpeg fast probe',
+    }
+    if report:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
+        r'(?P<body>.*?)(?=^\.end method))',
+        re.M | re.S,
+    )
+    m = set_uri.search(text)
+    if not m:
+        raise RuntimeError('Player.setVideoURI method missing')
+    body = m.group(0)
+    if arm_sig not in body:
+        lines = body.splitlines()
+        # Insert immediately after .locals/.registers declaration.
+        idx = next((i for i, line in enumerate(lines[1:], 1)
+                    if line.strip().startswith(('.locals ', '.registers '))), None)
+        if idx is None:
+            raise RuntimeError('Player.setVideoURI register declaration missing')
+        lines.insert(idx + 1, '')
+        lines.insert(idx + 2,
+            '    invoke-static {p1}, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->armForUri(Landroid/net/Uri;)V')
+        new_body = '\n'.join(lines)
+        text = text[:m.start()] + new_body + text[m.end():]
+
+    old_count = text.count(factory_old)
+    new_count = text.count(factory_new)
+    if old_count == 1 and new_count == 0:
+        text = text.replace(factory_old, factory_new, 1)
+        status = 'applied'
+    elif old_count == 0 and new_count == 1:
+        status = 'already-applied'
+    else:
+        raise RuntimeError(f'Player factory replacement conflict old={old_count} new={new_count}')
+    return text, status
+
+
+def patch_media_factory_text(text: str) -> tuple[str, str]:
+    marker = '.method public static createPlayerForIso(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;'
+    if marker in text:
+        return text, 'already-applied'
+    method = r'''
+.method public static createPlayerForIso(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    .locals 2
+
+    const/4 v0, 0x0
+
+    invoke-static {p0, v0, p1}, Lcom/archos/medialib/MediaFactory;->preInit(Landroid/content/Context;ZZ)Z
+
+    move-result v0
+
+    if-eqz v0, :fallback
+
+    const-string v0, "NovaIso"
+
+    const-string v1, "PLAYER_FACTORY forced AvosMediaPlayer for ISO"
+
+    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    new-instance v0, Lcom/archos/medialib/AvosMediaPlayer;
+
+    invoke-direct {v0}, Lcom/archos/medialib/AvosMediaPlayer;-><init>()V
+
+    return-object v0
+
+    :fallback
+    const-string v0, "NovaIso"
+
+    const-string v1, "PLAYER_FACTORY AVOS unavailable; fallback AndroidMediaPlayer"
+
+    invoke-static {v0, v1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
+
+    new-instance v0, Lcom/archos/medialib/AndroidMediaPlayer;
+
+    invoke-direct {v0, p0}, Lcom/archos/medialib/AndroidMediaPlayer;-><init>(Landroid/content/Context;)V
+
+    return-object v0
+.end method
+'''
+    return text.rstrip() + '\n\n' + method.lstrip(), 'applied'
+
+
+ISO_FACTORY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/IsoPlayerFactory;
+.super Ljava/lang/Object;
+.source "IsoPlayerFactory.java"
+
+.method private constructor <init>()V
+    .locals 0
+
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+
+    return-void
+.end method
+
+.method public static create(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    .locals 1
+
+    invoke-static {}, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->shouldForceAvos()Z
+
+    move-result v0
+
+    if-eqz v0, :normal
+
+    invoke-static {p0, p1}, Lcom/archos/medialib/MediaFactory;->createPlayerForIso(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+
+    move-result-object v0
+
+    return-object v0
+
+    :normal
+    invoke-static {p0, p1}, Lcom/archos/medialib/MediaFactory;->createPlayer(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+
+    move-result-object v0
+
+    return-object v0
+.end method
+'''
 
 def _next_smali_dir(root: Path) -> Path:
     nums = [1]
