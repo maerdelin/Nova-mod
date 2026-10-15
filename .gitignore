@@ -1,8 +1,0 @@
-*.apk
-*.zip
-*.p12
-*.jks
-*.keystore
-*.key
-*.pem
-__pycache__/
