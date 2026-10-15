@@ -56,6 +56,8 @@ typedef struct {
     volatile int stopping;
     pthread_t thread;
     int thread_started;
+    pthread_t client_thread;
+    int client_thread_started;
     pthread_mutex_t io_lock;
 } iso_session;
 
@@ -439,6 +441,35 @@ static void serve_client(iso_session *s, int fd) {
     free(buf);
 }
 
+typedef struct {
+    iso_session *session;
+    int fd;
+} client_task;
+
+static void *client_main(void *opaque) {
+    client_task *task = (client_task *)opaque;
+    iso_session *s = task->session;
+    int fd = task->fd;
+    free(task);
+
+    serve_client(s, fd);
+    shutdown(fd, SHUT_RDWR);
+    close(fd);
+    return NULL;
+}
+
+static void stop_client_worker(iso_session *s, const char *reason) {
+    if (!s->client_thread_started) return;
+
+    if (s->client_fd >= 0) {
+        LOGI("PLAYER_PREEMPT reason=%s fd=%d", reason, s->client_fd);
+        shutdown(s->client_fd, SHUT_RDWR);
+    }
+    pthread_join(s->client_thread, NULL);
+    s->client_thread_started = 0;
+    s->client_fd = -1;
+}
+
 static void *server_main(void *opaque) {
     iso_session *s = (iso_session *)opaque;
     while (!s->stopping) {
@@ -450,12 +481,41 @@ static void *server_main(void *opaque) {
             if (errno == EINTR) continue;
             break;
         }
+
+        /*
+         * Avos/FFmpeg can issue a new Range request while the previous
+         * streaming GET is still open. A serial accept->serve loop leaves
+         * that new request queued until the client's HTTP timeout. The
+         * newest Range request is authoritative, so stop the stale stream
+         * before serving it. libbluray access remains strictly serialized.
+         */
+        stop_client_worker(s, "new_request");
+        if (s->stopping) {
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+            break;
+        }
+
+        client_task *task = calloc(1, sizeof(*task));
+        if (!task) {
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+            continue;
+        }
+        task->session = s;
+        task->fd = fd;
         s->client_fd = fd;
-        serve_client(s, fd);
-        shutdown(fd, SHUT_RDWR);
-        close(fd);
-        s->client_fd = -1;
+        if (pthread_create(&s->client_thread, NULL, client_main, task) != 0) {
+            s->client_fd = -1;
+            free(task);
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+            continue;
+        }
+        s->client_thread_started = 1;
     }
+
+    stop_client_worker(s, "server_stop");
     return NULL;
 }
 
@@ -483,6 +543,7 @@ static iso_session *session_create(const char *url) {
     if (!s) return NULL;
     s->listen_fd = -1;
     s->client_fd = -1;
+    s->client_thread_started = 0;
     pthread_mutex_init(&s->input.lock, NULL);
     pthread_mutex_init(&s->io_lock, NULL);
 
