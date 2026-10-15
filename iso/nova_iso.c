@@ -25,15 +25,22 @@
 
 #define UDF_BLOCK 2048
 #define CACHE_BYTES (4 * 1024 * 1024)
+#define CACHE_SLOTS 8
 #define IO_CHUNK (256 * 1024)
 #define HEADER_MAX 32768
 
 typedef struct {
+    uint8_t *data;
+    int64_t start;
+    size_t len;
+    uint64_t last_use;
+} iso_cache_slot;
+
+typedef struct {
     int port;
     char path[4096];
-    uint8_t *cache;
-    int64_t cache_start;
-    size_t cache_len;
+    iso_cache_slot cache[CACHE_SLOTS];
+    uint64_t cache_clock;
     uint64_t range_requests;
     uint64_t fetched_bytes;
     pthread_mutex_t lock;
@@ -185,6 +192,58 @@ static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *o
     return (ssize_t)copied;
 }
 
+static iso_cache_slot *cache_find(iso_input *in, int64_t byte_pos) {
+    for (int i = 0; i < CACHE_SLOTS; i++) {
+        iso_cache_slot *slot = &in->cache[i];
+        if (slot->data && slot->len > 0 &&
+            byte_pos >= slot->start &&
+            byte_pos + UDF_BLOCK <= slot->start + (int64_t)slot->len) {
+            slot->last_use = ++in->cache_clock;
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+static iso_cache_slot *cache_victim(iso_input *in) {
+    iso_cache_slot *victim = &in->cache[0];
+    for (int i = 0; i < CACHE_SLOTS; i++) {
+        iso_cache_slot *slot = &in->cache[i];
+        if (!slot->data || slot->len == 0) return slot;
+        if (slot->last_use < victim->last_use) victim = slot;
+    }
+    return victim;
+}
+
+static int cache_fill(iso_input *in, int64_t byte_pos, iso_cache_slot **out) {
+    iso_cache_slot *slot = cache_victim(in);
+    if (!slot->data) {
+        slot->data = malloc(CACHE_BYTES);
+        if (!slot->data) return -1;
+    }
+
+    int slot_index = (int)(slot - in->cache);
+    int64_t aligned = (byte_pos / CACHE_BYTES) * CACHE_BYTES;
+    LOGI("CACHE_MISS slot=%d byte=%" PRId64 " aligned=%" PRId64
+         " evictStart=%" PRId64 " evictLen=%zu",
+         slot_index, byte_pos, aligned, slot->start, slot->len);
+
+    ssize_t got = fetch_range(in, aligned, CACHE_BYTES, slot->data);
+    if (got < UDF_BLOCK || byte_pos < aligned ||
+        byte_pos + UDF_BLOCK > aligned + got) {
+        LOGE("CACHE_FILL_FAIL slot=%d byte=%" PRId64 " aligned=%" PRId64 " got=%zd",
+             slot_index, byte_pos, aligned, got);
+        slot->len = 0;
+        return -1;
+    }
+
+    slot->start = aligned;
+    slot->len = (size_t)got;
+    slot->last_use = ++in->cache_clock;
+    *out = slot;
+    return 0;
+}
+
 static int iso_read_blocks(void *handle, void *buf, int lba, int num_blocks) {
     iso_input *in = (iso_input *)handle;
     if (!in || !buf || lba < 0 || num_blocks <= 0) return -1;
@@ -195,23 +254,19 @@ static int iso_read_blocks(void *handle, void *buf, int lba, int num_blocks) {
 
     while (done < num_blocks) {
         int64_t byte_pos = (int64_t)(lba + done) * UDF_BLOCK;
-        if (in->cache_len == 0 || byte_pos < in->cache_start ||
-            byte_pos + UDF_BLOCK > in->cache_start + (int64_t)in->cache_len) {
-            LOGI("CACHE_MISS lba=%d blocks=%d byte=%" PRId64 " oldStart=%" PRId64 " oldLen=%zu",
-                 lba + done, num_blocks - done, byte_pos, in->cache_start, in->cache_len);
-            ssize_t got = fetch_range(in, byte_pos, CACHE_BYTES, in->cache);
-            if (got < UDF_BLOCK) break;
-            in->cache_start = byte_pos;
-            in->cache_len = (size_t)got;
-        }
+        iso_cache_slot *slot = cache_find(in, byte_pos);
+        if (!slot && cache_fill(in, byte_pos, &slot) < 0) break;
 
-        size_t off = (size_t)(byte_pos - in->cache_start);
-        size_t avail = in->cache_len - off;
+        size_t off = (size_t)(byte_pos - slot->start);
+        size_t avail = slot->len - off;
         int blocks = (int)(avail / UDF_BLOCK);
         int need = num_blocks - done;
         if (blocks > need) blocks = need;
         if (blocks <= 0) break;
-        memcpy(dst + (size_t)done * UDF_BLOCK, in->cache + off, (size_t)blocks * UDF_BLOCK);
+
+        memcpy(dst + (size_t)done * UDF_BLOCK,
+               slot->data + off,
+               (size_t)blocks * UDF_BLOCK);
         done += blocks;
     }
 
@@ -415,7 +470,7 @@ static void session_destroy(iso_session *s) {
     }
     if (s->thread_started) pthread_join(s->thread, NULL);
     if (s->bd) bd_close(s->bd);
-    free(s->input.cache);
+    for (int i = 0; i < CACHE_SLOTS; i++) free(s->input.cache[i].data);
     pthread_mutex_destroy(&s->input.lock);
     pthread_mutex_destroy(&s->io_lock);
     free(s);
@@ -431,8 +486,7 @@ static iso_session *session_create(const char *url) {
     pthread_mutex_init(&s->input.lock, NULL);
     pthread_mutex_init(&s->io_lock, NULL);
 
-    s->input.cache = malloc(CACHE_BYTES);
-    if (!s->input.cache || parse_local_url(url, &s->input) < 0) {
+    if (parse_local_url(url, &s->input) < 0) {
         session_destroy(s);
         return NULL;
     }
