@@ -58,6 +58,7 @@ typedef struct {
     int thread_started;
     pthread_t client_thread;
     int client_thread_started;
+    pthread_mutex_t client_lock;
     pthread_mutex_t io_lock;
 } iso_session;
 
@@ -453,6 +454,11 @@ static void *client_main(void *opaque) {
     free(task);
 
     serve_client(s, fd);
+
+    pthread_mutex_lock(&s->client_lock);
+    if (s->client_fd == fd) s->client_fd = -1;
+    pthread_mutex_unlock(&s->client_lock);
+
     shutdown(fd, SHUT_RDWR);
     close(fd);
     return NULL;
@@ -461,13 +467,20 @@ static void *client_main(void *opaque) {
 static void stop_client_worker(iso_session *s, const char *reason) {
     if (!s->client_thread_started) return;
 
+    int fd = -1;
+    pthread_mutex_lock(&s->client_lock);
     if (s->client_fd >= 0) {
-        LOGI("PLAYER_PREEMPT reason=%s fd=%d", reason, s->client_fd);
-        shutdown(s->client_fd, SHUT_RDWR);
+        fd = s->client_fd;
+        s->client_fd = -1;
+    }
+    pthread_mutex_unlock(&s->client_lock);
+
+    if (fd >= 0) {
+        LOGI("PLAYER_PREEMPT reason=%s fd=%d", reason, fd);
+        shutdown(fd, SHUT_RDWR);
     }
     pthread_join(s->client_thread, NULL);
     s->client_thread_started = 0;
-    s->client_fd = -1;
 }
 
 static void *server_main(void *opaque) {
@@ -504,9 +517,13 @@ static void *server_main(void *opaque) {
         }
         task->session = s;
         task->fd = fd;
+        pthread_mutex_lock(&s->client_lock);
         s->client_fd = fd;
+        pthread_mutex_unlock(&s->client_lock);
         if (pthread_create(&s->client_thread, NULL, client_main, task) != 0) {
-            s->client_fd = -1;
+            pthread_mutex_lock(&s->client_lock);
+            if (s->client_fd == fd) s->client_fd = -1;
+            pthread_mutex_unlock(&s->client_lock);
             free(task);
             shutdown(fd, SHUT_RDWR);
             close(fd);
@@ -522,7 +539,16 @@ static void *server_main(void *opaque) {
 static void session_destroy(iso_session *s) {
     if (!s) return;
     s->stopping = 1;
-    if (s->client_fd >= 0) shutdown(s->client_fd, SHUT_RDWR);
+
+    int client_fd = -1;
+    pthread_mutex_lock(&s->client_lock);
+    if (s->client_fd >= 0) {
+        client_fd = s->client_fd;
+        s->client_fd = -1;
+    }
+    pthread_mutex_unlock(&s->client_lock);
+    if (client_fd >= 0) shutdown(client_fd, SHUT_RDWR);
+
     if (s->listen_fd >= 0) {
         shutdown(s->listen_fd, SHUT_RDWR);
         close(s->listen_fd);
@@ -532,6 +558,7 @@ static void session_destroy(iso_session *s) {
     if (s->bd) bd_close(s->bd);
     for (int i = 0; i < CACHE_SLOTS; i++) free(s->input.cache[i].data);
     pthread_mutex_destroy(&s->input.lock);
+    pthread_mutex_destroy(&s->client_lock);
     pthread_mutex_destroy(&s->io_lock);
     free(s);
 }
@@ -545,6 +572,7 @@ static iso_session *session_create(const char *url) {
     s->client_fd = -1;
     s->client_thread_started = 0;
     pthread_mutex_init(&s->input.lock, NULL);
+    pthread_mutex_init(&s->client_lock, NULL);
     pthread_mutex_init(&s->io_lock, NULL);
 
     if (parse_local_url(url, &s->input) < 0) {

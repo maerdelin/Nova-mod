@@ -127,6 +127,17 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
                 bad.append(label + ': Player ISO arm injection invalid')
             if pt.count('IsoPlayerFactory;->create') != 1:
                 bad.append(label + ': Player ISO factory injection invalid')
+        psf = next(iter(root.glob('smali*/com/archos/mediacenter/video/player/PlayerService.smali')), None)
+        if psf is None:
+            bad.append(label + ': PlayerService missing')
+        else:
+            pst = psf.read_text()
+            wrapper = (
+                'IsoPlayerFactory;->seekTo'
+                '(Lcom/archos/mediacenter/video/player/Player;I)V'
+            )
+            if pst.count(wrapper) != 1:
+                bad.append(label + ': PlayerService ISO initial seek wrapper invalid')
         proxies = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
         if len(proxies) != 1:
             bad.append(label + ': BlurayIsoProxy missing/duplicate')
@@ -136,7 +147,9 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
                 'nativeOpen(Ljava/lang/String;)Ljava/lang/String;',
                 'armForUri(Landroid/net/Uri;)V',
                 'shouldForceAvos()Z',
+                'shouldSkipInitialZeroSeek(I)Z',
                 '.field private static sForceAvos:Z',
+                '.field private static sSkipInitialZeroSeek:Z',
                 'PLAYER_ARM iso=1',
             )
             for token in required_proxy:
@@ -153,6 +166,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
                 'AvosMediaPlayer;',
                 'LibAvos;->setDecoder(I)V',
                 'PLAYER_FACTORY avos=1 forced=1',
+                'SEEK_ZERO_SKIP iso=1',
+                'Player;->seekTo(I)V',
             )
             for token in required_factory:
                 if token not in ft:

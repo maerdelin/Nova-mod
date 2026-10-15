@@ -42,6 +42,28 @@ class IsoPatchTests(unittest.TestCase):
         self.assertNotIn('MediaFactory;->createPlayer(Landroid/content/Context;Z)', out)
         self.assertEqual(status, 'applied')
 
+    def test_initial_zero_seek_is_skipped_only_through_player_service_wrapper(self):
+        text = """.class public Lcom/archos/mediacenter/video/player/PlayerService;
+.super Ljava/lang/Object;
+.method private postPreparedAndVideoDb()V
+    .locals 2
+    sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    const/4 v1, 0x0
+    invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V
+    return-void
+.end method
+"""
+        out, status = iso_patch.patch_initial_zero_seek_player_service_text(text)
+        self.assertIn('invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/IsoPlayerFactory;->seekTo', out)
+        self.assertNotIn('invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V', out)
+        self.assertEqual(status, 'applied')
+
+    def test_iso_initial_zero_seek_guard_is_one_shot(self):
+        self.assertIn('.field private static sSkipInitialZeroSeek:Z', iso_patch.PROXY_SMALI)
+        self.assertIn('shouldSkipInitialZeroSeek(I)Z', iso_patch.PROXY_SMALI)
+        self.assertIn('SEEK_ZERO_SKIP iso=1', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('Player;->seekTo(I)V', iso_patch.ISO_FACTORY_SMALI)
+
     def test_iso_player_factory_forces_avos_then_restores_any_decoder(self):
         self.assertIn('const/4 v0, 0x1', iso_patch.ISO_FACTORY_SMALI)
         self.assertIn('AvosMediaPlayer;', iso_patch.ISO_FACTORY_SMALI)
@@ -67,6 +89,12 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('System;->loadLibrary', iso_patch.PROXY_SMALI)
         self.assertIn('StreamOverHttp;-><init>', iso_patch.PROXY_SMALI)
         self.assertIn('nativeOpen', iso_patch.PROXY_SMALI)
+
+    def test_native_preempt_does_not_reuse_stale_client_fd(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn('pthread_mutex_t client_lock;', source)
+        self.assertIn('if (s->client_fd == fd) s->client_fd = -1;', source)
+        self.assertIn('pthread_mutex_lock(&s->client_lock);', source)
 
 if __name__ == '__main__':
     unittest.main()

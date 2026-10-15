@@ -23,6 +23,7 @@ PROXY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/Blura
 
 .field private static sInput:Lcom/archos/filecorelibrary/StreamOverHttp;
 .field private static sForceAvos:Z
+.field private static sSkipInitialZeroSeek:Z
 
 .method static constructor <clinit>()V
     .locals 1
@@ -69,6 +70,7 @@ PROXY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/Blura
 
     :store
     sput-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sForceAvos:Z
+    sput-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sSkipInitialZeroSeek:Z
 
     if-eqz v0, :done
 
@@ -86,6 +88,33 @@ PROXY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/Blura
     .locals 1
 
     sget-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sForceAvos:Z
+
+    return v0
+.end method
+
+.method public static shouldSkipInitialZeroSeek(I)Z
+    .locals 1
+
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sForceAvos:Z
+
+    if-eqz v0, :no
+
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sSkipInitialZeroSeek:Z
+
+    if-eqz v0, :no
+
+    const/4 v0, 0x0
+
+    sput-boolean v0, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->sSkipInitialZeroSeek:Z
+
+    if-nez p0, :no
+
+    const/4 v0, 0x1
+
+    return v0
+
+    :no
+    const/4 v0, 0x0
 
     return v0
 .end method
@@ -304,7 +333,65 @@ ISO_FACTORY_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player
 
     return-object v0
 .end method
+.method public static seekTo(Lcom/archos/mediacenter/video/player/Player;I)V
+    .locals 3
+
+    invoke-static {p1}, Lcom/archos/mediacenter/video/player/BlurayIsoProxy;->shouldSkipInitialZeroSeek(I)Z
+
+    move-result v0
+
+    if-eqz v0, :normal_seek
+
+    const-string v1, "NovaIso"
+
+    const-string v2, "SEEK_ZERO_SKIP iso=1"
+
+    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    return-void
+
+    :normal_seek
+    invoke-virtual {p0, p1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V
+
+    return-void
+.end method
 '''
+
+
+def patch_initial_zero_seek_player_service_text(text: str) -> tuple[str, str]:
+    wrapper = (
+        'Lcom/archos/mediacenter/video/player/IsoPlayerFactory;->seekTo'
+        '(Lcom/archos/mediacenter/video/player/Player;I)V'
+    )
+    if wrapper in text:
+        return text, 'already-applied'
+
+    methods = []
+    for m in METHOD_RE.finditer(text):
+        first = m.group(0).splitlines()[0]
+        if ' postPreparedAndVideoDb()V' in first:
+            methods.append(m)
+    if len(methods) != 1:
+        raise RuntimeError(f'PlayerService.postPreparedAndVideoDb missing/ambiguous: {len(methods)}')
+
+    m = methods[0]
+    body = m.group(0)
+    call_re = re.compile(
+        r'(?P<indent>\s*)(?P<op>invoke-virtual(?:/range)?) '
+        r'\{(?P<regs>[^}]+)\}, '
+        r'Lcom/archos/mediacenter/video/player/Player;->seekTo\(I\)V'
+    )
+    hits = list(call_re.finditer(body))
+    if len(hits) != 1:
+        raise RuntimeError(f'PlayerService initial seek call missing/ambiguous: {len(hits)}')
+
+    c = hits[0]
+    static_op = 'invoke-static/range' if c.group('op').endswith('/range') else 'invoke-static'
+    replacement = (
+        c.group('indent') + static_op + ' {' + c.group('regs') + '}, ' + wrapper
+    )
+    new_body = body[:c.start()] + replacement + body[c.end():]
+    return text[:m.start()] + new_body + text[m.end():], 'applied'
 
 
 def patch_force_avos_player_text(text: str) -> tuple[str, str]:
@@ -375,6 +462,10 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
     patched, player_factory_status = patch_force_avos_player_text(patched)
     player.write_text(patched)
 
+    player_service = _one(root.glob('smali*/com/archos/mediacenter/video/player/PlayerService.smali'), 'PlayerService')
+    player_service_text, player_service_status = patch_initial_zero_seek_player_service_text(player_service.read_text())
+    player_service.write_text(player_service_text)
+
     proxy_hits = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
     if proxy_hits:
         if len(proxy_hits) != 1 or proxy_hits[0].read_text() != PROXY_SMALI:
@@ -415,6 +506,7 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         'mime': mime_status,
         'player': player_status,
         'player_factory': player_factory_status,
+        'player_service_initial_zero_seek': player_service_status,
         'proxy': proxy_status,
         'iso_player_factory': iso_factory_status,
         'proxy_path': proxy_path.relative_to(root).as_posix(),
