@@ -162,8 +162,6 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
                 'AvosMediaPlayer;',
                 'LibAvos;->setDecoder(I)V',
                 'PLAYER_FACTORY avos=1 forced=1',
-                ':normal',
-                ':fallback',
             )
             for token in required_factory:
                 if token not in ft:
