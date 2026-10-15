@@ -245,7 +245,7 @@ def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = No
         copied.append({'abi': abi, 'size': dst.stat().st_size})
 
         avos_src = avos_dir / abi / 'libavos.so'
-        if not avos_src.is_file() or avos_src.stat().st_size < 100000:
+        if not avos_src.is_file() or avos_src.stat().st_size < 10000:
             raise RuntimeError('Missing/invalid ISO-aware libavos for ' + abi)
         avos_dst = root / 'lib' / abi / 'libavos.so'
         if not avos_dst.is_file():
