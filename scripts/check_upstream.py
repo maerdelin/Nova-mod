@@ -69,11 +69,11 @@ def main():
     num,non_native=compatible_with_locked_base(source,new)
     print("UPSTREAM_CHANGED_ENTRIES="+str(num))
     with summary.open("a") as f:
-        f.write(f"New version downloaded and SHA-256 recorded: \`{digest}\`.\n\n")
+        f.write(f"New version downloaded and SHA-256 recorded: `{digest}`.\n\n")
         f.write(f"Modified/missing APK entries: **{num}**. Non-native changed entries: **{len(non_native)}**.\n\n")
         if non_native:
             f.write("**BLOCKED:** DEX/resources or other non-native files differ from the pinned baseline. Do not auto-port V9.8.2 DEX offsets or publish a replacement stable APK.\n\n")
-            f.write("Examples: \`"+", ".join(non_native[:16])+"\`\n")
+            f.write("Examples: `"+", ".join(non_native[:16])+"`\n")
         else:
             f.write("**NATIVE-ONLY CANDIDATE:** automated repackaging may be feasible. Still needs ABI/API checks, signing and real-device tests before stable release. V9.8.2 remains unchanged.\n")
     print("STATUS="+("BLOCKED_NON_NATIVE_CHANGE" if non_native else "NATIVE_ONLY_CANDIDATE"))
