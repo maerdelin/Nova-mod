@@ -30,6 +30,39 @@ if [[ "$AVOS_SHA" != "$EXPECTED_AVOS_SHA" ]]; then
   exit 1
 fi
 
+# Patch v6.5.5 build glue only: MediaLib calls native_libyuv but this tag's
+# core.mk accidentally omits libyuv from NATIVE_PKG_LIST and the alias target.
+python3 - "$SRC/core.mk" <<'PY'
+from pathlib import Path
+import sys
+
+p=Path(sys.argv[1])
+s=p.read_text()
+old='''NATIVE_PKG_LIST := \
+	FileCoreLibrary \
+	native/libnativehelper
+'''
+new='''NATIVE_PKG_LIST := \
+	FileCoreLibrary \
+	native/libyuv \
+	native/libnativehelper
+'''
+if old not in s:
+    raise SystemExit('v6.5.5 core.mk NATIVE_PKG_LIST shape changed')
+s=s.replace(old,new,1)
+
+old2='''native_libnativehelper: native_build_native/libnativehelper
+'''
+new2='''native_libyuv: native_build_native/libyuv
+
+native_libnativehelper: native_build_native/libnativehelper
+'''
+if old2 not in s:
+    raise SystemExit('v6.5.5 core.mk native_libnativehelper target missing')
+s=s.replace(old2,new2,1)
+p.write_text(s)
+PY
+
 python3 - "$SRC/native/avos/Source/stream_parser_ffmpeg.c" <<'PY'
 from pathlib import Path
 import sys
