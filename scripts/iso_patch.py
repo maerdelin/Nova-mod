@@ -9,11 +9,11 @@ import shutil
 
 MIME_OLD = '"application/x-iso9660-image"'
 MIME_NEW = '"video/x-bluray-iso"'
-METHOD_RE = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
+METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
 AWAIT_RE = re.compile(
-    r'^(?P<indent>\\s*)invoke-static(?:/range)? \\{(?P<regs>[^}]+)\\}, '
+    r'^(?P<indent>\s*)invoke-static(?:/range)? \{(?P<regs>[^}]+)\}, '
     r'Lcom/archos/filecorelibrary/NetworkInitialization;->awaitReadyForSmb'
-    r'\\(Landroid/net/Uri;Landroid/content/Context;\\)V\\s*$',
+    r'\(Landroid/net/Uri;Landroid/content/Context;\)V\s*$',
     re.M,
 )
 
@@ -182,7 +182,7 @@ def patch_player_text(text: str) -> tuple[str, str]:
         raise RuntimeError('awaitReadyForSmb invocation shape changed')
     regs = a.group('regs').strip()
     uri_reg = regs.split('..', 1)[0].split(',', 1)[0].strip()
-    if not re.fullmatch(r'[vp]\\d+', uri_reg):
+    if not re.fullmatch(r'[vp]\d+', uri_reg):
         raise RuntimeError('Unable to identify URI register: ' + uri_reg)
     indent = a.group('indent')
     injected = (
