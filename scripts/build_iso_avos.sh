@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT="${1:?output directory required}"
+OUT_ARG="${1:?output directory required}"
 META="${2:?upstream metadata required}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "$OUT_ARG" = /* ]]; then
+  OUT="$OUT_ARG"
+else
+  OUT="$ROOT/$OUT_ARG"
+fi
 WORK="$ROOT/work/iso-avos-source"
 SRC="$WORK/aos-AVP"
 
