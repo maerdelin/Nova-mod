@@ -117,11 +117,22 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             if t.count('"video/x-bluray-iso"') != 1 or '"application/x-iso9660-image"' in t:
                 bad.append(label + ': ISO MIME mapping invalid')
         pf = next(iter(root.glob('smali*/com/archos/mediacenter/video/player/Player.smali')), None)
-        if pf is None or pf.read_text().count('BlurayIsoProxy;->resolve') != 1:
-            bad.append(label + ': Player ISO resolver injection invalid')
+        if pf is None:
+            bad.append(label + ': Player missing')
+        else:
+            pt = pf.read_text()
+            if pt.count('BlurayIsoProxy;->resolve') != 1:
+                bad.append(label + ': Player ISO resolver injection invalid')
+            if pt.count('BlurayIsoProxy;->armForUri') != 1:
+                bad.append(label + ': Player ISO arm injection invalid')
+            if pt.count('IsoPlayerFactory;->create') != 1:
+                bad.append(label + ': Player ISO factory injection invalid')
         proxies = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
         if len(proxies) != 1 or 'nativeOpen(Ljava/lang/String;)Ljava/lang/String;' not in proxies[0].read_text():
             bad.append(label + ': BlurayIsoProxy invalid')
+        factories = list(root.glob('smali*/com/archos/mediacenter/video/player/IsoPlayerFactory.smali'))
+        if len(factories) != 1 or 'PLAYER_FACTORY avos=1 forced=1' not in factories[0].read_text():
+            bad.append(label + ': IsoPlayerFactory invalid')
         for abi in ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'):
             so = root / 'lib' / abi / 'libnova_iso.so'
             if not so.is_file() or so.stat().st_size < 10000:

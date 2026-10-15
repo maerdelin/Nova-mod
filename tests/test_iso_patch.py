@@ -22,6 +22,32 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('move-result-object p1', out)
         self.assertTrue(status.startswith('.method '))
 
+    def test_iso_only_player_factory_patch(self):
+        text = """.class public Lcom/archos/mediacenter/video/player/Player;
+.super Ljava/lang/Object;
+.method public setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V
+    .locals 1
+    return-void
+.end method
+.method public openVideo()V
+    .locals 3
+    invoke-static {v0, v1}, Lcom/archos/medialib/MediaFactory;->createPlayer(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    move-result-object v2
+    return-void
+.end method
+"""
+        out, status = iso_patch.patch_force_avos_player_text(text)
+        self.assertIn('BlurayIsoProxy;->armForUri', out)
+        self.assertIn('IsoPlayerFactory;->create', out)
+        self.assertNotIn('MediaFactory;->createPlayer(Landroid/content/Context;Z)', out)
+        self.assertEqual(status, 'applied')
+
+    def test_iso_player_factory_forces_avos_then_restores_any_decoder(self):
+        self.assertIn('const/4 v0, 0x1', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('AvosMediaPlayer;', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('LibAvos;->setDecoder(I)V', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('PLAYER_FACTORY avos=1 forced=1', iso_patch.ISO_FACTORY_SMALI)
+
     def test_native_source_uses_real_crlf_escapes(self):
         source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
         self.assertIn("header[i] == '\\r'", source)
