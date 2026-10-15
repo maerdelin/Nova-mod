@@ -17,18 +17,24 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Setup Java 17 for official native build
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
 
       - name: Prepare tools and run regression tests
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq zstd meson ninja-build
+          sudo apt-get install -y -qq zstd meson ninja-build nasm maven build-essential pkg-config
           mkdir -p inputs dist tools work reports
           python3 -m py_compile scripts/*.py tests/*.py
           python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -52,10 +58,14 @@ jobs:
         shell: bash
         run: bash scripts/build_iso_native.sh work/iso-native
 
+      - name: Build ISO-aware avos from exact official source
+        shell: bash
+        run: bash scripts/build_iso_avos.sh work/iso-avos inputs/upstream.json
+
       - name: Apply instruction and XML-property patches to latest APK
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk --iso-native work/iso-native
+        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk --iso-native work/iso-native --avos-native work/iso-avos
 
       - name: Align sign and verify the final APK
         id: signing

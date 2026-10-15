@@ -598,7 +598,7 @@ Java_com_archos_mediacenter_video_player_BlurayIsoProxy_nativeOpen(
     jstring result = NULL;
     if (g_session) {
         char out[128];
-        snprintf(out, sizeof(out), "http://127.0.0.1:%d/main.m2ts", g_session->port);
+        snprintf(out, sizeof(out), "http://127.0.0.1:%d/main.m2ts?mpegts&nova_iso=1", g_session->port);
         result = (*env)->NewStringUTF(env, out);
     }
     pthread_mutex_unlock(&g_lock);

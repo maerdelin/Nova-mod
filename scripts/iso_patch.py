@@ -202,7 +202,7 @@ def _next_smali_dir(root: Path) -> Path:
             pass
     return root / f'smali_classes{max(nums) + 1}'
 
-def apply(root: Path, native_dir: Path, report: Path | None = None):
+def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = None):
     mime = _one(root.glob('smali*/com/archos/filecorelibrary/MimeUtils.smali'), 'MimeUtils')
     mime_text = mime.read_text()
     old_count = mime_text.count(MIME_OLD)
@@ -233,6 +233,7 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         proxy_status = 'applied'
 
     copied = []
+    avos_copied = []
     expected_abis = ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')
     for abi in expected_abis:
         src = native_dir / abi / 'libnova_iso.so'
@@ -243,6 +244,15 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         shutil.copyfile(src, dst)
         copied.append({'abi': abi, 'size': dst.stat().st_size})
 
+        avos_src = avos_dir / abi / 'libavos.so'
+        if not avos_src.is_file() or avos_src.stat().st_size < 100000:
+            raise RuntimeError('Missing/invalid ISO-aware libavos for ' + abi)
+        avos_dst = root / 'lib' / abi / 'libavos.so'
+        if not avos_dst.is_file():
+            raise RuntimeError('Official libavos target missing for ' + abi)
+        shutil.copyfile(avos_src, avos_dst)
+        avos_copied.append({'abi': abi, 'size': avos_dst.stat().st_size})
+
     result = {
         'status': 'PASS',
         'mime': mime_status,
@@ -250,7 +260,8 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         'proxy': proxy_status,
         'proxy_path': proxy_path.relative_to(root).as_posix(),
         'native': copied,
-        'strategy': 'WebDAV StreamOverHttp -> libbluray bd_open_stream -> localhost MPEG-TS title stream',
+        'iso_aware_avos': avos_copied,
+        'strategy': 'WebDAV StreamOverHttp -> libbluray -> ISO-marked localhost MPEG-TS -> ISO-only FFmpeg fast probe',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)

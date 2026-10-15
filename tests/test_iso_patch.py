@@ -28,6 +28,16 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('"\\r\\n"', source)
         self.assertNotIn("header[i] == '\\\\\\\\r'", source)
 
+    def test_native_url_marks_iso_proxy(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn('main.m2ts?mpegts&nova_iso=1', source)
+
+    def test_avos_builder_is_iso_scoped(self):
+        source = (Path(__file__).resolve().parents[1] / 'scripts' / 'build_iso_avos.sh').read_text()
+        self.assertIn('nova_iso=1', source)
+        self.assertIn('skip_estimate_duration_from_pts', source)
+        self.assertIn('"10000000"', source)
+
     def test_proxy_smali_has_native_bridge(self):
         self.assertIn('System;->loadLibrary', iso_patch.PROXY_SMALI)
         self.assertIn('StreamOverHttp;-><init>', iso_patch.PROXY_SMALI)
