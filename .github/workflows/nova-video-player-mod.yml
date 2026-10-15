@@ -1,165 +1,81 @@
 name: Nova Video Player mod
-
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * *'
   push:
-    branches: [main, 'ci/**']
-
+    branches: ['ci/granular-patches-20261015']
 permissions:
-  contents: write
-
-concurrency:
-  group: nova-video-player-mod-${{ github.ref }}
-  cancel-in-progress: false
-
+  contents: read
 jobs:
-  build:
+  analyze:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Prepare tools and test dynamic selection
+      - name: Fetch exact reference and verified disassembler
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq zstd
-          python3 -m py_compile scripts/build.py scripts/check_upstream.py
-          python3 -m unittest discover -s tests -p 'test_*.py' -v
-          mkdir -p inputs dist
-
-      - name: Resolve and download official latest stable APK
-        id: upstream
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
-
-      - name: Verify official APK signature
-        shell: bash
-        run: |
-          set -euo pipefail
-          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
-          test -x "$SIGNER"
-          "$SIGNER" verify --verbose --print-certs inputs/official.apk
-
-      - name: Verify saved patches are approved for selected latest APK
-        run: python3 scripts/check_upstream.py guard --apk inputs/official.apk --metadata inputs/upstream.json --baseline baseline/manifest.json --report inputs/compatibility.json
-
-      - name: Reconstruct mod from the selected latest APK
-        run: python3 scripts/build.py build inputs/official.apk dist/unsigned.apk
-
-      - name: Zipalign and sign APK
-        id: signing
-        shell: bash
-        env:
-          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
-          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
-          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
-          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
-          ALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)"
-          test -x "$SIGNER" && test -x "$ALIGN"
-          STORE="$RUNNER_TEMP/nova-signing.jks"
-          trap 'rm -f "$STORE"' EXIT
-          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
-            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 -d > "$STORE"
-            echo 'Using configured signing secrets'
-            SIGNING_MODE=configured-key
-          elif [[ -z "$NOVA_KEYSTORE_BASE64" && -z "$NOVA_STORE_PASSWORD" && -z "$NOVA_KEY_ALIAS" && -z "$NOVA_KEY_PASSWORD" ]]; then
-            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
-            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
-            NOVA_KEY_ALIAS=nova-v982-cloud-test
-            keytool -genkeypair -noprompt -keystore "$STORE" -alias "$NOVA_KEY_ALIAS" \
-              -keyalg RSA -keysize 3072 -validity 3650 \
-              -dname 'CN=Nova V9.8.2 Cloud Test, O=Nova Video Player mod' \
-              -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD"
-            SIGNING_MODE=temporary-test-key
-            echo '::warning::Temporary test signing key: APK cannot update a different certificate without uninstalling.'
-          else
-            echo '::error::Incomplete signing secrets' && exit 1
-          fi
-          "$ALIGN" -f -p 4 dist/unsigned.apk dist/aligned.apk
-          "$ALIGN" -c -v 4 dist/aligned.apk
-          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
-          "$SIGNER" sign --min-sdk-version 23 \
-            --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
-            --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
-            --out dist/Nova_Video_Player_mod.apk dist/aligned.apk
-          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Video_Player_mod.apk
-          python3 scripts/build.py verify dist/Nova_Video_Player_mod.apk
-          (cd dist && sha256sum Nova_Video_Player_mod.apk > SHA256SUMS.txt)
-          echo "mode=$SIGNING_MODE" >> "$GITHUB_OUTPUT"
-          printf 'Signing mode: **%s**.\n' "$SIGNING_MODE" >> "$GITHUB_STEP_SUMMARY"
-          printf '{"signing_mode":"%s","runtime_tested":false}\n' "$SIGNING_MODE" > inputs/signing.json
-
-      - name: Confirm selected version is still official latest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
-
-      - name: Upload verified build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nova-Video-Player-mod-upstream-${{ steps.upstream.outputs.release_id }}
-          path: |
-            dist/Nova_Video_Player_mod.apk
-            dist/SHA256SUMS.txt
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Publish Release and keep latest three
-        if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
-          UPSTREAM_RELEASE_ID: ${{ steps.upstream.outputs.release_id }}
-          UPSTREAM_SHA256: ${{ steps.upstream.outputs.sha256 }}
-          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
-        run: |
-          set -euo pipefail
-          tag="nova-mod-upstream-${UPSTREAM_RELEASE_ID}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p audit
           python3 - <<'PY'
-          import os
+          import json, subprocess, hashlib
           from pathlib import Path
-          Path('dist/RELEASE_NOTES.md').write_text(
-              'Official upstream: ' + os.environ['UPSTREAM_TAG'] + '\n\n'
-              'Selected upstream APK SHA-256: ' + os.environ['UPSTREAM_SHA256'] + '\n\n'
-              'This build used the dynamically selected official Latest stable APK. '
-              'The saved V9.8.2 binary overlay passed its exact-input compatibility gate. '
-              'This is binary reconstruction, not Gradle source compilation. '
-              'No cross-version patching or on-device runtime testing is claimed. '
-              'Cloud signing certificate may differ from the installed APK.\n\n'
-              'Signing mode: ' + os.environ['SIGNING_MODE'] + '.\n', encoding='utf-8')
+          m=json.loads(Path('baseline/manifest.json').read_text())
+          subprocess.run(['curl','-fL','--retry','4','-o','audit/official.apk',m['upstream_url']],check=True)
+          assert hashlib.sha256(Path('audit/official.apk').read_bytes()).hexdigest()==m['upstream_sha256']
           PY
-          gh release create "$tag" dist/Nova_Video_Player_mod.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Nova Video Player mod - official ${UPSTREAM_TAG}" \
-            --notes-file dist/RELEASE_NOTES.md
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.draft == false) | [.created_at, .tag_name] | @tsv' \
-            | sort -r | tail -n +4 | cut -f2- | while IFS= read -r old; do
-              [[ -z "$old" || "$old" == "$tag" ]] && continue
-              gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-            done
-          test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false)] | length' | awk '{s+=$1}END{print s}')" -le 3
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY"
-
-      - name: Preserve upstream selection and compatibility reports
-        if: always() && !cancelled()
-        uses: actions/upload-artifact@v4
+          curl -fL --retry 4 -o audit/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  audit/apktool.jar' | sha256sum -c -
+          python3 scripts/build.py build audit/official.apk audit/modified.apk
+      - name: Decode reference and complete stable mod
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Xmx4g -jar audit/apktool.jar d --no-debug-info -f audit/official.apk -o old > audit/decode-official.log 2>&1
+          java -Xmx4g -jar audit/apktool.jar d --no-debug-info -f audit/modified.apk -o mod > audit/decode-mod.log 2>&1
+      - name: Export exact differences and local analysis inputs
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,hashlib,zipfile,shutil,difflib
+          from pathlib import Path
+          a=Path('old');b=Path('mod'); out=Path('audit')
+          names={p.relative_to(a).as_posix() for p in a.rglob('*') if p.is_file()}|{p.relative_to(b).as_posix() for p in b.rglob('*') if p.is_file()}
+          changed=[];diff=[]
+          for n in sorted(names):
+              x=a/n;y=b/n
+              xb=x.read_bytes() if x.exists() else None;yb=y.read_bytes() if y.exists() else None
+              if xb==yb:continue
+              changed.append({'path':n,'old_size':len(xb) if xb is not None else None,'new_size':len(yb) if yb is not None else None})
+              for side,p in [('old',x),('mod',y)]:
+                  if p.exists():
+                      q=out/side/n;q.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(p,q)
+              if n.endswith(('.smali','.xml','.yml')) and not n.startswith('original/'):
+                  diff.extend(difflib.unified_diff((xb or b'').decode().splitlines(True),(yb or b'').decode().splitlines(True),fromfile='old/'+n,tofile='mod/'+n))
+          (out/'decoded-differences.json').write_text(json.dumps(changed,indent=2))
+          (out/'decoded.diff').write_text(''.join(diff))
+          for side,base in [('old',a),('mod',b)]:
+              p=out/side/'res/values/public.xml';p.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(base/'res/values/public.xml',p)
+          with zipfile.ZipFile('audit/official.apk') as x,zipfile.ZipFile('audit/modified.apk') as y:
+              sig=lambda n:n=='META-INF/MANIFEST.MF' or n.startswith('META-INF/') and n.upper().endswith(('.SF','.RSA','.DSA','.EC'))
+              nx=set(x.namelist());ny=set(y.namelist());r=[]
+              for n in sorted(nx|ny):
+                  if sig(n):continue
+                  xb=x.read(n) if n in nx else None;yb=y.read(n) if n in ny else None
+                  if xb!=yb:r.append({'path':n,'old_sha256':hashlib.sha256(xb).hexdigest() if xb is not None else None,'new_sha256':hashlib.sha256(yb).hexdigest() if yb is not None else None})
+              (out/'apk-differences.json').write_text(json.dumps(r,indent=2))
+          shutil.copyfile('baseline/manifest.json','audit/baseline-manifest.json')
+          print(json.dumps(changed,indent=2))
+          print('APK differences:',len(r))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: Nova-upstream-report-${{ github.run_id }}
-          path: |
-            inputs/upstream.json
-            inputs/compatibility.json
-            inputs/signing.json
-          retention-days: 30
-          if-no-files-found: ignore
+          name: Nova-granular-analysis
+          path: audit/
+          retention-days: 7
+          compression-level: 1
+          if-no-files-found: error
