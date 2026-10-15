@@ -5,14 +5,13 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
-  group: nova-video-player-mod
+  group: nova-video-player-mod-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -21,23 +20,41 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare official pinned source and tools
+        with:
+          persist-credentials: false
+
+      - name: Prepare tools and test dynamic selection
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq zstd
           python3 -m py_compile scripts/build.py scripts/check_upstream.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
           mkdir -p inputs dist
-          curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
-            -o inputs/official.apk \
-            'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-universal-release.apk'
-          echo 'f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5  inputs/official.apk' | sha256sum -c -
-      - name: Check newest official release and compatibility gate
-        run: python3 scripts/check_upstream.py
-      - name: Reconstruct SHA-locked V9.8.2 functional APK
+
+      - name: Resolve and download official latest stable APK
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+
+      - name: Verify official APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          test -x "$SIGNER"
+          "$SIGNER" verify --verbose --print-certs inputs/official.apk
+
+      - name: Verify saved patches are approved for selected latest APK
+        run: python3 scripts/check_upstream.py guard --apk inputs/official.apk --metadata inputs/upstream.json --baseline baseline/manifest.json --report inputs/compatibility.json
+
+      - name: Reconstruct mod from the selected latest APK
         run: python3 scripts/build.py build inputs/official.apk dist/unsigned.apk
+
       - name: Zipalign and sign APK
+        id: signing
         shell: bash
         env:
           NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
@@ -50,9 +67,11 @@ jobs:
           ALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)"
           test -x "$SIGNER" && test -x "$ALIGN"
           STORE="$RUNNER_TEMP/nova-signing.jks"
+          trap 'rm -f "$STORE"' EXIT
           if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
             printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 -d > "$STORE"
             echo 'Using configured signing secrets'
+            SIGNING_MODE=configured-key
           elif [[ -z "$NOVA_KEYSTORE_BASE64" && -z "$NOVA_STORE_PASSWORD" && -z "$NOVA_KEY_ALIAS" && -z "$NOVA_KEY_PASSWORD" ]]; then
             NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
             NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
@@ -61,6 +80,7 @@ jobs:
               -keyalg RSA -keysize 3072 -validity 3650 \
               -dname 'CN=Nova V9.8.2 Cloud Test, O=Nova Video Player mod' \
               -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD"
+            SIGNING_MODE=temporary-test-key
             echo '::warning::Temporary test signing key: APK cannot update a different certificate without uninstalling.'
           else
             echo '::error::Incomplete signing secrets' && exit 1
@@ -71,32 +91,58 @@ jobs:
           "$SIGNER" sign --min-sdk-version 23 \
             --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
             --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
-            --out dist/Nova_V9_8_2_Cloud.apk dist/aligned.apk
-          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_V9_8_2_Cloud.apk
-          python3 scripts/build.py verify dist/Nova_V9_8_2_Cloud.apk
-          (cd dist && sha256sum Nova_V9_8_2_Cloud.apk > SHA256SUMS.txt)
-          rm -f "$STORE"
-      - name: Upload build artifact
+            --out dist/Nova_Video_Player_mod.apk dist/aligned.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Video_Player_mod.apk
+          python3 scripts/build.py verify dist/Nova_Video_Player_mod.apk
+          (cd dist && sha256sum Nova_Video_Player_mod.apk > SHA256SUMS.txt)
+          echo "mode=$SIGNING_MODE" >> "$GITHUB_OUTPUT"
+          printf 'Signing mode: **%s**.\n' "$SIGNING_MODE" >> "$GITHUB_STEP_SUMMARY"
+          printf '{"signing_mode":"%s","runtime_tested":false}\n' "$SIGNING_MODE" > inputs/signing.json
+
+      - name: Confirm selected version is still official latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
+
+      - name: Upload verified build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nova-Video-Player-mod-V9.8.2
+          name: Nova-Video-Player-mod-upstream-${{ steps.upstream.outputs.release_id }}
           path: |
-            dist/Nova_V9_8_2_Cloud.apk
+            dist/Nova_Video_Player_mod.apk
             dist/SHA256SUMS.txt
           retention-days: 30
           if-no-files-found: error
+
       - name: Publish Release and keep latest three
         if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+          UPSTREAM_RELEASE_ID: ${{ steps.upstream.outputs.release_id }}
+          UPSTREAM_SHA256: ${{ steps.upstream.outputs.sha256 }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         run: |
           set -euo pipefail
-          tag="v9.8.2-cloud-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" dist/Nova_V9_8_2_Cloud.apk dist/SHA256SUMS.txt \
+          tag="nova-mod-upstream-${UPSTREAM_RELEASE_ID}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          Path('dist/RELEASE_NOTES.md').write_text(
+              'Official upstream: ' + os.environ['UPSTREAM_TAG'] + '\n\n'
+              'Selected upstream APK SHA-256: ' + os.environ['UPSTREAM_SHA256'] + '\n\n'
+              'This build used the dynamically selected official Latest stable APK. '
+              'The saved V9.8.2 binary overlay passed its exact-input compatibility gate. '
+              'This is binary reconstruction, not Gradle source compilation. '
+              'No cross-version patching or on-device runtime testing is claimed. '
+              'Cloud signing certificate may differ from the installed APK.\n\n'
+              'Signing mode: ' + os.environ['SIGNING_MODE'] + '.\n', encoding='utf-8')
+          PY
+          gh release create "$tag" dist/Nova_Video_Player_mod.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Nova Video Player mod V9.8.2 — run ${GITHUB_RUN_NUMBER}" \
-            --notes "User-confirmed V9.8.2 functional files (SHA-256 verified per file); reconstructed from a pinned official universal APK. This is binary reconstruction, not Gradle source compilation. Cloud signing certificate may differ from installed V9.8.2."
+            --title "Nova Video Player mod - official ${UPSTREAM_TAG}" \
+            --notes-file dist/RELEASE_NOTES.md
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.draft == false) | [.created_at, .tag_name] | @tsv' \
             | sort -r | tail -n +4 | cut -f2- | while IFS= read -r old; do
@@ -105,3 +151,15 @@ jobs:
             done
           test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false)] | length' | awk '{s+=$1}END{print s}')" -le 3
           gh release view "$tag" --repo "$GITHUB_REPOSITORY"
+
+      - name: Preserve upstream selection and compatibility reports
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-upstream-report-${{ github.run_id }}
+          path: |
+            inputs/upstream.json
+            inputs/compatibility.json
+            inputs/signing.json
+          retention-days: 30
+          if-no-files-found: ignore
