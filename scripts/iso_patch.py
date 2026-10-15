@@ -245,8 +245,13 @@ def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = No
         copied.append({'abi': abi, 'size': dst.stat().st_size})
 
         avos_src = avos_dir / abi / 'libavos.so'
-        if not avos_src.is_file() or avos_src.stat().st_size < 10000:
-            raise RuntimeError('Missing/invalid ISO-aware libavos for ' + abi)
+        if not avos_src.is_file():
+            raise RuntimeError('Missing ISO-aware libavos for ' + abi)
+        avos_bytes = avos_src.read_bytes()
+        if not avos_bytes.startswith(b'\x7fELF'):
+            raise RuntimeError('ISO-aware libavos is not ELF for ' + abi)
+        if b'nova_iso=1' not in avos_bytes or b'skip_estimate_duration_from_pts' not in avos_bytes:
+            raise RuntimeError('ISO-aware FFmpeg markers missing from libavos for ' + abi)
         avos_dst = root / 'lib' / abi / 'libavos.so'
         if not avos_dst.is_file():
             raise RuntimeError('Official libavos target missing for ' + abi)
