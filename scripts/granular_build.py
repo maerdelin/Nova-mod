@@ -12,6 +12,7 @@ import sys
 import zipfile
 import granular as g
 import check_upstream as upstream
+import iso_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -74,6 +75,7 @@ def main():
     p.add_argument('--work', type=Path, required=True)
     p.add_argument('--reports', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--iso-native', type=Path, required=True)
     args = p.parse_args()
     selected = upstream.load_selection(args.metadata, args.apk)
     args.work.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,7 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    iso_patch.apply(candidate, args.iso_native, args.reports / 'iso-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +102,7 @@ def main():
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
+        'bluray_iso_support': True,
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 

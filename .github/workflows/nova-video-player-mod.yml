@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq zstd
+          sudo apt-get install -y -qq zstd meson ninja-build
           mkdir -p inputs dist tools work reports
           python3 -m py_compile scripts/*.py tests/*.py
           python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -48,10 +48,14 @@ jobs:
           SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
           "$SIGNER" verify --verbose --print-certs inputs/official.apk > reports/official-signature.txt
 
+      - name: Build Blu-ray ISO native bridge
+        shell: bash
+        run: bash scripts/build_iso_native.sh work/iso-native
+
       - name: Apply instruction and XML-property patches to latest APK
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk
+        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk --iso-native work/iso-native
 
       - name: Align sign and verify the final APK
         id: signing
