@@ -58,14 +58,10 @@ jobs:
         shell: bash
         run: bash scripts/build_iso_native.sh work/iso-native
 
-      - name: Build ISO-aware avos from exact official source
-        shell: bash
-        run: bash scripts/build_iso_avos.sh work/iso-avos inputs/upstream.json
-
       - name: Apply instruction and XML-property patches to latest APK
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk --iso-native work/iso-native --avos-native work/iso-avos
+        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk --iso-native work/iso-native
 
       - name: Align sign and verify the final APK
         id: signing

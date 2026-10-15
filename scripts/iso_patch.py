@@ -357,7 +357,7 @@ def _next_smali_dir(root: Path) -> Path:
             pass
     return root / f'smali_classes{max(nums) + 1}'
 
-def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = None):
+def apply(root: Path, native_dir: Path, report: Path | None = None):
     mime = _one(root.glob('smali*/com/archos/filecorelibrary/MimeUtils.smali'), 'MimeUtils')
     mime_text = mime.read_text()
     old_count = mime_text.count(MIME_OLD)
@@ -400,7 +400,6 @@ def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = No
         iso_factory_status = 'applied'
 
     copied = []
-    avos_copied = []
     expected_abis = ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')
     for abi in expected_abis:
         src = native_dir / abi / 'libnova_iso.so'
@@ -410,20 +409,6 @@ def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = No
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
         copied.append({'abi': abi, 'size': dst.stat().st_size})
-
-        avos_src = avos_dir / abi / 'libavos.so'
-        if not avos_src.is_file():
-            raise RuntimeError('Missing ISO-aware libavos for ' + abi)
-        avos_bytes = avos_src.read_bytes()
-        if not avos_bytes.startswith(b'\x7fELF'):
-            raise RuntimeError('ISO-aware libavos is not ELF for ' + abi)
-        if b'nova_iso=1' not in avos_bytes or b'skip_estimate_duration_from_pts' not in avos_bytes:
-            raise RuntimeError('ISO-aware FFmpeg markers missing from libavos for ' + abi)
-        avos_dst = root / 'lib' / abi / 'libavos.so'
-        if not avos_dst.is_file():
-            raise RuntimeError('Official libavos target missing for ' + abi)
-        shutil.copyfile(avos_src, avos_dst)
-        avos_copied.append({'abi': abi, 'size': avos_dst.stat().st_size})
 
     result = {
         'status': 'PASS',
@@ -435,8 +420,7 @@ def apply(root: Path, native_dir: Path, avos_dir: Path, report: Path | None = No
         'proxy_path': proxy_path.relative_to(root).as_posix(),
         'iso_player_factory_path': iso_factory_path.relative_to(root).as_posix(),
         'native': copied,
-        'iso_aware_avos': avos_copied,
-        'strategy': 'ISO-only AvosMediaPlayer selection -> WebDAV StreamOverHttp -> libbluray -> ISO-marked localhost MPEG-TS -> ISO-only FFmpeg fast probe',
+        'strategy': 'ISO-only AvosMediaPlayer selection -> WebDAV StreamOverHttp -> libbluray -> localhost MPEG-TS; stock Nova native stack preserved',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)

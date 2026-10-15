@@ -56,23 +56,14 @@ def bootstrap(jar: Path, work: Path, selected: Path, reports: Path):
     g.verify(work / 'reference-mod', work / 'reference-test', reports / 'baseline-equivalence.json')
     g.write_json(reports / 'bootstrap.json', {'status': 'PASS', 'generated_spec': True, 'stats': patch['stats']})
 
-def preserve_payload(selected: Path, rebuilt: Path, avos_dir: Path, reports: Path):
+def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
     with zipfile.ZipFile(selected) as a, zipfile.ZipFile(rebuilt) as b:
         if b.testzip() is not None or len(b.namelist()) != len(set(b.namelist())):
             raise g.Conflict('Rebuilt APK has invalid/duplicate entries')
         keep = [n for n in a.namelist() if n.startswith(('lib/', 'assets/')) and not n.endswith('/')]
-        allowed = {f'lib/{abi}/libavos.so' for abi in ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')}
         changed = [n for n in keep if n not in b.namelist() or a.read(n) != b.read(n)]
-        unexpected = [n for n in changed if n not in allowed]
-        if unexpected:
-            raise g.Conflict('Unexpected upstream native/asset payload change: ' + str(unexpected[:10]))
-        if set(changed) != allowed:
-            raise g.Conflict('Expected exactly four ISO-aware libavos replacements, got: ' + str(changed))
-        for abi in ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'):
-            name = f'lib/{abi}/libavos.so'
-            expected = (avos_dir / abi / 'libavos.so').read_bytes()
-            if b.read(name) != expected:
-                raise g.Conflict('Rebuilt APK libavos mismatch for ' + abi)
+        if changed:
+            raise g.Conflict('Upstream native/asset payload changed: ' + str(changed[:10]))
         if b.getinfo('resources.arsc').compress_type != zipfile.ZIP_STORED:
             raise g.Conflict('resources.arsc must be stored uncompressed')
     g.write_json(reports / 'upstream-payload.json', {'status': 'PASS', 'native_and_asset_entries_preserved': len(keep)})
@@ -195,7 +186,6 @@ def main():
     p.add_argument('--reports', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--iso-native', type=Path, required=True)
-    p.add_argument('--avos-native', type=Path, required=True)
     args = p.parse_args()
     selected = upstream.load_selection(args.metadata, args.apk)
     args.work.mkdir(parents=True, exist_ok=True)
@@ -209,7 +199,7 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
-    iso_patch.apply(candidate, args.iso_native, args.avos_native, args.reports / 'iso-patch.json')
+    iso_patch.apply(candidate, args.iso_native, args.reports / 'iso-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -217,13 +207,13 @@ def main():
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
     verify_roundtrip(candidate, decoded, args.reports / 'roundtrip.json')
-    preserve_payload(args.apk, args.output, args.avos_native, args.reports)
+    preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
         'bluray_iso_support': True,
-        'native_module_replacement': 'libavos.so rebuilt from exact official v6.5.5 source; ISO-only probe branch',
+        'native_module_replacement': 'none; official Nova native libraries preserved',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 
