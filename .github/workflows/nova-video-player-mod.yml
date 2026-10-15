@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: nova-video-player-mod
@@ -100,3 +101,25 @@ jobs:
             done
           test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false)] | length' | awk '{s+=$1}END{print s}')" -le 3
           gh release view "$tag" --repo "$GITHUB_REPOSITORY"
+      - name: Remove obsolete GitHub Actions workflow records
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Historical workflow IDs have no YAML on any current branch.
+          # GitHub's sidebar can retain them until historical runs are removed.
+          current=385080648
+          for old in 381863390 382153582 382774230 382797748 383899244; do
+            echo "Disabling obsolete workflow $old"
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$old/disable" || true
+            echo "Deleting historical runs for workflow $old"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/$old/runs?per_page=100" --jq '.workflow_runs[].id' |
+              while IFS= read -r run; do
+                test -n "$run" || continue
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$run" >/dev/null
+                echo "Removed run $run"
+              done
+          done
+          echo "Legacy workflow records cleaned; only current workflow $current is active."
