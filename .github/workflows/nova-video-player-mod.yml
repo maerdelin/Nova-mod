@@ -1,0 +1,102 @@
+name: Nova Video Player mod
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nova-video-player-mod
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare official pinned source and tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd
+          python3 -m py_compile scripts/build.py
+          mkdir -p inputs dist
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
+            -o inputs/official.apk \
+            'https://github.com/nova-video-player/aos-AVP/releases/download/v6.5.5/org.courville.nova-2672099-6.5.5-20261009.2113-universal-release.apk'
+          echo 'f252631680328916ed847c8c0d6711d6a9922373e54f939178c428a9b3c3e1a5  inputs/official.apk' | sha256sum -c -
+      - name: Reconstruct SHA-locked V9.8.2 functional APK
+        run: python3 scripts/build.py build inputs/official.apk dist/unsigned.apk
+      - name: Zipalign and sign APK
+        shell: bash
+        env:
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)"
+          test -x "$SIGNER" && test -x "$ALIGN"
+          STORE="$RUNNER_TEMP/nova-signing.jks"
+          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
+            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 -d > "$STORE"
+            echo 'Using configured signing secrets'
+          elif [[ -z "$NOVA_KEYSTORE_BASE64" && -z "$NOVA_STORE_PASSWORD" && -z "$NOVA_KEY_ALIAS" && -z "$NOVA_KEY_PASSWORD" ]]; then
+            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+            NOVA_KEY_ALIAS=nova-v982-cloud-test
+            keytool -genkeypair -noprompt -keystore "$STORE" -alias "$NOVA_KEY_ALIAS" \
+              -keyalg RSA -keysize 3072 -validity 3650 \
+              -dname 'CN=Nova V9.8.2 Cloud Test, O=Nova Video Player mod' \
+              -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD"
+            echo '::warning::Temporary test signing key: APK cannot update a different certificate without uninstalling.'
+          else
+            echo '::error::Incomplete signing secrets' && exit 1
+          fi
+          "$ALIGN" -f -p 4 dist/unsigned.apk dist/aligned.apk
+          "$ALIGN" -c -v 4 dist/aligned.apk
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          "$SIGNER" sign --min-sdk-version 23 \
+            --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" \
+            --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD \
+            --out dist/Nova_V9_8_2_Cloud.apk dist/aligned.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_V9_8_2_Cloud.apk
+          python3 scripts/build.py verify dist/Nova_V9_8_2_Cloud.apk
+          (cd dist && sha256sum Nova_V9_8_2_Cloud.apk > SHA256SUMS.txt)
+          rm -f "$STORE"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-Video-Player-mod-V9.8.2
+          path: |
+            dist/Nova_V9_8_2_Cloud.apk
+            dist/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error
+      - name: Publish Release and keep latest three
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v9.8.2-cloud-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" dist/Nova_V9_8_2_Cloud.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Nova Video Player mod V9.8.2 — run ${GITHUB_RUN_NUMBER}" \
+            --notes "User-confirmed V9.8.2 functional files (SHA-256 verified per file); reconstructed from a pinned official universal APK. This is binary reconstruction, not Gradle source compilation. Cloud signing certificate may differ from installed V9.8.2."
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false) | [.created_at, .tag_name] | @tsv' \
+            | sort -r | tail -n +4 | cut -f2- | while IFS= read -r old; do
+              [[ -z "$old" || "$old" == "$tag" ]] && continue
+              gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            done
+          test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false)] | length' | awk '{s+=$1}END{print s}')" -le 3
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY"
