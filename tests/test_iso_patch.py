@@ -22,6 +22,12 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('move-result-object p1', out)
         self.assertTrue(status.startswith('.method '))
 
+    def test_native_source_uses_real_crlf_escapes(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn("header[i] == '\\r'", source)
+        self.assertIn('"\\r\\n"', source)
+        self.assertNotIn("header[i] == '\\\\\\\\r'", source)
+
     def test_proxy_smali_has_native_bridge(self):
         self.assertIn('System;->loadLibrary', iso_patch.PROXY_SMALI)
         self.assertIn('StreamOverHttp;-><init>', iso_patch.PROXY_SMALI)

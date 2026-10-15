@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 import granular as g
 import check_upstream as upstream
 import iso_patch
@@ -67,6 +68,71 @@ def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
             raise g.Conflict('resources.arsc must be stored uncompressed')
     g.write_json(reports / 'upstream-payload.json', {'status': 'PASS', 'native_and_asset_entries_preserved': len(keep)})
 
+
+def verify_roundtrip(expected: Path, actual: Path, report: Path):
+    """Strict round-trip verification, tolerating only DEX jumbo encoding of MimeUtils strings."""
+    sa = g.resource_map(expected)
+    sb = g.resource_map(actual)
+    ia = g.class_index(expected)
+    ib = g.class_index(actual)
+    bad = []
+    if ia.keys() != ib.keys():
+        bad.append('class set differs')
+    mime = 'Lcom/archos/filecorelibrary/MimeUtils;'
+    for name in ia.keys() & ib.keys():
+        a = ia[name].read_text()
+        b = ib[name].read_text()
+        if name == mime:
+            a = a.replace('const-string/jumbo', 'const-string')
+            b = b.replace('const-string/jumbo', 'const-string')
+        if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
+            bad.append(name)
+    aa = {p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
+          if p.relative_to(expected).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
+    bb = {p.relative_to(actual).as_posix() for p in actual.rglob('*.xml')
+          if p.relative_to(actual).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
+    if aa != bb:
+        bad.append('XML resource set differs')
+    for path in aa & bb:
+        if (expected / path).read_bytes() != (actual / path).read_bytes():
+            if g.logical_xml(ET.parse(expected / path).getroot()) != g.logical_xml(ET.parse(actual / path).getroot()):
+                bad.append(path)
+
+    # ISO-specific invariants are checked independently, so this tolerance cannot hide the feature.
+    for root, label in ((expected, 'expected'), (actual, 'roundtrip')):
+        mf = next(iter(root.glob('smali*/com/archos/filecorelibrary/MimeUtils.smali')), None)
+        if mf is None:
+            bad.append(label + ': MimeUtils missing')
+        else:
+            t = mf.read_text()
+            if t.count('"video/x-bluray-iso"') != 1 or '"application/x-iso9660-image"' in t:
+                bad.append(label + ': ISO MIME mapping invalid')
+        pf = next(iter(root.glob('smali*/com/archos/mediacenter/video/player/Player.smali')), None)
+        if pf is None or pf.read_text().count('BlurayIsoProxy;->resolve') != 1:
+            bad.append(label + ': Player ISO resolver injection invalid')
+        proxies = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
+        if len(proxies) != 1 or 'nativeOpen(Ljava/lang/String;)Ljava/lang/String;' not in proxies[0].read_text():
+            bad.append(label + ': BlurayIsoProxy invalid')
+        for abi in ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'):
+            so = root / 'lib' / abi / 'libnova_iso.so'
+            if not so.is_file() or so.stat().st_size < 10000:
+                bad.append(label + ': missing native ' + abi)
+
+    result = {
+        'status': 'FAIL' if bad else 'PASS',
+        'classes_compared': len(ia),
+        'xml_files_compared': len(aa),
+        'differences': sorted(bad),
+        'comparison': 'strict logical roundtrip; MimeUtils only normalizes const-string vs const-string/jumbo',
+        'runtime_tested': False,
+    }
+    g.write_json(report, result)
+    if bad:
+        raise g.Conflict('Logical verification failed: ' + str(bad[:20]))
+    print(json.dumps(result, indent=2))
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--apk', type=Path, required=True)
@@ -96,7 +162,7 @@ def main():
     run('java', '-Xmx4g', '-jar', args.apktool, 'b', candidate, '-o', args.output)
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
-    g.verify(candidate, decoded, args.reports / 'roundtrip.json')
+    verify_roundtrip(candidate, decoded, args.reports / 'roundtrip.json')
     preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
