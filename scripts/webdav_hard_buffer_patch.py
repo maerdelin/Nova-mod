@@ -763,16 +763,14 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
 .end method
 
 .method public static bufferStartHeldCurrent()V
-    .locals 2
+    .locals 3
 
     sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
     if-eqz v0, :done
 
     iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
-    const/4 v1, 0x5
-    iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
-    const/4 p0, 0x5
-    if-ne v1, p0, :done
+    const/4 v2, 0x5
+    if-ne v1, v2, :done
 
     const/4 v1, 0x0
     invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->start(I)V
