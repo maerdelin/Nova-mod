@@ -160,6 +160,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
                 bad.append(label + ': WebDAV read-ahead injection invalid')
             if sst.count(' shouldUseNetworkReadAhead()Z') != 1:
                 bad.append(label + ': WebDAV sequential-range policy invalid')
+            if sst.count(' reopenReadAheadAt(J)Ljava/io/InputStream;') != 1:
+                bad.append(label + ': WebDAV read-ahead reconnect helper invalid')
+            if sst.count(' getReadAheadStart()J') != 1:
+                bad.append(label + ': WebDAV read-ahead start helper invalid')
             for token in ('requestedStart:J', 'requestedEnd:J', 'length:J', 'const-wide/32 v2, 0x800000', 'const-wide/16 v4, 0x1'):
                 if token not in sst:
                     bad.append(label + ': WebDAV range gate missing ' + token)
@@ -171,8 +175,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             for token in (
                 'PipedInputStream;-><init>(I)V',
                 'PipedOutputStream;',
-                'READ_AHEAD_ON webdav cap=32MiB prefill=8MiB maxwait=2s mode=continuous',
+                'READ_AHEAD_ON webdav cap=32MiB prefill=8MiB maxwait=2s mode=continuous retry=3',
                 'awaitInitialPrefill()V',
+                'SOURCE_RETRY attempt=',
+                'SOURCE_REOPEN_OK attempt=',
+                'SOURCE_IO_FAIL_AFTER_RETRY attempts=3',
                 'PREFILL_READY target=8MiB',
                 'PREFILL_TIMEOUT maxwait=2s continue-with-current-buffer',
                 'STAT produced_bytes=',
@@ -284,7 +291,7 @@ def main():
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
         'bluray_iso_support': True,
-        'webdav_readahead': '32 MiB asynchronous continuous long-sequential-media read-ahead; one-shot 8 MiB startup/seek prefill capped at 2 seconds; no playback-phase rebuffer gate; 4 MiB producer/buffer/consumed telemetry checkpoints; bounded probe/seek ranges bypassed; persistent ISO playback Range connection',
+        'webdav_readahead': 'Kodi-inspired recoverable 32 MiB asynchronous cache; one-shot 8 MiB startup/seek prefill capped at 2 seconds; no playback-phase rebuffer gate; transient source errors reopen from the absolute produced offset up to 3 times while cached bytes remain available to Avos; 4 MiB telemetry checkpoints; bounded probes bypassed',
         'native_module_replacement': 'none; official Nova native libraries preserved',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')

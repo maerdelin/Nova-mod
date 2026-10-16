@@ -383,16 +383,23 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .field private volatile prefillDone:Z
 .field private final pipeIn:Ljava/io/PipedInputStream;
 .field private final pipeOut:Ljava/io/PipedOutputStream;
-.field private final source:Ljava/io/InputStream;
+.field private source:Ljava/io/InputStream;
+.field private final session:Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;
+.field private final startOffset:J
 .field private produced:J
 .field private nextStat:J
 
-.method private constructor <init>(Ljava/io/InputStream;)V
+.method private constructor <init>(Ljava/io/InputStream;Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;)V
     .locals 5
 
     invoke-direct {p0}, Ljava/io/InputStream;-><init>()V
 
     iput-object p1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
+    iput-object p2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->session:Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;
+
+    invoke-virtual {p2}, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->getReadAheadStart()J
+    move-result-wide v0
+    iput-wide v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->startOffset:J
 
     const-wide/32 v0, 0x400000
     iput-wide v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->nextStat:J
@@ -416,7 +423,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return-void
 .end method
 
-.method public static wrap(Landroid/net/Uri;Ljava/io/InputStream;Z)Ljava/io/InputStream;
+.method public static wrap(Landroid/net/Uri;Ljava/io/InputStream;ZLcom/archos/filecorelibrary/StreamOverHttp$HttpSession;)Ljava/io/InputStream;
     .locals 5
 
     if-eqz p1, :return_original
@@ -440,10 +447,10 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     :wrap_stream
     :try_start_0
     new-instance v2, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
-    invoke-direct {v2, p1}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;-><init>(Ljava/io/InputStream;)V
+    invoke-direct {v2, p1, p3}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;-><init>(Ljava/io/InputStream;Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;)V
 
     const-string v3, "NovaNetBuf"
-    const-string v4, "READ_AHEAD_ON webdav cap=32MiB prefill=8MiB maxwait=2s mode=continuous"
+    const-string v4, "READ_AHEAD_ON webdav cap=32MiB prefill=8MiB maxwait=2s mode=continuous retry=3"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     return-object v2
@@ -572,7 +579,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .end method
 
 .method public run()V
-    .locals 7
+    .locals 9
 
     const v0, 0x40000
     new-array v0, v0, [B
@@ -581,36 +588,121 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
     if-nez v1, :finish
 
-    :try_start_0
+    :try_read
     iget-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
     const/4 v2, 0x0
     array-length v3, v0
     invoke-virtual {v1, v0, v2, v3}, Ljava/io/InputStream;->read([BII)I
     move-result v1
+    :try_end_read
+    .catch Ljava/io/IOException; {:try_read .. :try_end_read} :catch_source
 
     if-ltz v1, :finish
     if-eqz v1, :read_loop
 
+    :try_write
     iget-object v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeOut:Ljava/io/PipedOutputStream;
     invoke-virtual {v3, v0, v2, v1}, Ljava/io/OutputStream;->write([BII)V
+    :try_end_write
+    .catch Ljava/io/IOException; {:try_write .. :try_end_write} :catch_pipe
 
     iget-wide v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->produced:J
     int-to-long v5, v1
     add-long/2addr v3, v5
     iput-wide v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->produced:J
     invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->maybeLogStats()V
-
     goto :read_loop
-    :try_end_0
-    .catch Ljava/io/IOException; {:try_start_0 .. :try_end_0} :catch_io
 
-    :catch_io
+    :catch_pipe
     move-exception v1
     iget-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
     if-nez v2, :finish
     iput-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
     const-string v2, "NovaNetBuf"
-    const-string v3, "SOURCE_IO_FAIL"
+    const-string v3, "PIPE_IO_FAIL consumer-closed-or-pipe-failed"
+    invoke-static {v2, v3, v1}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+    goto :finish
+
+    :catch_source
+    move-exception v1
+    iget-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
+    if-nez v2, :finish
+
+    const/4 v2, 0x0
+
+    :retry_reopen
+    const/4 v3, 0x3
+    if-ge v2, v3, :retry_exhausted
+    add-int/lit8 v2, v2, 0x1
+
+    iget-wide v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->startOffset:J
+    iget-wide v5, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->produced:J
+    add-long/2addr v3, v5
+
+    new-instance v5, Ljava/lang/StringBuilder;
+    const-string v6, "SOURCE_RETRY attempt="
+    invoke-direct {v5, v6}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+    invoke-virtual {v5, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v6, " resume_offset="
+    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v5, v3, v4}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
+    const-string v6, " buffered="
+    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    iget-object v6, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
+    invoke-virtual {v6}, Ljava/io/PipedInputStream;->available()I
+    move-result v6
+    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v5
+    const-string v6, "NovaNetBuf"
+    invoke-static {v6, v5, v1}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+
+    const-wide/32 v5, 0x1dcd6500
+    invoke-static {v5, v6}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
+
+    iget-boolean v5, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
+    if-nez v5, :finish
+
+    :try_close_old
+    iget-object v5, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
+    invoke-virtual {v5}, Ljava/io/InputStream;->close()V
+    :try_end_close_old
+    .catch Ljava/io/IOException; {:try_close_old .. :try_end_close_old} :after_close_old
+
+    :after_close_old
+    :try_reopen
+    iget-object v5, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->session:Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;
+    invoke-virtual {v5, v3, v4}, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->reopenReadAheadAt(J)Ljava/io/InputStream;
+    move-result-object v5
+    iput-object v5, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
+    :try_end_reopen
+    .catch Ljava/io/IOException; {:try_reopen .. :try_end_reopen} :reopen_failed
+
+    new-instance v5, Ljava/lang/StringBuilder;
+    const-string v6, "SOURCE_REOPEN_OK attempt="
+    invoke-direct {v5, v6}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+    invoke-virtual {v5, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v6, " resume_offset="
+    invoke-virtual {v5, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v5, v3, v4}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
+    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v5
+    const-string v6, "NovaNetBuf"
+    invoke-static {v6, v5}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    goto :read_loop
+
+    :reopen_failed
+    move-exception v5
+    move-object v1, v5
+    const-string v6, "NovaNetBuf"
+    const-string v7, "SOURCE_REOPEN_FAIL"
+    invoke-static {v6, v7, v5}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+    goto :retry_reopen
+
+    :retry_exhausted
+    iput-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    const-string v2, "NovaNetBuf"
+    const-string v3, "SOURCE_IO_FAIL_AFTER_RETRY attempts=3"
     invoke-static {v2, v3, v1}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
 
     :finish
@@ -734,6 +826,103 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .end method
 '''
 
+STREAM_SESSION_RECONNECT_SMALI = r'''.method public getReadAheadStart()J
+    .locals 2
+
+    iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedStart:J
+    return-wide v0
+.end method
+
+.method public reopenReadAheadAt(J)Ljava/io/InputStream;
+    .locals 12
+    .annotation system Ldalvik/annotation/Throws;
+        value = {
+            Ljava/io/IOException;
+        }
+    .end annotation
+
+    invoke-direct {p0}, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->isCancelled()Z
+    move-result v0
+    if-eqz v0, :not_cancelled
+
+    new-instance v0, Ljava/io/IOException;
+    const-string v1, "Request cancelled"
+    invoke-direct {v0, v1}, Ljava/io/IOException;-><init>(Ljava/lang/String;)V
+    throw v0
+
+    :not_cancelled
+    iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
+    sub-long v6, v0, p1
+
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->partialResponse:Z
+    if-eqz v0, :full_request
+
+    iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedEnd:J
+    sub-long v6, v0, p1
+    const-wide/16 v2, 0x1
+    add-long/2addr v6, v2
+
+    iget-wide v2, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
+    const-wide/16 v4, 0x1
+    sub-long/2addr v2, v4
+    cmp-long v0, v0, v2
+    if-ltz v0, :bounded_request
+
+    :full_request
+    const/4 v8, 0x0
+    goto :have_bounds
+
+    :bounded_request
+    const/4 v8, 0x1
+
+    :have_bounds
+    const-wide/16 v0, 0x0
+    cmp-long v0, v6, v0
+    if-lez v0, :past_end
+
+    sget-object v5, Lcom/archos/filecorelibrary/ReadOptions$Purpose;->PLAYBACK:Lcom/archos/filecorelibrary/ReadOptions$Purpose;
+
+    iget-object v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->this$0:Lcom/archos/filecorelibrary/StreamOverHttp;
+    invoke-static {v0}, Lcom/archos/filecorelibrary/StreamOverHttp;->e(Lcom/archos/filecorelibrary/StreamOverHttp;)Lcom/archos/filecorelibrary/ReadOptions;
+    move-result-object v0
+
+    if-nez v0, :copy_options
+
+    new-instance v3, Lcom/archos/filecorelibrary/ReadOptions;
+    invoke-direct {v3, v5, v6, v7, v8}, Lcom/archos/filecorelibrary/ReadOptions;-><init>(Lcom/archos/filecorelibrary/ReadOptions$Purpose;JZ)V
+    goto :open
+
+    :copy_options
+    new-instance v4, Lcom/archos/filecorelibrary/ReadOptions;
+    iget v9, v0, Lcom/archos/filecorelibrary/ReadOptions;->sftpDepth:I
+    iget v10, v0, Lcom/archos/filecorelibrary/ReadOptions;->requestBytes:I
+    iget-object v11, v0, Lcom/archos/filecorelibrary/ReadOptions;->smbjAccess:Lcom/archos/filecorelibrary/ReadOptions$SmbjAccess;
+    invoke-direct/range {v4 .. v11}, Lcom/archos/filecorelibrary/ReadOptions;-><init>(Lcom/archos/filecorelibrary/ReadOptions$Purpose;JZIILcom/archos/filecorelibrary/ReadOptions$SmbjAccess;)V
+    move-object v3, v4
+
+    :open
+    iget-object v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->this$0:Lcom/archos/filecorelibrary/StreamOverHttp;
+    invoke-virtual {v0}, Lcom/archos/filecorelibrary/StreamOverHttp;->getSourceUri()Landroid/net/Uri;
+    move-result-object v1
+
+    invoke-direct {p0, v1}, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->prepareUpstream(Landroid/net/Uri;)V
+
+    iget-object v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->this$0:Lcom/archos/filecorelibrary/StreamOverHttp;
+    invoke-virtual {v0, v1}, Lcom/archos/filecorelibrary/StreamOverHttp;->getFileEditor(Landroid/net/Uri;)Lcom/archos/filecorelibrary/FileEditor;
+    move-result-object v2
+
+    invoke-virtual {v2, p1, p2, v3}, Lcom/archos/filecorelibrary/FileEditor;->getInputStream(JLcom/archos/filecorelibrary/ReadOptions;)Ljava/io/InputStream;
+    move-result-object v0
+    return-object v0
+
+    :past_end
+    new-instance v0, Ljava/io/IOException;
+    const-string v1, "Read-ahead resume past end"
+    invoke-direct {v0, v1}, Ljava/io/IOException;-><init>(Ljava/lang/String;)V
+    throw v0
+.end method
+'''
+
 STREAM_SESSION_POLICY_SMALI = r'''.method private shouldUseNetworkReadAhead()Z
     .locals 6
 
@@ -803,12 +992,13 @@ def patch_stream_over_http_text(text: str) -> tuple[str, str]:
 def patch_stream_http_session_text(text: str) -> tuple[str, str]:
     wrapper = (
         'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->wrap'
-        '(Landroid/net/Uri;Ljava/io/InputStream;Z)Ljava/io/InputStream;'
+        '(Landroid/net/Uri;Ljava/io/InputStream;ZLcom/archos/filecorelibrary/StreamOverHttp$HttpSession;)Ljava/io/InputStream;'
     )
     policy = ' shouldUseNetworkReadAhead()Z'
-    if wrapper in text and policy in text:
+    reconnect = ' reopenReadAheadAt(J)Ljava/io/InputStream;'
+    if wrapper in text and policy in text and reconnect in text:
         return text, 'already-applied'
-    if wrapper in text or policy in text:
+    if wrapper in text or policy in text or reconnect in text:
         raise RuntimeError('Partial WebDAV read-ahead patch found')
 
     methods = []
@@ -859,14 +1049,14 @@ def patch_stream_http_session_text(text: str) -> tuple[str, str]:
         '',
         f'    move-result {bool_reg}',
         '',
-        f'    invoke-static {{{uri_reg}, p1, {bool_reg}}}, {wrapper}',
+        f'    invoke-static {{{uri_reg}, p1, {bool_reg}, p0}}, {wrapper}',
         '',
         '    move-result-object p1',
     ]
     lines[decl_idx + 1:decl_idx + 1] = injection
     new_body = '\n'.join(lines)
     text = text[:m.start()] + new_body + text[m.end():]
-    return text.rstrip() + '\n\n' + STREAM_SESSION_POLICY_SMALI + '\n', 'applied'
+    return text.rstrip() + '\n\n' + STREAM_SESSION_POLICY_SMALI + '\n\n' + STREAM_SESSION_RECONNECT_SMALI + '\n', 'applied'
 
 
 def patch_initial_zero_seek_player_service_text(text: str) -> tuple[str, str]:
@@ -1047,7 +1237,7 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         'iso_player_factory_path': iso_factory_path.relative_to(root).as_posix(),
         'network_readahead_path': read_ahead_path.relative_to(root).as_posix(),
         'native': copied,
-        'strategy': 'Kodi-style continuous WebDAV producer/read-ahead plus one-shot 8 MiB startup/seek prefill capped at 2s; no playback-phase rebuffer gate; 4 MiB telemetry checkpoints; bounded probe ranges bypass read-ahead; persistent ISO playback Range stream; stock Nova Avos native stack preserved',
+        'strategy': 'Kodi-inspired recoverable WebDAV cache: continuous 32 MiB producer, one-shot 8 MiB startup/seek prefill capped at 2s, no playback-phase rebuffer gate, transient source errors reopen at absolute produced offset up to 3 times while the same pipe keeps serving cached bytes; 4 MiB telemetry; bounded probes bypass; stock Nova Avos native stack preserved',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
