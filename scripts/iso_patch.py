@@ -702,13 +702,25 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 '''
 
 STREAM_SESSION_POLICY_SMALI = r'''.method private shouldUseNetworkReadAhead()Z
-    .locals 5
+    .locals 6
 
     iget-boolean v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->supersedableMediaRequest:Z
     if-eqz v0, :no
 
-    iget-boolean v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->partialResponse:Z
-    if-eqz v0, :yes
+    iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
+    const-wide/32 v2, 0x800000
+    cmp-long v4, v0, v2
+    if-ltz v4, :no
+
+    iget-boolean v4, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->partialResponse:Z
+    if-eqz v4, :yes
+
+    iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedEnd:J
+    iget-wide v2, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
+    const-wide/16 v4, 0x1
+    sub-long/2addr v2, v4
+    cmp-long v4, v0, v2
+    if-nez v4, :no
 
     iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedEnd:J
     iget-wide v2, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedStart:J
@@ -774,7 +786,7 @@ def patch_stream_http_session_text(text: str) -> tuple[str, str]:
     if len(methods) != 1:
         raise RuntimeError(f'StreamOverHttp.HttpSession.publishInput missing/ambiguous: {len(methods)}')
 
-    for field in ('supersedableMediaRequest:Z', 'partialResponse:Z',
+    for field in ('supersedableMediaRequest:Z', 'partialResponse:Z', 'length:J',
                   'requestedStart:J', 'requestedEnd:J'):
         if field not in text:
             raise RuntimeError(f'StreamOverHttp.HttpSession field missing: {field}')
@@ -1002,7 +1014,7 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         'iso_player_factory_path': iso_factory_path.relative_to(root).as_posix(),
         'network_readahead_path': read_ahead_path.relative_to(root).as_posix(),
         'native': copied,
-        'strategy': 'Kodi-inspired WebDAV background read-ahead + persistent ISO playback Range stream; stock Nova Avos native stack preserved',
+        'strategy': 'Kodi-style WebDAV producer/read-ahead + Dangbei-style staged buffer watermarks; bounded probe ranges bypass read-ahead; persistent ISO playback Range stream; stock Nova Avos native stack preserved',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
