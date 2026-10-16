@@ -733,13 +733,8 @@ audio_loop_anchor = """		// no more audio in this chunk, then look for next
 			STREAM_CDATA cdata = { 0 };
 """
 audio_loop_new = """		// no more audio in this chunk, then look for next
-		int nova_audio_starve_started = 0;
+
 		while( s->audio_buffer_size <= 0 && !_abort( s ) ){
-			if (s->nova_rebuffer_active) {
-				stream_yield_RT();
-				return;
-			}
-			
 			STREAM_CDATA cdata = { 0 };
 """
 if "int nova_audio_starve_started" not in s:
@@ -751,11 +746,8 @@ fail_anchor = """			if ( s->parser->get_audio_cdata( s, &s->audio_now, &cdata  )
 				if ( s->audio_parse_end ) {
 """
 fail_new = """			if ( s->parser->get_audio_cdata( s, &s->audio_now, &cdata  ) ) {
-				if (!s->audio_parse_end && (s->flags & STREAM_FILE_NONLOCAL)) {
-					if (!nova_audio_starve_started) nova_audio_starve_started = atime();
-					if (!s->nova_rebuffer_active && atime() - nova_audio_starve_started >= 100)
-						nova_rebuffer_enter(s, "audio-starved");
-				}
+				if (!s->audio_parse_end && (s->flags & STREAM_FILE_NONLOCAL))
+					nova_rebuffer_enter(s, "audio-starved");
 				if ( s->audio_parse_end ) {
 """
 if 'nova_rebuffer_enter(s, "audio-starved")' not in s:
@@ -765,7 +757,7 @@ if 'nova_rebuffer_enter(s, "audio-starved")' not in s:
 
 valid_anchor = """			if( cdata.valid ) {
 """
-valid_new = """			nova_audio_starve_started = 0;
+valid_new = """
 			if( cdata.valid ) {
 """
 if "nova_audio_starve_started = 0;" not in s[s.find("int nova_audio_starve_started"):s.find("int nova_audio_starve_started")+8000]:
@@ -799,6 +791,12 @@ print("patched audio starvation detection")
 # ---------------------------------------------------------------------------
 p = avos / "Source/avos_mp_video.c"
 s = p.read_text()
+if "void nova_rebuffer_arm_startup(STREAM *s);" not in s:
+    proto_anchor = 'extern int libavos_get_ac3_recoding_enabled(void);\\n'
+    proto_text = proto_anchor + 'void nova_rebuffer_arm_startup(STREAM *s);\\nvoid nova_rebuffer_hold_outputs(STREAM *s);\\n'
+    if proto_anchor not in s:
+        raise SystemExit("avos startup prototype anchor missing")
+    s = s.replace(proto_anchor, proto_text, 1)
 
 msg_anchor = """	case STREAM_SUBTITLE_CHANGED:
 		send_subtitle(mp, video);
@@ -829,10 +827,10 @@ buf_anchor = """	if (_flags & STREAM_FILE_NONLOCAL) {
 	} else if ( !device_has_hdd() ) {
 """
 buf_new = """	if (_flags & STREAM_FILE_NONLOCAL) {
-		// Keep demux packet queues deep enough to exploit the independent 64 MiB
-		// byte cache. Kodi's current default file cache is also 64 MiB.
-		stream_set_buffer_size(video->s, MAX(get_default_stream_buffer_size(), 64));
-		serprintf("NOVA_REBUFFER_POLICY filecache=64MiB back=16MiB queue=64MiB resume=4000ms\\n");
+		// Kodi current defaults: 64 MiB file cache, 256 MiB player queue data,
+		// and 4.0 s player queue time. Keep those budgets distinct.
+		stream_set_buffer_size(video->s, MAX(get_default_stream_buffer_size(), 256));
+		serprintf("NOVA_REBUFFER_POLICY filecache=64MiB back=16MiB queue=256MiB resume=4000ms\\n");
 	} else if ( !device_has_hdd() ) {
 """
 if "NOVA_REBUFFER_POLICY" not in s:
@@ -840,7 +838,35 @@ if "NOVA_REBUFFER_POLICY" not in s:
         raise SystemExit("network buffer anchor missing")
     s = s.replace(buf_anchor, buf_new, 1)
 
+start_anchor = """int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)
+{
+	if (stream_is_paused(video->s))
+		stream_un_pause_from_jni(video->s, 0);
+	else if (!is_stream_pauseable(mp, video))
+		stream_audio_unmute(video->s);
+	return AVOS_ERR_OK;
+}
+"""
+start_new = """int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)
+{
+	if (stream_is_paused(video->s)) {
+		if (video->s->flags & STREAM_FILE_NONLOCAL)
+			nova_rebuffer_arm_startup(video->s);
+		stream_un_pause_from_jni(video->s, 0);
+		if (video->s->nova_rebuffer_active)
+			nova_rebuffer_hold_outputs(video->s);
+	} else if (!is_stream_pauseable(mp, video)) {
+		stream_audio_unmute(video->s);
+	}
+	return AVOS_ERR_OK;
+}
+"""
+if "nova_rebuffer_arm_startup(video->s);" not in s:
+    if start_anchor not in s:
+        raise SystemExit("avos start anchor missing")
+    s = s.replace(start_anchor, start_new, 1)
+
 p.write_text(s)
-print("patched Android buffering events and network packet budget")
+print("patched Android buffering events, startup gate, and Kodi queue budgets")
 
 print("FILECACHE_REBUFFER_V3_PATCH=PASS")
