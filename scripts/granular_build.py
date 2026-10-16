@@ -147,7 +147,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             st = stream_http.read_text()
             if st.count(' getSourceUri()Landroid/net/Uri;') != 1:
                 bad.append(label + ': StreamOverHttp source URI bridge invalid')
-            copy_methods = [m.group(0) for m in g.METHOD_RE.finditer(st)
+            copy_methods = [m.group(0) for m in iso_patch.METHOD_RE.finditer(st)
                             if ' copyStream(' in m.group(0).splitlines()[0]]
             if len(copy_methods) != 1 or 'Ljava/io/OutputStream;->flush()V' in copy_methods[0]:
                 bad.append(label + ': StreamOverHttp still flushes each transfer chunk')
