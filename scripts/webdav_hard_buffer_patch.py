@@ -196,6 +196,8 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const-string v0, "NovaNetBuf"
     const-string v1, "INITIAL_HOLD webdav_without_guarded_media_stream fail_closed"
     invoke-static {v0, v1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
+    const/4 v2, 0x1
+    invoke-static {v2}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
     const/4 v0, 0x0
     return v0
 
@@ -348,6 +350,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 
     const/4 v3, 0x1
     iput-boolean v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    invoke-static {v3}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     iget-object v4, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
     if-nez v4, :throw_failure_v4
@@ -451,6 +454,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferPauseCurrent()Z
     const/4 v2, 0x1
     iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    invoke-static {v2}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     const-string v2, "NovaNetBuf"
     const-string v3, "NETWORK_FAILURE_HARD_PAUSE fail_closed"
@@ -467,6 +471,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferPauseCurrent()Z
     const/4 v2, 0x1
     iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    invoke-static {v2}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     const-string v2, "NovaNetBuf"
     const-string v3, "WATCHDOG_HARD_PAUSE buffer<24MiB"
@@ -1119,7 +1124,7 @@ def patch_player_activity_handler_text(text: str) -> tuple[str, str]:
         what_anchor,
         '    iget v1, p1, Landroid/os/Message;->what:I\n\n'
         '    const/4 v2, 0x7\n'
-        '    if-ne v1, v2, :nova_buffer_hide_progress\n\n'
+        '    if-eq v1, v2, :nova_buffer_hide_progress\n\n'
         '    const/4 v2, 0x0',
         1)
 
@@ -1250,6 +1255,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             for token in (
                 ':nova_buffer_hide_progress',
                 'const/4 v2, 0x7',
+                'if-eq v1, v2, :nova_buffer_hide_progress',
                 'const/16 p1, 0x8',
                 'PlayerActivity;->x(Lcom/archos/mediacenter/video/player/PlayerActivity;)Landroid/view/View;',
                 'Landroid/view/View;->setVisibility(I)V',
