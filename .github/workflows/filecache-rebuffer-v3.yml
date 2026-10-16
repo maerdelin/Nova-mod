@@ -55,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
-          python3 scripts/check_upstream.py gate --apk inputs/official.apk --metadata inputs/upstream.json --baseline baseline/manifest.json --report reports/upstream-gate.json
+          python3 scripts/check_upstream.py guard --apk inputs/official.apk --metadata inputs/upstream.json --baseline baseline/manifest.json --report reports/upstream-gate.json
 
       - name: Recreate exact main V9.8.2 feature baseline
         env:
