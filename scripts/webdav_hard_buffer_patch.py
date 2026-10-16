@@ -48,6 +48,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .field private volatile closed:Z
 .field private volatile eof:Z
 .field private volatile failure:Ljava/io/IOException;
+.field private volatile initialHold:Z
 .field private volatile playbackActive:Z
 .field private final pipeIn:Ljava/io/PipedInputStream;
 .field private final pipeOut:Ljava/io/PipedOutputStream;
@@ -63,6 +64,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
 
     sget-boolean v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->globalPlaybackActive:Z
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->playbackActive:Z
@@ -94,7 +96,23 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const/4 v4, 0x1
     invoke-virtual {v2, v4}, Ljava/lang/Thread;->setDaemon(Z)V
     invoke-virtual {v2}, Ljava/lang/Thread;->start()V
+
+    new-instance v2, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;
+    invoke-direct {v2, p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;-><init>(Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;)V
+
+    new-instance v3, Ljava/lang/Thread;
+    const-string v4, "Nova WebDAV buffer watchdog"
+    invoke-direct {v3, v2, v4}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;Ljava/lang/String;)V
+    const/4 v4, 0x1
+    invoke-virtual {v3, v4}, Ljava/lang/Thread;->setDaemon(Z)V
+    invoke-virtual {v3}, Ljava/lang/Thread;->start()V
     return-void
+.end method
+
+.method public static isPlaybackActive()Z
+    .locals 1
+    sget-boolean v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->globalPlaybackActive:Z
+    return v0
 .end method
 
 .method public static setPlaybackActive(Z)V
@@ -110,16 +128,76 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 
     const/4 v1, 0x0
     iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
 
     :done
     return-void
+.end method
+
+.method public static beforeNativeStart()Z
+    .locals 4
+
+    sget-object v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    if-eqz v0, :unguarded_ok
+
+    const/4 v1, 0x1
+    sput-boolean v1, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->globalPlaybackActive:Z
+    iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->playbackActive:Z
+
+    iget-object v2, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    if-nez v2, :fail_closed
+
+    iget-boolean v2, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    if-nez v2, :hold
+
+    iget-boolean v2, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    if-nez v2, :ready
+
+    iget-object v2, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
+    invoke-virtual {v2}, Ljava/io/PipedInputStream;->available()I
+    move-result v2
+
+    const v3, 0x1840000
+    if-ge v2, v3, :ready
+
+    :hold
+    const/4 v1, 0x1
+    iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
+
+    const-string v1, "NovaNetBuf"
+    const-string v2, "INITIAL_HOLD prepared=1 wait_for_24MiB_floor"
+    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    const/4 v0, 0x0
+    return v0
+
+    :fail_closed
+    const/4 v1, 0x1
+    iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    iput-boolean v1, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
+
+    const-string v1, "NovaNetBuf"
+    const-string v2, "INITIAL_HOLD network_failure fail_closed"
+    invoke-static {v1, v2}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
+
+    const/4 v0, 0x0
+    return v0
+
+    :ready
+    const/4 v2, 0x0
+    iput-boolean v2, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
+    iput-boolean v2, v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+
+    :unguarded_ok
+    const/4 v0, 0x1
+    return v0
 .end method
 
 .method public static wrap(Landroid/net/Uri;Ljava/io/InputStream;Z)Ljava/io/InputStream;
     .locals 5
 
     if-eqz p1, :return_original
-    if-eqz p2, :return_original
     if-eqz p0, :return_original
 
     invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
@@ -129,10 +207,17 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const-string v1, "webdav"
     invoke-virtual {v1, v0}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
     move-result v2
-    if-nez v2, :wrap_stream
+    if-nez v2, :scheme_ok
 
     const-string v1, "webdavs"
     invoke-virtual {v1, v0}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-eqz v2, :return_original
+
+    :scheme_ok
+    if-nez p2, :wrap_stream
+
+    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->isPlaybackActive()Z
     move-result v2
     if-eqz v2, :return_original
 
@@ -142,7 +227,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     invoke-direct {v2, p1}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;-><init>(Ljava/io/InputStream;)V
 
     const-string v3, "NovaNetBuf"
-    const-string v4, "HARD_GATE_ON cap=64MiB low<24MiB resume>45MiB startup=probe-pass"
+    const-string v4, "HARD_GATE_ON cap=64MiB low<24MiB resume>45MiB startup=prepare-pass watchdog=5ms"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     return-object v2
     :try_end_0
@@ -185,12 +270,48 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return-void
 
     :active
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    if-eqz v0, :not_buffering
+
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    if-nez v0, :throw_failure
+
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
+    if-nez v0, :wait_more
+
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    if-eqz v0, :rebuffer_check
+
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferResumeCurrent()V
+    const/4 v0, 0x0
+    iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    return-void
+
+    :rebuffer_check
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
     move-result v0
 
-    iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-    if-nez v1, :waiting
+    const v1, 0x2d00000
+    if-le v0, v1, :wait_more
+
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferResumeCurrent()V
+    const/4 v0, 0x0
+    iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    goto :loop
+
+    :not_buffering
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    if-eqz v0, :budget_check
+
+    iget-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    if-nez v1, :throw_failure
+    return-void
+
+    :budget_check
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
+    invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
+    move-result v0
 
     const v1, 0x1800000
     add-int v2, v1, p1
@@ -202,57 +323,133 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const/4 v3, 0x1
     iput-boolean v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
 
+    iget-object v4, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    if-nez v4, :throw_failure_v4
+
     const-string v3, "NovaNetBuf"
     if-eqz v2, :pause_confirmed
     const-string v4, "HARD_WAIT floor_would_cross_24MiB player_already_not_running"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-    goto :waiting
+    goto :wait_more
 
     :pause_confirmed
     const-string v4, "HARD_PAUSE before_floor_cross nativePause=1"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
-    :waiting
-    iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->playbackActive:Z
-    if-nez v1, :check_eof
+    :wait_more
+    const-wide/32 v1, 0x4c4b40
+    invoke-static {v1, v2}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
+    goto :loop
 
-    const/4 v1, 0x0
-    iput-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    :throw_failure_v4
+    throw v4
+
+    :throw_failure
+    throw v0
+
+    :stale
+    invoke-virtual {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->close()V
+
+    :return
     return-void
+.end method
 
-    :check_eof
-    iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
-    if-eqz v1, :check_ready
+.method public monitorLoop()V
+    .locals 5
 
-    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferResumeCurrent()V
-    const/4 v1, 0x0
-    iput-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-    return-void
+    :loop
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
+    if-nez v0, :return
 
-    :check_ready
+    sget-object v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    if-ne v0, p0, :return
+
+    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->playbackActive:Z
+    if-eqz v0, :sleep
+
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
     move-result v0
 
-    const v1, 0x2d00000
-    if-le v0, v1, :wait_more
+    iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    if-eqz v1, :not_buffering
 
+    iget-object v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    if-nez v2, :sleep
+
+    iget-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
+    if-eqz v2, :rebuffer_wait
+
+    iget-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    if-nez v2, :initial_ready
+
+    const v3, 0x1840000
+    if-lt v0, v3, :sleep
+
+    :initial_ready
+    const/4 v2, 0x0
+    iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
+    iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferStartHeldCurrent()V
+
+    const-string v2, "NovaNetBuf"
+    const-string v3, "INITIAL_RELEASE floor>=24MiB_or_clean_eof"
+    invoke-static {v2, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    goto :sleep
+
+    :rebuffer_wait
+    iget-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    if-nez v2, :resume
+
+    const v3, 0x2d00000
+    if-le v0, v3, :sleep
+
+    :resume
     invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferResumeCurrent()V
-    const/4 v1, 0x0
-    iput-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    const/4 v2, 0x0
+    iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
 
-    const-string v3, "NovaNetBuf"
-    const-string v4, "HARD_RESUME buffer>45MiB"
-    invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    const-string v2, "NovaNetBuf"
+    const-string v3, "WATCHDOG_RESUME buffer>45MiB_or_clean_eof"
+    invoke-static {v2, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    goto :sleep
+
+    :not_buffering
+    iget-object v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
+    if-eqz v2, :clean_eof_check
+
+    const v3, 0x1800000
+    if-ge v0, v3, :sleep
+
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferPauseCurrent()Z
+    const/4 v2, 0x1
+    iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+
+    const-string v2, "NovaNetBuf"
+    const-string v3, "NETWORK_FAILURE_HARD_PAUSE fail_closed"
+    invoke-static {v2, v3}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
+    goto :sleep
+
+    :clean_eof_check
+    iget-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
+    if-nez v2, :sleep
+
+    const v3, 0x1800000
+    if-ge v0, v3, :sleep
+
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferPauseCurrent()Z
+    const/4 v2, 0x1
+    iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+
+    const-string v2, "NovaNetBuf"
+    const-string v3, "WATCHDOG_HARD_PAUSE buffer<24MiB"
+    invoke-static {v2, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    :sleep
+    const-wide/32 v2, 0x4c4b40
+    invoke-static {v2, v3}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
     goto :loop
-
-    :wait_more
-    const-wide/32 v1, 0x989680
-    invoke-static {v1, v2}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
-    goto :loop
-
-    :stale
-    invoke-virtual {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->close()V
 
     :return
     return-void
@@ -391,6 +588,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const/4 v0, 0x0
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->playbackActive:Z
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->initialHold:Z
 
     sget-object v1, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
     if-ne v1, p0, :after_clear
@@ -422,11 +620,39 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .end method
 '''
 
+WATCHDOG_SMALI = r'''.class final Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;
+.super Ljava/lang/Object;
+.source "NetworkReadAheadInputStream.java"
+
+.implements Ljava/lang/Runnable;
+
+.field private final parent:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+
+.method public constructor <init>(Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;)V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    iput-object p1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;->parent:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    return-void
+.end method
+
+.method public run()V
+    .locals 1
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;->parent:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    invoke-virtual {v0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->monitorLoop()V
+    return-void
+.end method
+'''
+
+
 STREAM_SESSION_POLICY_SMALI = r'''.method private shouldUseNetworkReadAhead()Z
     .locals 6
 
     iget-boolean v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->supersedableMediaRequest:Z
     if-eqz v0, :no
+
+    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->isPlaybackActive()Z
+    move-result v5
+    if-nez v5, :yes
 
     iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
     const-wide/32 v2, 0x800000
@@ -460,6 +686,8 @@ STREAM_SESSION_POLICY_SMALI = r'''.method private shouldUseNetworkReadAhead()Z
     return v0
 .end method
 '''
+
+
 PLAYER_BUFFER_METHODS_SMALI = r'''
 .method public static bufferPauseCurrent()Z
     .locals 4
@@ -475,9 +703,6 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
 
     iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
     const/4 v2, 0x5
-    if-ne v1, v2, :no
-
-    iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mCurrentState:I
     if-ne v1, v2, :no
 
     iget-object v1, v0, Lcom/archos/mediacenter/video/player/Player;->mMediaPlayer:Lcom/archos/medialib/IMediaPlayer;
@@ -537,6 +762,25 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     return-void
 .end method
 
+.method public static bufferStartHeldCurrent()V
+    .locals 2
+
+    sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    if-eqz v0, :done
+
+    iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
+    const/4 v1, 0x5
+    iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
+    const/4 p0, 0x5
+    if-ne v1, p0, :done
+
+    const/4 v1, 0x0
+    invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->start(I)V
+
+    :done
+    return-void
+.end method
+
 .method public static cancelBufferPause()V
     .locals 1
 
@@ -545,6 +789,8 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     return-void
 .end method
 '''
+
+
 
 def patch_stream_over_http_text(text: str) -> tuple[str, str]:
     sig = ' getSourceUri()Landroid/net/Uri;'
@@ -662,8 +908,9 @@ def patch_player_text(text: str) -> tuple[str, str]:
     if ' bufferPauseCurrent()Z' in text:
         required = (
             '.field private static volatile sBufferPaused:Z',
-            'NetworkReadAheadInputStream;->setPlaybackActive(Z)V',
+            'NetworkReadAheadInputStream;->beforeNativeStart()Z',
             ' bufferResumeCurrent()V',
+            ' bufferStartHeldCurrent()V',
             ' cancelBufferPause()V',
         )
         if all(x in text for x in required):
@@ -675,7 +922,7 @@ def patch_player_text(text: str) -> tuple[str, str]:
         raise RuntimeError('Player.sPlayer field missing/ambiguous')
     text = text.replace(field_anchor, field_anchor + '\n.field private static volatile sBufferPaused:Z\n', 1)
 
-    # User/manual pause: revoke automatic resume before the normal pause path.
+    # Manual pause disarms all automatic start/resume paths first.
     m = _find_method(text, ' pause(I)V')
     body = m.group(0)
     decl_end = body.find('\n', body.find('.locals '))
@@ -687,7 +934,7 @@ def patch_player_text(text: str) -> tuple[str, str]:
     body = body[:decl_end] + injection + body[decl_end:]
     text = text[:m.start()] + body + text[m.end():]
 
-    # Stop: revoke automatic resume and disarm the stream before closing the player.
+    # Stop disarms before closing the current player/stream.
     m = _find_method(text, ' stopPlayback()V')
     body = m.group(0)
     decl_end = body.find('\n', body.find('.locals '))
@@ -699,35 +946,41 @@ def patch_player_text(text: str) -> tuple[str, str]:
     body = body[:decl_end] + injection + body[decl_end:]
     text = text[:m.start()] + body + text[m.end():]
 
-    # Start: never bypass an active rebuffer pause. Arm protection only after native start succeeds.
+    # Gate only after prepare/metadata are ready, but before audio focus/nativeStart.
     m = _find_method(text, ' start(I)V')
     body = m.group(0)
-    target_anchor = '    iput v0, p0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I'
-    if body.count(target_anchor) != 1:
-        raise RuntimeError('Player.start target-state anchor missing/ambiguous')
-    body = body.replace(
-        target_anchor,
-        target_anchor +
-        '\n\n    sget-boolean v2, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z'
-        '\n    if-eqz v2, :nova_buffer_start_allowed'
-        '\n    return-void'
-        '\n\n    :nova_buffer_start_allowed',
-        1)
-    start_anchor = (
-        '    invoke-interface {v3}, Lcom/archos/medialib/IMediaPlayer;->start()V'
-        '\n\n    iput v0, p0, Lcom/archos/mediacenter/video/player/Player;->mCurrentState:I'
+    acquire_anchor = (
+        '    :cond_2\n'
+        '    invoke-direct {p0}, Lcom/archos/mediacenter/video/player/Player;->acquireFocus()Z'
     )
-    if body.count(start_anchor) != 1:
-        raise RuntimeError('Player.start native-start anchor missing/ambiguous')
+    if body.count(acquire_anchor) != 1:
+        raise RuntimeError('Player.start acquireFocus anchor missing/ambiguous')
+    gated = (
+        '    :cond_2\n'
+        '    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->beforeNativeStart()Z\n'
+        '    move-result v2\n'
+        '    if-nez v2, :nova_buffer_start_safe\n'
+        '    return-void\n\n'
+        '    :nova_buffer_start_safe\n'
+        '    invoke-direct {p0}, Lcom/archos/mediacenter/video/player/Player;->acquireFocus()Z'
+    )
+    body = body.replace(acquire_anchor, gated, 1)
+
+    # If focus is not granted, this is not a buffer pause; disarm the buffer gate.
+    focus_anchor = '    if-nez v2, :cond_4\n\n    invoke-interface {v3}, Lcom/archos/medialib/IMediaPlayer;->pause()V'
+    if body.count(focus_anchor) != 1:
+        raise RuntimeError('Player.start focus-failure anchor missing/ambiguous')
     body = body.replace(
-        start_anchor,
-        start_anchor +
-        '\n\n    const/4 v2, 0x1'
-        '\n    invoke-static {v2}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->setPlaybackActive(Z)V',
+        focus_anchor,
+        '    if-nez v2, :cond_4\n\n'
+        '    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->cancelBufferPause()V\n'
+        '    invoke-static {v1}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->setPlaybackActive(Z)V\n\n'
+        '    invoke-interface {v3}, Lcom/archos/medialib/IMediaPlayer;->pause()V',
         1)
+
     text = text[:m.start()] + body + text[m.end():]
 
-    # Completion must disarm any lingering stream guard.
+    # Completion disarms any lingering guard.
     m = _find_method(text, ' onCompletion(Lcom/archos/medialib/IMediaPlayer;)V')
     body = m.group(0)
     completion_anchor = '    :cond_0\n    const/4 p1, 0x7'
@@ -745,6 +998,7 @@ def patch_player_text(text: str) -> tuple[str, str]:
 
     return text.rstrip() + '\n\n' + PLAYER_BUFFER_METHODS_SMALI + '\n', 'applied'
 
+
 def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     sa = g.resource_map(expected)
     sb = g.resource_map(actual)
@@ -758,6 +1012,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         'Lcom/archos/filecorelibrary/StreamOverHttp;',
         'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
         'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
+        'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;',
         'Lcom/archos/mediacenter/video/player/Player;',
     }
     for name in ia.keys() & ib.keys():
@@ -797,7 +1052,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'IMediaPlayer;->start()V',
                 'PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1',
                 'PLAYER_HARD_RESUME nativeStart=1 targetPlaying=1',
-                'NetworkReadAheadInputStream;->setPlaybackActive(Z)V',
+                'NetworkReadAheadInputStream;->beforeNativeStart()Z',
+                ' bufferStartHeldCurrent()V',
             )
             for token in req:
                 if token not in pt:
@@ -809,13 +1065,13 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 bad.append(label + ': manual pause does not disarm auto-resume')
             if 'cancelBufferPause()V' not in stop_m or 'setPlaybackActive(Z)V' not in stop_m:
                 bad.append(label + ': stop does not disarm auto-resume')
+            gate = start_m.find('NetworkReadAheadInputStream;->beforeNativeStart()Z')
+            focus = start_m.find('Player;->acquireFocus()Z')
             native_start = start_m.find('IMediaPlayer;->start()V')
-            arm = start_m.find('NetworkReadAheadInputStream;->setPlaybackActive(Z)V', native_start)
-            if native_start < 0 or arm < native_start:
-                bad.append(label + ': protection armed before native start or missing')
-            guard = start_m.find('sBufferPaused:Z')
-            if guard < 0 or guard > native_start:
-                bad.append(label + ': start does not honor active hard pause')
+            if not (0 <= gate < focus < native_start):
+                bad.append(label + ': prepare-safe buffer gate is not before focus/nativeStart')
+            if 'setPlaybackActive(Z)V' not in start_m:
+                bad.append(label + ': focus-failure path does not disarm buffer gate')
 
         stream = list(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali'))
         if len(stream) != 1 or stream[0].read_text().count(' getSourceUri()Landroid/net/Uri;') != 1:
@@ -842,6 +1098,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 '.field private static final RESUME_WATERMARK:I = 0x2d00000',
                 '.field private static volatile globalPlaybackActive:Z',
                 '.field private volatile playbackActive:Z',
+                '.field private volatile initialHold:Z',
+                ' beforeNativeStart()Z',
+                ' monitorLoop()V',
+                'NetworkReadAheadInputStream$Watchdog;',
                 'const v1, 0x4000000',
                 'const v1, 0x1800000',
                 'const v1, 0x2d00000',
@@ -849,7 +1109,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'Player;->bufferResumeCurrent()V',
                 'HARD_PAUSE before_floor_cross nativePause=1',
                 'HARD_RESUME buffer>45MiB',
-                'HARD_GATE_ON cap=64MiB low<24MiB resume>45MiB startup=probe-pass',
+                'HARD_GATE_ON cap=64MiB low<24MiB resume>45MiB startup=prepare-pass watchdog=5ms',
+                'INITIAL_HOLD prepared=1 wait_for_24MiB_floor',
+                'NETWORK_FAILURE_HARD_PAUSE fail_closed',
+                'WATCHDOG_HARD_PAUSE buffer<24MiB',
                 'HARD_GATE_INIT_OOM fail_closed',
                 'HARD_GATE_INIT_IO_FAIL fail_closed',
             )
@@ -857,8 +1120,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 if token not in rt:
                     bad.append(label + ': hard-buffer stream missing ' + token)
             ctor = _find_method(rt, ' constructor <init>(Ljava/io/InputStream;)V').group(0)
-            if 'const/4 v0, 0x0' not in ctor or '->buffering:Z' not in ctor:
-                bad.append(label + ': startup buffering is not disabled')
+            if 'const/4 v0, 0x0' not in ctor or '->buffering:Z' not in ctor or 'NetworkReadAheadInputStream$Watchdog;' not in ctor:
+                bad.append(label + ': prepare pass-through/watchdog constructor invariant missing')
+            before = _find_method(rt, ' beforeNativeStart()Z').group(0)
+            if 'const v3, 0x1840000' not in before or '->initialHold:Z' not in before:
+                bad.append(label + ': initial start floor/hold invariant missing')
             available = _find_method(rt, ' available()I').group(0)
             if '->buffering:Z' in available:
                 bad.append(label + ': available() still fakes zero during buffering')
@@ -888,7 +1154,19 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 bad.append(label + ': pre-read 24 MiB floor branch invariant missing')
             if not re.search(r'\bif-le v0, v1, :\S+', await_m):
                 bad.append(label + ': >45 MiB branch invariant missing')
-            for forbidden in ('startup blocks', 'rebuffer=16/24/28MiB', 'BUFFER_LOW stage=', 'READ_AHEAD_OOM fallback'):
+            monitor = _find_method(rt, ' monitorLoop()V').group(0)
+            if 'const-wide/32 v2, 0x4c4b40' not in monitor or 'WATCHDOG_HARD_PAUSE buffer<24MiB' not in monitor or 'WATCHDOG_RESUME buffer>45MiB_or_clean_eof' not in monitor:
+                bad.append(label + ': 5ms watchdog pause/resume invariant missing')
+            if 'NETWORK_FAILURE_HARD_PAUSE fail_closed' not in monitor:
+                bad.append(label + ': network failure is not fail-closed in watchdog')
+            if 'throw v4' not in await_m and 'throw v0' not in await_m:
+                bad.append(label + ': failed stream does not propagate IOException while blocked')
+            watchdog = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog.smali'))
+            if len(watchdog) != 1 or '->monitorLoop()V' not in watchdog[0].read_text():
+                bad.append(label + ': watchdog helper missing/invalid')
+            if 'NetworkReadAheadInputStream;->isPlaybackActive()Z' not in ss:
+                bad.append(label + ': playback-phase supersedable requests are not forced through guard')
+            for forbidden in ('rebuffer=16/24/28MiB', 'BUFFER_LOW stage=', 'READ_AHEAD_OOM fallback'):
                 if forbidden in rt:
                     bad.append(label + ': forbidden legacy behavior remains ' + forbidden)
 
@@ -932,19 +1210,30 @@ def apply(root: Path, report: Path | None = None):
         read_ahead_path.write_text(READ_AHEAD_SMALI)
         read_ahead_status = 'applied'
 
+    watchdog_path = read_ahead_path.parent / 'NetworkReadAheadInputStream$Watchdog.smali'
+    if watchdog_path.exists():
+        if watchdog_path.read_text() != WATCHDOG_SMALI:
+            raise RuntimeError('NetworkReadAheadInputStream.Watchdog class conflict')
+        watchdog_status = 'already-applied'
+    else:
+        watchdog_path.write_text(WATCHDOG_SMALI)
+        watchdog_status = 'applied'
+
     result = {
         'status': 'PASS',
         'player_hard_gate': player_status,
         'stream_over_http_source_uri': stream_http_status,
         'stream_over_http_readahead': stream_session_status,
         'network_readahead': read_ahead_status,
+        'watchdog': watchdog_status,
         'network_readahead_path': read_ahead_path.relative_to(root).as_posix(),
+        'watchdog_path': watchdog_path.relative_to(root).as_posix(),
         'capacity_mib': 64,
         'low_watermark_strictly_below_mib': 24,
         'resume_strictly_above_mib': 45,
-        'startup_policy': 'probe/prepare pass-through; guard arms only after native player start',
-        'failure_policy': 'fail closed if hard buffer cannot initialize; never fall back to unguarded WebDAV playback',
-        'strategy': 'hard Player/AVOS pause before any read/skip could cross the 24 MiB floor; bulk consumption capped at 256 KiB; resume only above 45 MiB; 64 MiB producer cap',
+        'startup_policy': 'probe/prepare pass-through; before nativeStart require ~24 MiB floor or clean EOF; held start is released by watchdog',
+        'failure_policy': 'fail closed on initialization or network read failure; never resume a failed stream from residual bytes',
+        'strategy': '5ms watchdog + atomic read budget; start floor ~24 MiB after prepare; hard Player/AVOS pause before floor crossing; resume only above 45 MiB; 64 MiB producer cap',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
