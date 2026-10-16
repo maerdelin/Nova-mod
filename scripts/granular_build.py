@@ -102,6 +102,32 @@ def main():
         if hits and ('player' in pth.as_posix().lower() or 'media' in pth.as_posix().lower()):
             diag.append(pth.relative_to(candidate).as_posix() + ' :: ' + ', '.join(hits))
     (args.reports / 'player-buffer-diagnostics.txt').write_text('\n'.join(diag[:1000]) + '\n')
+    import re
+    method_re = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
+    wanted = (
+        'com/archos/medialib/AvosMediaPlayer.smali',
+        'com/archos/medialib/AvosMediaPlayer$EventHandler.smali',
+        'com/archos/medialib/IMediaPlayer.smali',
+        'com/archos/mediacenter/video/player/Player.smali',
+        'com/archos/mediacenter/video/player/PlayerController.smali',
+    )
+    method_out = []
+    method_needles = (' pause()V', ' start()V', ' isPlaying()Z', ' onInfo(',
+                      ' setOnInfoListener(', ' mMediaPlayer:', ' mPlayer:',
+                      'IMediaPlayer;->pause', 'IMediaPlayer;->start',
+                      'AvosMediaPlayer;->pause', 'AvosMediaPlayer;->start')
+    for suffix in wanted:
+        hits = list(candidate.glob('smali*/' + suffix))
+        if len(hits) != 1:
+            method_out.append('MISSING ' + suffix + ' count=' + str(len(hits)))
+            continue
+        txt = hits[0].read_text(errors='ignore')
+        method_out.append('===== ' + suffix + ' =====')
+        for m in method_re.finditer(txt):
+            body = m.group(0)
+            if any(n in body for n in method_needles):
+                method_out.append(body)
+    (args.reports / 'player-buffer-methods.txt').write_text('\n\n'.join(method_out) + '\n')
     raise RuntimeError('PLAYER_BUFFER_AUDIT_DONE')
     webdav_buffer_patch.apply(candidate, args.reports / 'webdav-buffer-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
