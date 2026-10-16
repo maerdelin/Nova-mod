@@ -88,6 +88,20 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    # Capture player/buffering control surfaces before adding the WebDAV gate.
+    diag = []
+    needles = (' pause()V', ' start()V', ' isPlaying()Z', 'OnInfoListener',
+               'MEDIA_INFO_BUFFERING_START', 'MEDIA_INFO_BUFFERING_END',
+               'setOnInfoListener', 'buffering', 'onInfo(')
+    for pth in candidate.glob('smali*/**/*.smali'):
+        try:
+            txt = pth.read_text(errors='ignore')
+        except Exception:
+            continue
+        hits = [n for n in needles if n in txt]
+        if hits and ('player' in pth.as_posix().lower() or 'media' in pth.as_posix().lower()):
+            diag.append(pth.relative_to(candidate).as_posix() + ' :: ' + ', '.join(hits))
+    (args.reports / 'player-buffer-diagnostics.txt').write_text('\n'.join(diag[:1000]) + '\n')
     webdav_buffer_patch.apply(candidate, args.reports / 'webdav-buffer-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
