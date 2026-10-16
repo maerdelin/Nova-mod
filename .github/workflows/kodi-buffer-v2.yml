@@ -1,0 +1,117 @@
+name: Nova Kodi Buffer V2 Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/kodi-buffer-v2]
+    paths:
+      - 'rebuffer/**'
+      - '.github/workflows/kodi-buffer-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare tools and run baseline regression tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd ninja-build maven build-essential pkg-config
+          mkdir -p inputs dist tools work reports
+          python3 -m py_compile scripts/*.py tests/*.py rebuffer/*.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          curl -fL --retry 4 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
+
+      - name: Resolve and download official latest stable APK
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+
+      - name: Apply main V9.8.2 granular feature baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --output work/granular-UNSIGNED.apk
+
+      - name: Build patched AVOS from official v6.5.5 source
+        run: bash rebuffer/build_avos_kodi_v2.sh work/avos-v2 inputs/upstream.json
+
+      - name: Inject patched native AVOS into baseline APK
+        run: |
+          python3 rebuffer/inject_libavos.py work/granular-UNSIGNED.apk work/avos-v2 work/kodi-buffer-v2-UNSIGNED.apk
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            unzip -p work/kodi-buffer-v2-UNSIGNED.apk "lib/$abi/libavos.so" | strings | grep -q 'NOVA_REBUFFER_START'
+            unzip -p work/kodi-buffer-v2-UNSIGNED.apk "lib/$abi/libavos.so" | strings | grep -q 'NOVA_CACHE_CONFIG'
+          done
+
+      - name: Align sign and verify test APK
+        env:
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)"
+          STORE="$RUNNER_TEMP/nova-kodi-buffer-v2.jks"
+          trap 'rm -f "$STORE"' EXIT
+          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
+            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 -d > "$STORE"
+          else
+            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+            NOVA_KEY_ALIAS=nova-kodi-buffer-v2-test
+            keytool -genkeypair -noprompt -keystore "$STORE" -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 -dname 'CN=Nova Kodi Buffer V2 Test' -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD"
+          fi
+          "$ALIGN" -f -p 4 work/kodi-buffer-v2-UNSIGNED.apk work/kodi-buffer-v2-ALIGNED.apk
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/Nova_Kodi_Buffer_V2_TEST.apk work/kodi-buffer-v2-ALIGNED.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Kodi_Buffer_V2_TEST.apk | tee reports/final-signature.txt
+          "$ALIGN" -c 4 dist/Nova_Kodi_Buffer_V2_TEST.apk
+          (cd dist && sha256sum Nova_Kodi_Buffer_V2_TEST.apk > SHA256SUMS.txt)
+
+      - name: Enable emulator hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and launch final APK on Android 11
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: python3 scripts/smoke_install.py dist/Nova_Kodi_Buffer_V2_TEST.apk --reports reports
+
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-Kodi-Buffer-V2-Test
+          path: |
+            dist/Nova_Kodi_Buffer_V2_TEST.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload diagnostics
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-Kodi-Buffer-V2-Reports
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14
