@@ -747,9 +747,10 @@ def patch_stream_over_http_text(text: str) -> tuple[str, str]:
     body = m.group(0)
     flush_re = re.compile(r'\n\s*invoke-virtual \{[^}]+\}, Ljava/io/OutputStream;->flush\(\)V')
     hits = list(flush_re.finditer(body))
-    if len(hits) != 1:
-        raise RuntimeError(f'StreamOverHttp per-chunk flush missing/ambiguous: {len(hits)}')
-    body = body[:hits[0].start()] + body[hits[0].end():]
+    if len(hits) > 1:
+        raise RuntimeError(f'StreamOverHttp per-chunk flush ambiguous: {len(hits)}')
+    if hits:
+        body = body[:hits[0].start()] + body[hits[0].end():]
     text = text[:m.start()] + body + text[m.end():]
     return text.rstrip() + '\n\n' + STREAM_SOURCE_URI_SMALI + '\n', 'applied'
 
