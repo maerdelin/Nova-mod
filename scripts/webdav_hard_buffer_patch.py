@@ -740,12 +740,24 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     if-eqz v3, :no
 
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->pause()V
+
+    invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->isPlaying()Z
+    move-result v3
+    if-eqz v3, :pause_verified
+
+    const-string v2, "NovaNetBuf"
+    const-string v3, "PLAYER_HARD_PAUSE_VERIFY_FAIL isPlaying=1 fail_closed"
+    invoke-static {v2, v3}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
+    const/4 v0, 0x0
+    return v0
+
+    :pause_verified
     const/4 v3, 0x1
     sput-boolean v3, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z
     invoke-static {v3}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     const-string v0, "NovaNetBuf"
-    const-string v1, "PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1"
+    const-string v1, "PLAYER_HARD_PAUSE nativePause=1 verifiedNotPlaying=1 targetPlaying=1"
     invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     return v3
 
@@ -1200,7 +1212,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 ' cancelBufferPause()V',
                 'IMediaPlayer;->pause()V',
                 'IMediaPlayer;->start()V',
-                'PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1',
+                'PLAYER_HARD_PAUSE nativePause=1 verifiedNotPlaying=1 targetPlaying=1',
                 'PLAYER_HARD_RESUME nativeStart=1 targetPlaying=1',
                 'NetworkReadAheadInputStream;->beforeNativeStart(Landroid/net/Uri;)Z',
                 ' bufferStartHeldCurrent()V',
@@ -1279,6 +1291,13 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 _find_method(pt, ' bufferStartHeldCurrent()V').group(0),
                 _find_method(pt, ' cancelBufferPause()V').group(0),
             )
+            pause_call = helpers[0].find('IMediaPlayer;->pause()V')
+            verify_call = helpers[0].find('IMediaPlayer;->isPlaying()Z', pause_call)
+            verified_log = helpers[0].find('PLAYER_HARD_PAUSE nativePause=1 verifiedNotPlaying=1 targetPlaying=1', verify_call)
+            if not (0 <= pause_call < verify_call < verified_log):
+                bad.append(label + ': native pause is not verified with isPlaying before confirmation')
+            if 'PLAYER_HARD_PAUSE_VERIFY_FAIL isPlaying=1 fail_closed' not in helpers[0]:
+                bad.append(label + ': pause verification failure is not fail-closed')
             if 'setNetworkBufferingUi(Z)V' not in helpers[0]:
                 bad.append(label + ': hard pause does not show native loading UI')
             if 'setNetworkBufferingUi(Z)V' not in helpers[1]:
