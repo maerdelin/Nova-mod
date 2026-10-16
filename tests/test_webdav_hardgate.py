@@ -15,6 +15,9 @@ class HardGatePolicyTest(unittest.TestCase):
     def test_decoder_pause_resume_are_direct(self):
         s=h.PLAYER_BUFFER_METHODS
         self.assertIn('IMediaPlayer;->pause()V',s)
+        self.assertIn('nova_buffer_gate_wait_paused',s)
+        self.assertIn('LockSupport;->parkNanos(J)V',s)
+        self.assertIn('pause_confirmed isPlaying=0 before_read_return',s)
         self.assertIn('IMediaPlayer;->start()V',s)
         self.assertIn('mTargetState:I',s)
         self.assertIn('mFocusSuspended:Z',s)
