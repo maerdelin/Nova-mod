@@ -310,7 +310,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return-void
 .end method
 
-.method public read()I
+.method public declared-synchronized read()I
     .locals 2
 
     const/4 v0, 0x1
@@ -330,7 +330,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return v0
 .end method
 
-.method public read([BII)I
+.method public declared-synchronized read([BII)I
     .locals 3
 
     const v0, 0x40000
@@ -363,7 +363,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return v0
 .end method
 
-.method public skip(J)J
+.method public declared-synchronized skip(J)J
     .locals 5
 
     const v0, 0x40000
@@ -868,7 +868,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 bad.append(label + ': low/pause/resume control ordering invalid')
             if 'add-int v2, v1, p1' not in await_m:
                 bad.append(label + ': requested-read budget is not included in 24 MiB floor check')
+            r1 = _find_method(rt, ' read()I').group(0)
             rb = _find_method(rt, ' read([BII)I').group(0)
+            sk = _find_method(rt, ' skip(J)J').group(0)
+            if 'declared-synchronized read()I' not in r1.splitlines()[0] or 'declared-synchronized read([BII)I' not in rb.splitlines()[0] or 'declared-synchronized skip(J)J' not in sk.splitlines()[0]:
+                bad.append(label + ': consumer methods are not synchronized; floor check is not atomic')
             if 'const v0, 0x40000' not in rb or 'move p3, v0' not in rb or 'awaitBudget(I)V' not in rb:
                 bad.append(label + ': bulk read is not capped/budgeted at 256 KiB')
             sk = _find_method(rt, ' skip(J)J').group(0)
