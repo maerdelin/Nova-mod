@@ -12,6 +12,8 @@ import sys
 import zipfile
 import granular as g
 import check_upstream as upstream
+import webdav_buffer_patch as webdav_buffer_patch
+import webdav_hardgate_patch as webdav_hardgate_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -87,18 +89,36 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    # Capture player/buffering control surfaces before adding the WebDAV gate.
+    diag = []
+    needles = (' pause()V', ' start()V', ' isPlaying()Z', 'OnInfoListener',
+               'MEDIA_INFO_BUFFERING_START', 'MEDIA_INFO_BUFFERING_END',
+               'setOnInfoListener', 'buffering', 'onInfo(')
+    for pth in candidate.glob('smali*/**/*.smali'):
+        try:
+            txt = pth.read_text(errors='ignore')
+        except Exception:
+            continue
+        hits = [n for n in needles if n in txt]
+        if hits and ('player' in pth.as_posix().lower() or 'media' in pth.as_posix().lower()):
+            diag.append(pth.relative_to(candidate).as_posix() + ' :: ' + ', '.join(hits))
+    (args.reports / 'player-buffer-diagnostics.txt').write_text('\n'.join(diag[:1000]) + '\n')
+    webdav_buffer_patch.apply(candidate, args.reports / 'webdav-buffer-patch.json')
+    webdav_hardgate_patch.apply(candidate, args.reports / 'webdav-hardgate-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     run('java', '-Xmx4g', '-jar', args.apktool, 'b', candidate, '-o', args.output)
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
-    g.verify(candidate, decoded, args.reports / 'roundtrip.json')
+    webdav_buffer_patch.verify_roundtrip(candidate, decoded, args.reports / 'roundtrip.json', g)
+    webdav_hardgate_patch.verify_roundtrip(decoded, args.reports / 'hardgate-roundtrip.json', g)
     preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
+        'webdav_buffer_policy': '24 MiB low; resume strictly above 45 MiB; 64 MiB capacity; hard IMediaPlayer pause-before-read-return gate',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 
