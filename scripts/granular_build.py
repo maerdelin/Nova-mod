@@ -102,6 +102,7 @@ def main():
         if hits and ('player' in pth.as_posix().lower() or 'media' in pth.as_posix().lower()):
             diag.append(pth.relative_to(candidate).as_posix() + ' :: ' + ', '.join(hits))
     (args.reports / 'player-buffer-diagnostics.txt').write_text('\n'.join(diag[:1000]) + '\n')
+    raise RuntimeError('PLAYER_BUFFER_AUDIT_DONE')
     webdav_buffer_patch.apply(candidate, args.reports / 'webdav-buffer-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
