@@ -78,7 +78,6 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
     bad = []
     if ia.keys() != ib.keys():
         bad.append('class set differs')
-    mime = 'Lcom/archos/filecorelibrary/MimeUtils;'
     iso_semantic_classes = {
         'Lcom/archos/mediacenter/video/player/Player;',
         'Lcom/archos/mediacenter/video/player/BlurayIsoProxy;',
@@ -87,11 +86,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
         'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
     }
     for name in ia.keys() & ib.keys():
-        a = ia[name].read_text()
-        b = ib[name].read_text()
-        if name == mime:
-            a = a.replace('const-string/jumbo', 'const-string')
-            b = b.replace('const-string/jumbo', 'const-string')
+        a = ia[name].read_text().replace('const-string/jumbo', 'const-string')
+        b = ib[name].read_text().replace('const-string/jumbo', 'const-string')
         if name in iso_semantic_classes:
             # These classes contain injected labels/branches whose apktool round-trip
             # formatting may differ. They are verified below by strict ISO invariants.
@@ -235,7 +231,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
         'classes_compared': len(ia),
         'xml_files_compared': len(aa),
         'differences': sorted(bad),
-        'comparison': 'strict logical roundtrip; MimeUtils only normalizes const-string vs const-string/jumbo',
+        'comparison': 'strict logical roundtrip; normalizes semantically equivalent const-string vs const-string/jumbo DEX encoding',
         'runtime_tested': False,
     }
     g.write_json(report, result)
