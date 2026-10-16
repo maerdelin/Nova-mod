@@ -497,14 +497,19 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     semantic = {
         'Lcom/archos/filecorelibrary/StreamOverHttp;',
         'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
+        'Lcom/archos/mediacenter/video/player/Player;',
+        'Lcom/archos/mediacenter/video/player/WebDavBufferGate;',
     }
     for name in ia.keys() & ib.keys():
         if name in semantic:
             continue
         a = ia[name].read_text()
         b = ib[name].read_text()
-        if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
-            bad.append(name)
+        if a != b:
+            an = a.replace('const-string/jumbo', 'const-string')
+            bn = b.replace('const-string/jumbo', 'const-string')
+            if g.logical_class(an, sa) != g.logical_class(bn, sb):
+                bad.append(name)
 
     aa = {p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
           if p.relative_to(expected).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
@@ -576,7 +581,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         'classes_compared': len(ia),
         'xml_files_compared': len(aa),
         'differences': sorted(bad),
-        'comparison': 'strict roundtrip except three intentional WebDAV classes, which use explicit 24/45/64 semantic invariants',
+        'comparison': 'strict logical roundtrip; only const-string vs const-string/jumbo encoding normalized; intentional Player/WebDavBufferGate checked by hard-gate verifier',
         'runtime_tested': False,
     }
     g.write_json(report, result)
