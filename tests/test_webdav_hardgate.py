@@ -7,6 +7,9 @@ class HardGatePolicyTest(unittest.TestCase):
         self.assertIn('.method public static declared-synchronized onLow(Ljava/lang/Object;)V',s)
         self.assertIn('.method public static declared-synchronized onReady(Ljava/lang/Object;)V',s)
         self.assertIn('sSource:Ljava/lang/Object;',s)
+        self.assertIn('sUri:Ljava/lang/String;',s)
+        self.assertIn('onStreamStart(Ljava/lang/Object;Landroid/net/Uri;)V',s)
+        self.assertIn('Ljava/lang/String;->equals(Ljava/lang/Object;)Z',s)
         self.assertIn('sPlayWanted:Z',s)
 
     def test_decoder_pause_resume_are_direct(self):
