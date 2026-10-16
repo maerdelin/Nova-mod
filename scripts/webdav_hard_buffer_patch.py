@@ -134,11 +134,28 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return-void
 .end method
 
-.method public static beforeNativeStart()Z
-    .locals 4
+.method public static beforeNativeStart(Landroid/net/Uri;)Z
+    .locals 5
 
-    sget-object v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    if-eqz p0, :unguarded_ok
+
+    invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    move-result-object v0
     if-eqz v0, :unguarded_ok
+
+    const-string v1, "webdav"
+    invoke-virtual {v1, v0}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-nez v2, :webdav_required
+
+    const-string v1, "webdavs"
+    invoke-virtual {v1, v0}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-eqz v2, :unguarded_ok
+
+    :webdav_required
+    sget-object v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    if-eqz v0, :missing_guard
 
     const/4 v1, 0x1
     sput-boolean v1, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->globalPlaybackActive:Z
@@ -169,6 +186,13 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const-string v2, "INITIAL_HOLD prepared=1 wait_for_24MiB_floor"
     invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
+    const/4 v0, 0x0
+    return v0
+
+    :missing_guard
+    const-string v0, "NovaNetBuf"
+    const-string v1, "INITIAL_HOLD webdav_without_guarded_media_stream fail_closed"
+    invoke-static {v0, v1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
     const/4 v0, 0x0
     return v0
 
@@ -215,11 +239,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     if-eqz v2, :return_original
 
     :scheme_ok
-    if-nez p2, :wrap_stream
-
-    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->isPlaybackActive()Z
-    move-result v2
-    if-eqz v2, :return_original
+    if-eqz p2, :return_original
 
     :wrap_stream
     :try_start_0
@@ -650,10 +670,6 @@ STREAM_SESSION_POLICY_SMALI = r'''.method private shouldUseNetworkReadAhead()Z
     iget-boolean v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->supersedableMediaRequest:Z
     if-eqz v0, :no
 
-    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->isPlaybackActive()Z
-    move-result v5
-    if-nez v5, :yes
-
     iget-wide v0, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
     const-wide/32 v2, 0x800000
     cmp-long v4, v0, v2
@@ -686,7 +702,6 @@ STREAM_SESSION_POLICY_SMALI = r'''.method private shouldUseNetworkReadAhead()Z
     return v0
 .end method
 '''
-
 
 PLAYER_BUFFER_METHODS_SMALI = r'''
 .method public static bufferPauseCurrent()Z
@@ -906,7 +921,7 @@ def patch_player_text(text: str) -> tuple[str, str]:
     if ' bufferPauseCurrent()Z' in text:
         required = (
             '.field private static volatile sBufferPaused:Z',
-            'NetworkReadAheadInputStream;->beforeNativeStart()Z',
+            'NetworkReadAheadInputStream;->beforeNativeStart(Landroid/net/Uri;)Z',
             ' bufferResumeCurrent()V',
             ' bufferStartHeldCurrent()V',
             ' cancelBufferPause()V',
@@ -955,7 +970,8 @@ def patch_player_text(text: str) -> tuple[str, str]:
         raise RuntimeError('Player.start acquireFocus anchor missing/ambiguous')
     gated = (
         '    :cond_2\n'
-        '    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->beforeNativeStart()Z\n'
+        '    iget-object v2, p0, Lcom/archos/mediacenter/video/player/Player;->mUri:Landroid/net/Uri;\n'
+        '    invoke-static {v2}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->beforeNativeStart(Landroid/net/Uri;)Z\n'
         '    move-result v2\n'
         '    if-nez v2, :nova_buffer_start_safe\n'
         '    return-void\n\n'
@@ -1084,6 +1100,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                        '(Landroid/net/Uri;Ljava/io/InputStream;Z)Ljava/io/InputStream;')
             if ss.count(wrapper) != 1 or ss.count(' shouldUseNetworkReadAhead()Z') != 1:
                 bad.append(label + ': WebDAV wrapper/policy invalid')
+            for token in ('supersedableMediaRequest:Z', 'requestedStart:J', 'requestedEnd:J',
+                          'length:J', 'const-wide/32 v2, 0x800000'):
+                if token not in ss:
+                    bad.append(label + ': bounded probes are not excluded by the long-media policy: ' + token)
 
         ra = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'))
         if len(ra) != 1:
@@ -1097,7 +1117,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 '.field private static volatile globalPlaybackActive:Z',
                 '.field private volatile playbackActive:Z',
                 '.field private volatile initialHold:Z',
-                ' beforeNativeStart()Z',
+                ' beforeNativeStart(Landroid/net/Uri;)Z',
                 ' monitorLoop()V',
                 'NetworkReadAheadInputStream$Watchdog;',
                 'const v1, 0x4000000',
@@ -1120,9 +1140,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             ctor = _find_method(rt, ' constructor <init>(Ljava/io/InputStream;)V').group(0)
             if 'const/4 v0, 0x0' not in ctor or '->buffering:Z' not in ctor or 'NetworkReadAheadInputStream$Watchdog;' not in ctor:
                 bad.append(label + ': prepare pass-through/watchdog constructor invariant missing')
-            before = _find_method(rt, ' beforeNativeStart()Z').group(0)
+            before = _find_method(rt, ' beforeNativeStart(Landroid/net/Uri;)Z').group(0)
             if 'const v3, 0x1840000' not in before or '->initialHold:Z' not in before:
                 bad.append(label + ': initial start floor/hold invariant missing')
+            if 'INITIAL_HOLD webdav_without_guarded_media_stream fail_closed' not in before:
+                bad.append(label + ': WebDAV can start without an identified guarded media stream')
             available = _find_method(rt, ' available()I').group(0)
             if '->buffering:Z' in available:
                 bad.append(label + ': available() still fakes zero during buffering')
@@ -1162,8 +1184,6 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             watchdog = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog.smali'))
             if len(watchdog) != 1 or '->monitorLoop()V' not in watchdog[0].read_text():
                 bad.append(label + ': watchdog helper missing/invalid')
-            if 'NetworkReadAheadInputStream;->isPlaybackActive()Z' not in ss:
-                bad.append(label + ': playback-phase supersedable requests are not forced through guard')
             for forbidden in ('rebuffer=16/24/28MiB', 'BUFFER_LOW stage=', 'READ_AHEAD_OOM fallback'):
                 if forbidden in rt:
                     bad.append(label + ': forbidden legacy behavior remains ' + forbidden)
