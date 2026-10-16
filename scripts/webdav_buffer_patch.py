@@ -483,6 +483,107 @@ def _next_smali_dir(root: Path) -> Path:
     return root / f'smali_classes{max(nums) + 1}'
 
 
+
+def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
+    """Verify apktool round-trip while explicitly validating intentional WebDAV changes."""
+    sa = g.resource_map(expected)
+    sb = g.resource_map(actual)
+    ia = g.class_index(expected)
+    ib = g.class_index(actual)
+    bad = []
+    if ia.keys() != ib.keys():
+        bad.append('class set differs')
+
+    semantic = {
+        'Lcom/archos/filecorelibrary/StreamOverHttp;',
+        'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
+        'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
+    }
+    for name in ia.keys() & ib.keys():
+        if name in semantic:
+            continue
+        a = ia[name].read_text()
+        b = ib[name].read_text()
+        if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
+            bad.append(name)
+
+    aa = {p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
+          if p.relative_to(expected).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
+    bb = {p.relative_to(actual).as_posix() for p in actual.rglob('*.xml')
+          if p.relative_to(actual).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
+    if aa != bb:
+        bad.append('XML resource set differs')
+    for path in aa & bb:
+        if (expected / path).read_bytes() != (actual / path).read_bytes():
+            if g.logical_xml(g.ET.parse(expected / path).getroot()) != g.logical_xml(g.ET.parse(actual / path).getroot()):
+                bad.append(path)
+
+    for root, label in ((expected, 'expected'), (actual, 'roundtrip')):
+        stream = list(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali'))
+        if len(stream) != 1:
+            bad.append(label + ': StreamOverHttp missing/duplicate')
+        else:
+            st = stream[0].read_text()
+            if st.count(' getSourceUri()Landroid/net/Uri;') != 1:
+                bad.append(label + ': source URI bridge invalid')
+
+        session = list(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali'))
+        if len(session) != 1:
+            bad.append(label + ': HttpSession missing/duplicate')
+        else:
+            ss = session[0].read_text()
+            wrapper = (
+                'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->wrap'
+                '(Landroid/net/Uri;Ljava/io/InputStream;Z)Ljava/io/InputStream;'
+            )
+            if ss.count(wrapper) != 1:
+                bad.append(label + ': read-ahead wrapper count invalid')
+            if ss.count(' shouldUseNetworkReadAhead()Z') != 1:
+                bad.append(label + ': read-ahead policy count invalid')
+            for token in ('supersedableMediaRequest:Z', 'partialResponse:Z', 'length:J',
+                          'requestedStart:J', 'requestedEnd:J', 'const-wide/32 v2, 0x800000'):
+                if token not in ss:
+                    bad.append(label + ': HttpSession missing ' + token)
+
+        ra = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'))
+        if len(ra) != 1:
+            bad.append(label + ': NetworkReadAheadInputStream missing/duplicate')
+        else:
+            rt = ra[0].read_text()
+            required = (
+                '.field private static final CAPACITY:I = 0x4000000',
+                '.field private static final LOW_WATERMARK:I = 0x1800000',
+                '.field private static final START_WATERMARK:I = 0x2d00000',
+                'const v1, 0x4000000',
+                'const v1, 0x1800000',
+                'const v1, 0x2d00000',
+                'if-ge v0, v1, :return',
+                'if-le v0, v1, :wait_more',
+                'BUFFER_LOW available<24MiB wait>45MiB',
+                'BUFFER_READY available>45MiB',
+                'READ_AHEAD_ON webdav cap=64MiB low=24MiB resume>45MiB',
+            )
+            for token in required:
+                if token not in rt:
+                    bad.append(label + ': NetworkReadAhead missing ' + token)
+            for forbidden in ('rebuffer=16/24/28MiB', 'BUFFER_LOW stage=', 'low=2MiB'):
+                if forbidden in rt:
+                    bad.append(label + ': old buffer policy remains ' + forbidden)
+
+    result = {
+        'status': 'FAIL' if bad else 'PASS',
+        'classes_compared': len(ia),
+        'xml_files_compared': len(aa),
+        'differences': sorted(bad),
+        'comparison': 'strict roundtrip except three intentional WebDAV classes, which use explicit 24/45/64 semantic invariants',
+        'runtime_tested': False,
+    }
+    g.write_json(report, result)
+    if bad:
+        raise g.Conflict('WebDAV-aware logical verification failed: ' + str(bad[:20]))
+    print(json.dumps(result, indent=2))
+    return result
+
 def apply(root: Path, report: Path | None = None):
     stream_http = _one(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali'), 'StreamOverHttp')
     stream_http_text, stream_http_status = patch_stream_over_http_text(stream_http.read_text())
