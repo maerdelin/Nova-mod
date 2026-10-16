@@ -120,6 +120,7 @@ def main():
         for pth in hits:
             full_out.append(pth.read_text(errors='ignore'))
     (args.reports / 'player-buffer-classes.txt').write_text('\n\n'.join(full_out) + '\n')
+    shutil.copyfile(candidate / 'AndroidManifest.xml', args.reports / 'decoded-AndroidManifest.xml')
     raise RuntimeError('PLAYER_BUFFER_AUDIT_DONE')
     webdav_buffer_patch.apply(candidate, args.reports / 'webdav-buffer-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
