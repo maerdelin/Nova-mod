@@ -1,0 +1,178 @@
+name: Nova FileCache Rebuffer V3 Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/filecache-rebuffer-v3]
+    paths:
+      - 'rebuffer/**'
+      - '.github/workflows/filecache-rebuffer-v3.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare tools and validate main baseline
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zstd ninja-build maven build-essential pkg-config
+          mkdir -p inputs dist tools work reports
+          python3 -m py_compile scripts/*.py tests/*.py rebuffer/*.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          curl -fL --retry 4 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
+
+      - name: Resolve official APK used by main feature baseline
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+          python3 scripts/check_upstream.py gate --apk inputs/official.apk --metadata inputs/upstream.json --baseline baseline/manifest.json --report reports/upstream-gate.json
+
+      - name: Recreate exact main V9.8.2 feature baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/granular_build.py             --apk inputs/official.apk             --metadata inputs/upstream.json             --apktool tools/apktool.jar             --work work/granular             --reports reports             --output work/main-baseline-UNSIGNED.apk
+
+      - name: Build AVOS from pinned official source with root cache/rebuffer
+        run: |
+          set -euo pipefail
+          bash rebuffer/build_filecache_rebuffer_v3.sh work/avos-v3 inputs/upstream.json
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            strings "work/avos-v3/$abi/libavos.so" | grep -q 'NOVA_FILECACHE_CREATE'
+            strings "work/avos-v3/$abi/libavos.so" | grep -q 'NOVA_FILECACHE_SEEK_HIT'
+            strings "work/avos-v3/$abi/libavos.so" | grep -q 'NOVA_FILECACHE_RECONNECT'
+            strings "work/avos-v3/$abi/libavos.so" | grep -q 'NOVA_REBUFFER_START'
+            strings "work/avos-v3/$abi/libavos.so" | grep -q 'NOVA_REBUFFER_END'
+          done
+
+      - name: Verify buffering architecture invariants
+        run: |
+          set -euo pipefail
+          src=work/filecache-v3-source/aos-AVP/native/avos
+          grep -q '#define NOVA_FILECACHE_CAPACITY (64 \* 1024 \* 1024)' "$src/Source/stream_parser_ffmpeg.c"
+          grep -q '#define NOVA_FILECACHE_BACK     (16 \* 1024 \* 1024)' "$src/Source/stream_parser_ffmpeg.c"
+          grep -q 'target >= c->window_start && target <= c->write_pos' "$src/Source/stream_parser_ffmpeg.c"
+          grep -q 'c->generation++' "$src/Source/stream_parser_ffmpeg.c"
+          grep -q 'NOVA_REBUFFER_RESUME_MS 4000' "$src/Source/stream_video.c"
+          grep -q 'nova_rebuffer_enter(s, "video-starved")' "$src/Source/stream_video.c"
+          grep -q 'nova_rebuffer_enter(s, "audio-starved")' "$src/Source/stream_audio.c"
+          grep -q '(s->flags & STREAM_FILE_NONLOCAL)' "$src/Source/stream_video.c"
+          ! grep -R -q 'PipedInputStream\|NetworkReadAheadInputStream\|PREFILL_TIMEOUT' rebuffer
+          git diff --check
+
+      - name: Patch only buffering UI bridge onto main baseline
+        run: |
+          set -euo pipefail
+          java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f work/main-baseline-UNSIGNED.apk -o work/ui
+          python3 rebuffer/patch_buffering_ui_v3.py work/ui
+          java -Xmx4g -jar tools/apktool.jar b work/ui -o work/ui-UNSIGNED.apk
+          grep -R -q 'novaSetNetworkBuffering(Z)V' work/ui/smali* || true
+
+      - name: Inject rebuilt native AVOS
+        run: |
+          set -euo pipefail
+          python3 rebuffer/inject_libavos_v3.py work/ui-UNSIGNED.apk work/avos-v3 work/final-UNSIGNED.apk
+          unzip -t work/final-UNSIGNED.apk >/dev/null
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            unzip -p work/final-UNSIGNED.apk "lib/$abi/libavos.so" | strings | grep -q 'NOVA_FILECACHE_CREATE'
+            unzip -p work/final-UNSIGNED.apk "lib/$abi/libavos.so" | strings | grep -q 'resume=4000ms'
+          done
+
+      - name: Align sign and verify
+        env:
+          NOVA_KEYSTORE_BASE64: ${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: ${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: ${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)"
+          STORE="$RUNNER_TEMP/nova-filecache-v3.jks"
+          trap 'rm -f "$STORE"' EXIT
+          if [[ -n "${NOVA_KEYSTORE_BASE64:-}" && -n "${NOVA_STORE_PASSWORD:-}" && -n "${NOVA_KEY_ALIAS:-}" && -n "${NOVA_KEY_PASSWORD:-}" ]]; then
+            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 -d > "$STORE"
+          else
+            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+            NOVA_KEY_ALIAS=nova-filecache-v3-test
+            keytool -genkeypair -noprompt -keystore "$STORE" -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 -dname 'CN=Nova FileCache Rebuffer V3 Test' -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD"
+          fi
+          "$ALIGN" -f -p 4 work/final-UNSIGNED.apk work/final-ALIGNED.apk
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false             --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS"             --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD             --out dist/Nova_FileCache_Rebuffer_V3_TEST.apk work/final-ALIGNED.apk
+          "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_FileCache_Rebuffer_V3_TEST.apk | tee reports/final-signature.txt
+          "$ALIGN" -c 4 dist/Nova_FileCache_Rebuffer_V3_TEST.apk
+          (cd dist && sha256sum Nova_FileCache_Rebuffer_V3_TEST.apk > SHA256SUMS.txt)
+
+      - name: Enable emulator hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and launch final APK on Android 11
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            python3 scripts/smoke_install.py dist/Nova_FileCache_Rebuffer_V3_TEST.apk --reports reports
+
+      - name: Record build manifest
+        if: success()
+        run: |
+          python3 - <<'PY'
+          import json,hashlib,pathlib
+          p=pathlib.Path("dist/Nova_FileCache_Rebuffer_V3_TEST.apk")
+          data={
+            "status":"PASS",
+            "branch":"ci/filecache-rebuffer-v3",
+            "main_unchanged":True,
+            "core":"AVOS custom AVIO 64MiB circular file cache + deterministic 4s rebuffer",
+            "sha256":hashlib.sha256(p.read_bytes()).hexdigest(),
+            "required_markers":[
+              "NOVA_FILECACHE_CREATE","NOVA_FILECACHE_SEEK_HIT","NOVA_FILECACHE_SEEK_MISS",
+              "NOVA_FILECACHE_RECONNECT","NOVA_REBUFFER_START","NOVA_REBUFFER_END"
+            ]
+          }
+          pathlib.Path("reports/filecache-v3-manifest.json").write_text(json.dumps(data,indent=2))
+          PY
+
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-FileCache-Rebuffer-V3-Test
+          path: |
+            dist/Nova_FileCache_Rebuffer_V3_TEST.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload diagnostics
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-FileCache-Rebuffer-V3-Reports
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14
