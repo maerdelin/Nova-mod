@@ -98,7 +98,8 @@ class HardBufferInvariantTests(unittest.TestCase):
         # patch_player_text must inject both cancel and setPlaybackActive(false)
         src = p.patch_player_text.__code__
         self.assertTrue(callable(p.patch_player_text))
-        with open(p.__file__, encoding='utf-8') as fh:\n            module_text = fh.read()
+        with open(p.__file__, encoding='utf-8') as fh:
+            module_text = fh.read()
         self.assertGreaterEqual(module_text.count('cancelBufferPause()V'), 3)
         self.assertGreaterEqual(module_text.count('setPlaybackActive(Z)V'), 3)
 
