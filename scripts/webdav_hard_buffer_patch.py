@@ -1190,6 +1190,41 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 if forbidden in rt:
                     bad.append(label + ': forbidden legacy behavior remains ' + forbidden)
 
+
+    # Emit method-level evidence for any unexpected non-intentional round-trip change.
+    intentional = semantic
+    unexpected = []
+    for name in ia.keys() & ib.keys():
+        if name in intentional:
+            continue
+        a_text = ia[name].read_text()
+        b_text = ib[name].read_text()
+        la = g.logical_class(a_text, sa)
+        lb = g.logical_class(b_text, sb)
+        if la == lb:
+            continue
+        entry = {'class': name, 'header_equal': la['header'] == lb['header'], 'methods': []}
+        keys = sorted(set(la['methods']) | set(lb['methods']))
+        for mk in keys:
+            aa_m = la['methods'].get(mk)
+            bb_m = lb['methods'].get(mk)
+            if aa_m == bb_m:
+                continue
+            if aa_m is None or bb_m is None:
+                entry['methods'].append({'method': mk, 'status': 'added_or_removed'})
+                continue
+            first = next((i for i, (x, y) in enumerate(zip(aa_m, bb_m)) if x != y), min(len(aa_m), len(bb_m)))
+            entry['methods'].append({
+                'method': mk,
+                'first_diff_index': first,
+                'expected_context': aa_m[max(0, first-6):first+12],
+                'roundtrip_context': bb_m[max(0, first-6):first+12],
+                'expected_len': len(aa_m),
+                'roundtrip_len': len(bb_m),
+            })
+        unexpected.append(entry)
+    g.write_json(report.parent / 'roundtrip-unrelated-diff.json', {'unexpected': unexpected})
+
     result = {
         'status': 'FAIL' if bad else 'PASS',
         'classes_compared': len(ia),
