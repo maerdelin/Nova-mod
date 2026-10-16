@@ -235,7 +235,7 @@ WEB_DAV_BUFFER_GATE_SMALI = r'''.class public final Lcom/archos/mediacenter/vide
 
 PLAYER_BUFFER_METHODS = r'''
 .method public bufferGatePause()Z
-    .locals 3
+    .locals 4
     invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/Player;->isInPlaybackState()Z
     move-result v0
     if-eqz v0, :no
@@ -246,11 +246,21 @@ PLAYER_BUFFER_METHODS = r'''
     if-eqz v1, :no
 
     invoke-interface {v0}, Lcom/archos/medialib/IMediaPlayer;->pause()V
+
+    :nova_buffer_gate_wait_paused
+    invoke-interface {v0}, Lcom/archos/medialib/IMediaPlayer;->isPlaying()Z
+    move-result v1
+    if-eqz v1, :nova_buffer_gate_pause_confirmed
+    const-wide/32 v1, 0xf4240
+    invoke-static {v1, v2}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
+    goto :nova_buffer_gate_wait_paused
+
+    :nova_buffer_gate_pause_confirmed
     const/4 v1, 0x6
     iput v1, p0, Lcom/archos/mediacenter/video/player/Player;->mCurrentState:I
 
     const-string v1, "NovaNetBuf"
-    const-string v2, "HARD_GATE IMediaPlayer.pause current=PAUSED target_preserved"
+    const-string v2, "HARD_GATE pause_confirmed isPlaying=0 before_read_return"
     invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     const/4 v0, 0x1
     return v0
@@ -356,6 +366,8 @@ def patch_player(text: str) -> str:
     if 'WebDavBufferGate;->noteStart' not in text:
         m = _method(text, ' start(I)V')
         body = _inject_after_register_decl(m.group(0), [
+            '    iget-boolean v0, p0, Lcom/archos/mediacenter/video/player/Player;->mPlaybackEnding:Z',
+            '    if-nez v0, :nova_buffer_gate_start_continue',
             '    invoke-static {p0}, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->noteStart(Lcom/archos/mediacenter/video/player/Player;)Z',
             '    move-result v0',
             '    if-eqz v0, :nova_buffer_gate_start_continue',
@@ -537,7 +549,9 @@ def verify_roundtrip(root: Path, report: Path, g):
         ' bufferGateResume()Z',
         'IMediaPlayer;->pause()V',
         'IMediaPlayer;->start()V',
-        'HARD_GATE IMediaPlayer.pause current=PAUSED target_preserved',
+        'HARD_GATE pause_confirmed isPlaying=0 before_read_return',
+        'nova_buffer_gate_wait_paused',
+        'LockSupport;->parkNanos(J)V',
         'HARD_GATE IMediaPlayer.start target=PLAYING',
     )
     for x in required_player:
