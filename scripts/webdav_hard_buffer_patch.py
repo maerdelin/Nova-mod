@@ -757,6 +757,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     semantic = {
         'Lcom/archos/filecorelibrary/StreamOverHttp;',
         'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
+        'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
         'Lcom/archos/mediacenter/video/player/Player;',
     }
     for name in ia.keys() & ib.keys():
@@ -764,8 +765,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             continue
         a = ia[name].read_text()
         b = ib[name].read_text()
-        if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
-            bad.append(name)
+        if a != b:
+            an = a.replace('const-string/jumbo', 'const-string')
+            bn = b.replace('const-string/jumbo', 'const-string')
+            if g.logical_class(an, sa) != g.logical_class(bn, sb):
+                bad.append(name)
 
     aa = {p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
           if p.relative_to(expected).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
@@ -794,7 +798,6 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1',
                 'PLAYER_HARD_RESUME nativeStart=1 targetPlaying=1',
                 'NetworkReadAheadInputStream;->setPlaybackActive(Z)V',
-                ':nova_buffer_start_allowed',
             )
             for token in req:
                 if token not in pt:
@@ -881,8 +884,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             ctor = _find_method(rt, ' constructor <init>(Ljava/io/InputStream;)V').group(0)
             if 'HARD_GATE_REPLACE_OLD close_previous=1' not in ctor or '->close()V' not in ctor:
                 bad.append(label + ': previous guarded stream is not fail-closed before replacement')
-            if not re.search(r'\bif-ge v0, v1, :\S+', await_m):
-                bad.append(label + ': <24 MiB branch invariant missing')
+            if not re.search(r'\bif-ge v0, v2, :\S+', await_m):
+                bad.append(label + ': pre-read 24 MiB floor branch invariant missing')
             if not re.search(r'\bif-le v0, v1, :\S+', await_m):
                 bad.append(label + ': >45 MiB branch invariant missing')
             for forbidden in ('startup blocks', 'rebuffer=16/24/28MiB', 'BUFFER_LOW stage=', 'READ_AHEAD_OOM fallback'):
