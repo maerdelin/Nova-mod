@@ -88,6 +88,7 @@ class IsoPatchTests(unittest.TestCase):
 .field private partialResponse:Z
 .field private requestedStart:J
 .field private requestedEnd:J
+.field private length:J
 .method private publishInput(Ljava/io/InputStream;)V
     .locals 1
     return-void
@@ -98,8 +99,10 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('NetworkReadAheadInputStream;->wrap', out)
         self.assertIn('shouldUseNetworkReadAhead()Z', out)
         self.assertIn('const-wide/32 v2, 0x800000', out)
+        self.assertIn('const-wide/16 v4, 0x1', out)
         self.assertIn('requestedStart:J', out)
         self.assertIn('requestedEnd:J', out)
+        self.assertIn('length:J', out)
         self.assertIn('getSourceUri()Landroid/net/Uri;', out)
         self.assertEqual(status, 'applied')
 
