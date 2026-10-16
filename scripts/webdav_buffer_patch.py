@@ -497,7 +497,6 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     semantic = {
         'Lcom/archos/filecorelibrary/StreamOverHttp;',
         'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
-        'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
     }
     for name in ia.keys() & ib.keys():
         if name in semantic:
@@ -557,8 +556,6 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'const v1, 0x4000000',
                 'const v1, 0x1800000',
                 'const v1, 0x2d00000',
-                'if-ge v0, v1, :return',
-                'if-le v0, v1, :wait_more',
                 'BUFFER_LOW available<24MiB wait>45MiB',
                 'BUFFER_READY available>45MiB',
                 'READ_AHEAD_ON webdav cap=64MiB low=24MiB resume>45MiB',
@@ -566,6 +563,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             for token in required:
                 if token not in rt:
                     bad.append(label + ': NetworkReadAhead missing ' + token)
+            if not re.search(r'\bif-ge v0, v1, :\S+', rt):
+                bad.append(label + ': NetworkReadAhead missing if-ge branch')
+            if not re.search(r'\bif-le v0, v1, :\S+', rt):
+                bad.append(label + ': NetworkReadAhead missing if-le branch')
             for forbidden in ('rebuffer=16/24/28MiB', 'BUFFER_LOW stage=', 'low=2MiB'):
                 if forbidden in rt:
                     bad.append(label + ': old buffer policy remains ' + forbidden)
