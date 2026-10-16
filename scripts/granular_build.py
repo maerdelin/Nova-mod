@@ -10,10 +10,8 @@ import shutil
 import subprocess
 import sys
 import zipfile
-import xml.etree.ElementTree as ET
 import granular as g
 import check_upstream as upstream
-import iso_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -63,183 +61,10 @@ def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
         keep = [n for n in a.namelist() if n.startswith(('lib/', 'assets/')) and not n.endswith('/')]
         changed = [n for n in keep if n not in b.namelist() or a.read(n) != b.read(n)]
         if changed:
-            raise g.Conflict('Upstream native/asset payload changed: ' + str(changed[:10]))
+            raise g.Conflict('Upstream native/asset payload was not preserved: ' + str(changed[:10]))
         if b.getinfo('resources.arsc').compress_type != zipfile.ZIP_STORED:
             raise g.Conflict('resources.arsc must be stored uncompressed')
     g.write_json(reports / 'upstream-payload.json', {'status': 'PASS', 'native_and_asset_entries_preserved': len(keep)})
-
-
-def verify_roundtrip(expected: Path, actual: Path, report: Path):
-    """Strict round-trip verification, tolerating only DEX jumbo encoding of MimeUtils strings."""
-    sa = g.resource_map(expected)
-    sb = g.resource_map(actual)
-    ia = g.class_index(expected)
-    ib = g.class_index(actual)
-    bad = []
-    if ia.keys() != ib.keys():
-        bad.append('class set differs')
-    iso_semantic_classes = {
-        'Lcom/archos/mediacenter/video/player/Player;',
-        'Lcom/archos/mediacenter/video/player/BlurayIsoProxy;',
-        'Lcom/archos/mediacenter/video/player/IsoPlayerFactory;',
-        'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
-        'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
-    }
-    for name in ia.keys() & ib.keys():
-        a = ia[name].read_text().replace('const-string/jumbo', 'const-string')
-        b = ib[name].read_text().replace('const-string/jumbo', 'const-string')
-        if name in iso_semantic_classes:
-            # These classes contain injected labels/branches whose apktool round-trip
-            # formatting may differ. They are verified below by strict ISO invariants.
-            continue
-        if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
-            bad.append(name)
-    aa = {p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
-          if p.relative_to(expected).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
-    bb = {p.relative_to(actual).as_posix() for p in actual.rglob('*.xml')
-          if p.relative_to(actual).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
-    if aa != bb:
-        bad.append('XML resource set differs')
-    for path in aa & bb:
-        if (expected / path).read_bytes() != (actual / path).read_bytes():
-            if g.logical_xml(ET.parse(expected / path).getroot()) != g.logical_xml(ET.parse(actual / path).getroot()):
-                bad.append(path)
-
-    # ISO-specific invariants are checked independently, so this tolerance cannot hide the feature.
-    for root, label in ((expected, 'expected'), (actual, 'roundtrip')):
-        mf = next(iter(root.glob('smali*/com/archos/filecorelibrary/MimeUtils.smali')), None)
-        if mf is None:
-            bad.append(label + ': MimeUtils missing')
-        else:
-            t = mf.read_text()
-            if t.count('"video/x-bluray-iso"') != 1 or '"application/x-iso9660-image"' in t:
-                bad.append(label + ': ISO MIME mapping invalid')
-        pf = next(iter(root.glob('smali*/com/archos/mediacenter/video/player/Player.smali')), None)
-        if pf is None:
-            bad.append(label + ': Player missing')
-        else:
-            pt = pf.read_text()
-            if pt.count('BlurayIsoProxy;->resolve') != 1:
-                bad.append(label + ': Player ISO resolver injection invalid')
-            if pt.count('BlurayIsoProxy;->armForUri') != 1:
-                bad.append(label + ': Player ISO arm injection invalid')
-            if pt.count('IsoPlayerFactory;->create') != 1:
-                bad.append(label + ': Player ISO factory injection invalid')
-        psf = next(iter(root.glob('smali*/com/archos/mediacenter/video/player/PlayerService.smali')), None)
-        if psf is None:
-            bad.append(label + ': PlayerService missing')
-        else:
-            pst = psf.read_text()
-            wrapper = (
-                'IsoPlayerFactory;->seekTo'
-                '(Lcom/archos/mediacenter/video/player/Player;I)V'
-            )
-            if pst.count(wrapper) != 1:
-                bad.append(label + ': PlayerService ISO initial seek wrapper invalid')
-        stream_http = next(iter(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali')), None)
-        if stream_http is None:
-            bad.append(label + ': StreamOverHttp missing')
-        else:
-            st = stream_http.read_text()
-            if st.count(' getSourceUri()Landroid/net/Uri;') != 1:
-                bad.append(label + ': StreamOverHttp source URI bridge invalid')
-            copy_methods = [m.group(0) for m in iso_patch.METHOD_RE.finditer(st)
-                            if ' copyStream(' in m.group(0).splitlines()[0]]
-            if len(copy_methods) != 1 or 'Ljava/io/OutputStream;->flush()V' in copy_methods[0]:
-                bad.append(label + ': StreamOverHttp still flushes each transfer chunk')
-        stream_session = next(iter(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali')), None)
-        if stream_session is None:
-            bad.append(label + ': StreamOverHttp.HttpSession missing')
-        else:
-            sst = stream_session.read_text()
-            if sst.count('NetworkReadAheadInputStream;->wrap') != 1:
-                bad.append(label + ': WebDAV read-ahead injection invalid')
-            if sst.count(' shouldUseNetworkReadAhead()Z') != 1:
-                bad.append(label + ': WebDAV sequential-range policy invalid')
-            if sst.count(' reopenReadAheadAt(J)Ljava/io/InputStream;') != 1:
-                bad.append(label + ': WebDAV read-ahead reconnect helper invalid')
-            if sst.count(' getReadAheadStart()J') != 1:
-                bad.append(label + ': WebDAV read-ahead start helper invalid')
-            for token in ('requestedStart:J', 'requestedEnd:J', 'length:J', 'const-wide/32 v2, 0x800000', 'const-wide/16 v4, 0x1'):
-                if token not in sst:
-                    bad.append(label + ': WebDAV range gate missing ' + token)
-        read_ahead = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'))
-        if len(read_ahead) != 1:
-            bad.append(label + ': NetworkReadAheadInputStream missing/duplicate')
-        else:
-            rat = read_ahead[0].read_text()
-            for token in (
-                'PipedInputStream;-><init>(I)V',
-                'PipedOutputStream;',
-                'READ_AHEAD_ON webdav cap=32MiB prefill=8MiB maxwait=2s mode=continuous retry=3',
-                'awaitInitialPrefill()V',
-                'SOURCE_RETRY attempt=',
-                'SOURCE_REOPEN_OK attempt=',
-                'SOURCE_IO_FAIL_AFTER_RETRY attempts=3',
-                'PREFILL_READY target=8MiB',
-                'PREFILL_TIMEOUT maxwait=2s continue-with-current-buffer',
-                'STAT produced_bytes=',
-                'const v0, 0x40000',
-                'Nova WebDAV read-ahead',
-            ):
-                if token not in rat:
-                    bad.append(label + ': NetworkReadAheadInputStream missing ' + token)
-            for token in ('awaitReady()V', 'BUFFER_LOW', 'BUFFER_READY', 'rebuffer='):
-                if token in rat:
-                    bad.append(label + ': NetworkReadAheadInputStream still contains playback-phase rebuffer gate ' + token)
-        proxies = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
-        if len(proxies) != 1:
-            bad.append(label + ': BlurayIsoProxy missing/duplicate')
-        else:
-            pr = proxies[0].read_text()
-            required_proxy = (
-                'nativeOpen(Ljava/lang/String;)Ljava/lang/String;',
-                'armForUri(Landroid/net/Uri;)V',
-                'shouldForceAvos()Z',
-                'shouldSkipInitialZeroSeek(I)Z',
-                '.field private static sForceAvos:Z',
-                '.field private static sSkipInitialZeroSeek:Z',
-                'PLAYER_ARM iso=1',
-            )
-            for token in required_proxy:
-                if token not in pr:
-                    bad.append(label + ': BlurayIsoProxy missing ' + token)
-        factories = list(root.glob('smali*/com/archos/mediacenter/video/player/IsoPlayerFactory.smali'))
-        if len(factories) != 1:
-            bad.append(label + ': IsoPlayerFactory missing/duplicate')
-        else:
-            ft = factories[0].read_text()
-            required_factory = (
-                'BlurayIsoProxy;->shouldForceAvos()Z',
-                'MediaFactory;->createPlayer(Landroid/content/Context;Z)',
-                'AvosMediaPlayer;',
-                'LibAvos;->setDecoder(I)V',
-                'PLAYER_FACTORY avos=1 forced=1',
-                'SEEK_ZERO_SKIP iso=1',
-                'Player;->seekTo(I)V',
-            )
-            for token in required_factory:
-                if token not in ft:
-                    bad.append(label + ': IsoPlayerFactory missing ' + token)
-        for abi in ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'):
-            so = root / 'lib' / abi / 'libnova_iso.so'
-            if not so.is_file() or so.stat().st_size < 10000:
-                bad.append(label + ': missing native ' + abi)
-
-    result = {
-        'status': 'FAIL' if bad else 'PASS',
-        'classes_compared': len(ia),
-        'xml_files_compared': len(aa),
-        'differences': sorted(bad),
-        'comparison': 'strict logical roundtrip; normalizes semantically equivalent const-string vs const-string/jumbo DEX encoding',
-        'runtime_tested': False,
-    }
-    g.write_json(report, result)
-    if bad:
-        raise g.Conflict('Logical verification failed: ' + str(bad[:20]))
-    print(json.dumps(result, indent=2))
-    return result
-
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -249,7 +74,6 @@ def main():
     p.add_argument('--work', type=Path, required=True)
     p.add_argument('--reports', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--iso-native', type=Path, required=True)
     args = p.parse_args()
     selected = upstream.load_selection(args.metadata, args.apk)
     args.work.mkdir(parents=True, exist_ok=True)
@@ -263,32 +87,18 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
-    # Preserve selected pre-ISO-patch WebDAV smali for architecture review.
-    for rel, outname in (
-        ('com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali', 'diag-HttpSession.smali'),
-        ('com/archos/filecorelibrary/ReadOptions$1.smali', 'diag-ReadOptions1.smali'),
-        ('com/archos/filecorelibrary/OwnedStreams$1.smali', 'diag-OwnedStreams1.smali'),
-    ):
-        hits = list(candidate.glob('smali*/' + rel))
-        if len(hits) == 1:
-            shutil.copyfile(hits[0], args.reports / outname)
-            print('DIAG_SMALI=' + outname + ' source=' + hits[0].as_posix())
-    iso_patch.apply(candidate, args.iso_native, args.reports / 'iso-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     run('java', '-Xmx4g', '-jar', args.apktool, 'b', candidate, '-o', args.output)
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
-    verify_roundtrip(candidate, decoded, args.reports / 'roundtrip.json')
+    g.verify(candidate, decoded, args.reports / 'roundtrip.json')
     preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
-        'bluray_iso_support': True,
-        'webdav_readahead': 'Kodi-inspired recoverable 32 MiB asynchronous cache; one-shot 8 MiB startup/seek prefill capped at 2 seconds; no playback-phase rebuffer gate; transient source errors reopen from the absolute produced offset up to 3 times while cached bytes remain available to Avos; 4 MiB telemetry checkpoints; bounded probes bypassed',
-        'native_module_replacement': 'none; official Nova native libraries preserved',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 
