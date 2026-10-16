@@ -109,6 +109,8 @@ def main():
         'com/archos/mediacenter/video/player/Player.smali',
         'com/archos/mediacenter/video/player/PlayerController.smali',
         'com/archos/mediacenter/video/player/PlayerActivity.smali',
+        'com/archos/mediacenter/video/player/PlayerActivity$PlayerListener.smali',
+        'com/archos/mediacenter/video/player/PlayerActivity$1.smali',
         'com/archos/mediacenter/video/player/Player$Listener.smali',
     )
     full_out = []
