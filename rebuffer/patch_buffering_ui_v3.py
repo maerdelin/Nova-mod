@@ -6,15 +6,28 @@ root=Path(sys.argv[1])
 smalis=list(root.rglob("*.smali"))
 outer=None
 listener=None
+candidates=[]
 for p in smalis:
-    if p.name == "PlayerActivity.smali":
-        ps=p.read_text(errors="ignore")
-        if ".class public Lcom/archos/mediacenter/video/player/PlayerActivity;" in ps:
-            outer=p
-    elif p.name == "PlayerActivity$PlayerListener.smali":
-        ps=p.read_text(errors="ignore")
-        if re.search(r"(?m)^\\.method [^\\n]*onBufferingUpdate\\(I\\)V$", ps):
-            listener=p
+    ps=p.read_text(errors="ignore")
+    if p.name == "PlayerActivity.smali" and ".class public Lcom/archos/mediacenter/video/player/PlayerActivity;" in ps:
+        outer=p
+    if re.search(r"(?m)^\\.method [^\\n]*onBufferingUpdate\\(I\\)V$", ps):
+        score=0
+        if "Lcom/archos/mediacenter/video/player/PlayerActivity;" in ps: score += 4
+        if "->mBufferView:Landroid/widget/TextView;" in ps: score += 4
+        if "->isInPlaybackState()Z" in ps: score += 3
+        if "this$0" in ps: score += 2
+        candidates.append((score,p))
+if candidates:
+    candidates.sort(key=lambda x:(x[0], str(x[1])), reverse=True)
+    best=candidates[0][0]
+    best_paths=[p for score,p in candidates if score==best]
+    if best <= 0:
+        raise SystemExit("onBufferingUpdate candidates found but none reference PlayerActivity")
+    if len(best_paths) != 1:
+        raise SystemExit("ambiguous onBufferingUpdate candidates: "+", ".join(str(p) for p in best_paths))
+    listener=best_paths[0]
+    print("BUFFER_UI_LISTENER="+str(listener))
 if not outer or not listener:
     raise SystemExit(f"PlayerActivity smali not found outer={outer} listener={listener}")
 
