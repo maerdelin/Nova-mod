@@ -186,6 +186,9 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const-string v2, "INITIAL_HOLD prepared=1 wait_for_24MiB_floor"
     invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
+    const/4 v4, 0x1
+    invoke-static {v4}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
+
     const/4 v0, 0x0
     return v0
 
@@ -204,6 +207,9 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const-string v1, "NovaNetBuf"
     const-string v2, "INITIAL_HOLD network_failure fail_closed"
     invoke-static {v1, v2}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;)I
+
+    const/4 v4, 0x1
+    invoke-static {v4}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     const/4 v0, 0x0
     return v0
@@ -710,6 +716,7 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     sget-boolean v0, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z
     if-eqz v0, :not_already
     const/4 v0, 0x1
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
     return v0
 
     :not_already
@@ -730,6 +737,7 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->pause()V
     const/4 v3, 0x1
     sput-boolean v3, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z
+    invoke-static {v3}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     const-string v0, "NovaNetBuf"
     const-string v1, "PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1"
@@ -763,6 +771,7 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->start()V
     const/4 v3, 0x0
     sput-boolean v3, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z
+    invoke-static {v3}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     const-string v0, "NovaNetBuf"
     const-string v1, "PLAYER_HARD_RESUME nativeStart=1 targetPlaying=1"
@@ -772,6 +781,7 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
     :clear
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     :done
     return-void
@@ -789,6 +799,7 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
 
     const/4 v1, 0x0
     invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->start(I)V
+    invoke-static {v1}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
 
     :done
     return-void
@@ -799,10 +810,42 @@ PLAYER_BUFFER_METHODS_SMALI = r'''
 
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/mediacenter/video/player/Player;->sBufferPaused:Z
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/PlayerActivity;->setNetworkBufferingUi(Z)V
     return-void
 .end method
 '''
 
+
+
+PLAYER_ACTIVITY_BUFFER_UI_SMALI = r'''.method public static setNetworkBufferingUi(Z)V
+    .locals 3
+
+    sget-object v0, Lcom/archos/mediacenter/video/player/PlayerActivity;->sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;
+    if-eqz v0, :done
+
+    iget-object v1, v0, Lcom/archos/mediacenter/video/player/PlayerActivity;->mHandler:Landroid/os/Handler;
+    if-eqz v1, :done
+
+    if-eqz p0, :hide
+
+    const/4 v2, 0x7
+    invoke-virtual {v1, v2}, Landroid/os/Handler;->removeMessages(I)V
+
+    const/4 v2, 0x1
+    invoke-virtual {v1, v2}, Landroid/os/Handler;->sendEmptyMessage(I)Z
+    goto :done
+
+    :hide
+    const/4 v2, 0x1
+    invoke-virtual {v1, v2}, Landroid/os/Handler;->removeMessages(I)V
+
+    const/4 v2, 0x7
+    invoke-virtual {v1, v2}, Landroid/os/Handler;->sendEmptyMessage(I)Z
+
+    :done
+    return-void
+.end method
+'''
 
 
 def patch_stream_over_http_text(text: str) -> tuple[str, str]:
@@ -1013,6 +1056,92 @@ def patch_player_text(text: str) -> tuple[str, str]:
     return text.rstrip() + '\n\n' + PLAYER_BUFFER_METHODS_SMALI + '\n', 'applied'
 
 
+
+def patch_player_activity_text(text: str) -> tuple[str, str]:
+    field = '.field private static volatile sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;'
+    method = ' setNetworkBufferingUi(Z)V'
+    if field in text and method in text:
+        return text, 'already-applied'
+    if field in text or method in text:
+        raise RuntimeError('Partial PlayerActivity network-buffer UI patch found')
+
+    field_anchor = '.field private mBufferView:Landroid/widget/TextView;\n'
+    if text.count(field_anchor) != 1:
+        raise RuntimeError('PlayerActivity.mBufferView anchor missing/ambiguous')
+    text = text.replace(field_anchor, field + '\n\n' + field_anchor, 1)
+
+    m = _find_method(text, ' onCreate(Landroid/os/Bundle;)V')
+    body = m.group(0)
+    create_anchor = '    invoke-super {p0, p1}, Landroidx/fragment/app/v;->onCreate(Landroid/os/Bundle;)V'
+    if body.count(create_anchor) != 1:
+        raise RuntimeError('PlayerActivity.onCreate super anchor missing/ambiguous')
+    body = body.replace(
+        create_anchor,
+        create_anchor + '\n\n'
+        '    sput-object p0, Lcom/archos/mediacenter/video/player/PlayerActivity;->sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;',
+        1)
+    text = text[:m.start()] + body + text[m.end():]
+
+    m = _find_method(text, ' onDestroy()V')
+    body = m.group(0)
+    decl = '    .locals 4'
+    if body.count(decl) != 1:
+        raise RuntimeError('PlayerActivity.onDestroy locals anchor missing/ambiguous')
+    destroy = (
+        decl + '\n\n'
+        '    sget-object v0, Lcom/archos/mediacenter/video/player/PlayerActivity;->sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;\n'
+        '    if-ne v0, p0, :nova_buffer_ui_destroy_done\n'
+        '    const/4 v0, 0x0\n'
+        '    sput-object v0, Lcom/archos/mediacenter/video/player/PlayerActivity;->sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;\n'
+        '    :nova_buffer_ui_destroy_done'
+    )
+    body = body.replace(decl, destroy, 1)
+    text = text[:m.start()] + body + text[m.end():]
+
+    return text.rstrip() + '\n\n' + PLAYER_ACTIVITY_BUFFER_UI_SMALI + '\n', 'applied'
+
+
+def patch_player_activity_handler_text(text: str) -> tuple[str, str]:
+    marker = ':nova_buffer_hide_progress'
+    if marker in text:
+        return text, 'already-applied'
+
+    m = _find_method(text, ' handleMessage(Landroid/os/Message;)V')
+    body = m.group(0)
+
+    what_anchor = (
+        '    iget v1, p1, Landroid/os/Message;->what:I\n\n'
+        '    const/4 v2, 0x0'
+    )
+    if body.count(what_anchor) != 1:
+        raise RuntimeError('PlayerActivity.Handler what anchor missing/ambiguous')
+    body = body.replace(
+        what_anchor,
+        '    iget v1, p1, Landroid/os/Message;->what:I\n\n'
+        '    const/4 v2, 0x7\n'
+        '    if-ne v1, v2, :nova_buffer_hide_progress\n\n'
+        '    const/4 v2, 0x0',
+        1)
+
+    switch_anchor = '    nop\n\n    :pswitch_data_0'
+    if body.count(switch_anchor) != 1:
+        raise RuntimeError('PlayerActivity.Handler switch-data anchor missing/ambiguous')
+
+    hide_block = (
+        '    :nova_buffer_hide_progress\n'
+        '    iget-object p0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity$1;->this$0:Lcom/archos/mediacenter/video/player/PlayerActivity;\n'
+        '    invoke-static {p0}, Lcom/archos/mediacenter/video/player/PlayerActivity;->x(Lcom/archos/mediacenter/video/player/PlayerActivity;)Landroid/view/View;\n'
+        '    move-result-object p0\n'
+        '    if-eqz p0, :nova_buffer_hide_done\n'
+        '    const/16 p1, 0x8\n'
+        '    invoke-virtual {p0, p1}, Landroid/view/View;->setVisibility(I)V\n'
+        '    :nova_buffer_hide_done\n'
+        '    return-void\n\n'
+    )
+    body = body.replace(switch_anchor, hide_block + switch_anchor, 1)
+    text = text[:m.start()] + body + text[m.end():]
+    return text, 'applied'
+
 def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     sa = g.resource_map(expected)
     sb = g.resource_map(actual)
@@ -1028,6 +1157,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
         'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream$Watchdog;',
         'Lcom/archos/mediacenter/video/player/Player;',
+        'Lcom/archos/mediacenter/video/player/PlayerActivity;',
+        'Lcom/archos/mediacenter/video/player/PlayerActivity$1;',
     }
     for name in ia.keys() & ib.keys():
         if name in semantic:
@@ -1086,6 +1217,62 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 bad.append(label + ': prepare-safe buffer gate is not before focus/nativeStart')
             if 'setPlaybackActive(Z)V' not in start_m:
                 bad.append(label + ': focus-failure path does not disarm buffer gate')
+
+        activity = list(root.glob('smali*/com/archos/mediacenter/video/player/PlayerActivity.smali'))
+        if len(activity) != 1:
+            bad.append(label + ': PlayerActivity missing/duplicate')
+        else:
+            at = activity[0].read_text()
+            for token in (
+                '.field private static volatile sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;',
+                ' setNetworkBufferingUi(Z)V',
+                'MSG_PROGRESS_VISIBLE:I = 0x1',
+                'mProgressView:Landroid/view/View;',
+                'mHandler:Landroid/os/Handler;',
+                'sNetworkBufferActivity:Lcom/archos/mediacenter/video/player/PlayerActivity;',
+                'sendEmptyMessage(I)Z',
+            ):
+                if token not in at:
+                    bad.append(label + ': buffering UI activity missing ' + token)
+            create = _find_method(at, ' onCreate(Landroid/os/Bundle;)V').group(0)
+            destroy = _find_method(at, ' onDestroy()V').group(0)
+            if 'sput-object p0, Lcom/archos/mediacenter/video/player/PlayerActivity;->sNetworkBufferActivity' not in create:
+                bad.append(label + ': buffering UI activity is not registered on create')
+            if 'sput-object v0, Lcom/archos/mediacenter/video/player/PlayerActivity;->sNetworkBufferActivity' not in destroy:
+                bad.append(label + ': buffering UI activity is not cleared on destroy')
+
+        activity_handler = list(root.glob('smali*/com/archos/mediacenter/video/player/PlayerActivity$1.smali'))
+        if len(activity_handler) != 1:
+            bad.append(label + ': PlayerActivity.Handler missing/duplicate')
+        else:
+            ht = activity_handler[0].read_text()
+            hm = _find_method(ht, ' handleMessage(Landroid/os/Message;)V').group(0)
+            for token in (
+                ':nova_buffer_hide_progress',
+                'const/4 v2, 0x7',
+                'const/16 p1, 0x8',
+                'PlayerActivity;->x(Lcom/archos/mediacenter/video/player/PlayerActivity;)Landroid/view/View;',
+                'Landroid/view/View;->setVisibility(I)V',
+            ):
+                if token not in hm:
+                    bad.append(label + ': buffering UI handler missing ' + token)
+
+        if len(player) == 1:
+            pt = player[0].read_text()
+            helpers = (
+                _find_method(pt, ' bufferPauseCurrent()Z').group(0),
+                _find_method(pt, ' bufferResumeCurrent()V').group(0),
+                _find_method(pt, ' bufferStartHeldCurrent()V').group(0),
+                _find_method(pt, ' cancelBufferPause()V').group(0),
+            )
+            if 'setNetworkBufferingUi(Z)V' not in helpers[0]:
+                bad.append(label + ': hard pause does not show native loading UI')
+            if 'setNetworkBufferingUi(Z)V' not in helpers[1]:
+                bad.append(label + ': hard resume does not hide native loading UI')
+            if 'setNetworkBufferingUi(Z)V' not in helpers[2]:
+                bad.append(label + ': held-start release does not hide native loading UI')
+            if 'setNetworkBufferingUi(Z)V' not in helpers[3]:
+                bad.append(label + ': manual cancel does not hide native loading UI')
 
         stream = list(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali'))
         if len(stream) != 1 or stream[0].read_text().count(' getSourceUri()Landroid/net/Uri;') != 1:
@@ -1209,6 +1396,14 @@ def apply(root: Path, report: Path | None = None):
     player_text, player_status = patch_player_text(player.read_text())
     player.write_text(player_text)
 
+    player_activity = _one(root.glob('smali*/com/archos/mediacenter/video/player/PlayerActivity.smali'), 'PlayerActivity')
+    player_activity_text, player_activity_status = patch_player_activity_text(player_activity.read_text())
+    player_activity.write_text(player_activity_text)
+
+    player_activity_handler = _one(root.glob('smali*/com/archos/mediacenter/video/player/PlayerActivity$1.smali'), 'PlayerActivity.Handler')
+    player_activity_handler_text, player_activity_handler_status = patch_player_activity_handler_text(player_activity_handler.read_text())
+    player_activity_handler.write_text(player_activity_handler_text)
+
     stream_http = _one(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali'), 'StreamOverHttp')
     stream_http_text, stream_http_status = patch_stream_over_http_text(stream_http.read_text())
     stream_http.write_text(stream_http_text)
@@ -1242,6 +1437,8 @@ def apply(root: Path, report: Path | None = None):
     result = {
         'status': 'PASS',
         'player_hard_gate': player_status,
+        'buffering_ui_activity': player_activity_status,
+        'buffering_ui_handler': player_activity_handler_status,
         'stream_over_http_source_uri': stream_http_status,
         'stream_over_http_readahead': stream_session_status,
         'network_readahead': read_ahead_status,
