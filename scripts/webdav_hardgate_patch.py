@@ -550,12 +550,41 @@ def verify_roundtrip(root: Path, report: Path, g):
         'IMediaPlayer;->pause()V',
         'IMediaPlayer;->start()V',
         'HARD_GATE pause_confirmed isPlaying=0 before_read_return',
-        'nova_buffer_gate_wait_paused',
         'LockSupport;->parkNanos(J)V',
         'HARD_GATE IMediaPlayer.start target=PLAYING',
     )
     for x in required_player:
         if x not in player: bad.append('Player missing '+x)
+
+    # Label names are not stable across baksmali. Prove pause barrier by instruction
+    # multiplicity and ordering inside bufferGatePause instead.
+    pm = _method(player, ' bufferGatePause()Z').group(0)
+    pause_pos = pm.find('IMediaPlayer;->pause()V')
+    is_playing_positions = []
+    off = 0
+    while True:
+        p = pm.find('IMediaPlayer;->isPlaying()Z', off)
+        if p < 0: break
+        is_playing_positions.append(p)
+        off = p + 1
+    park_pos = pm.find('LockSupport;->parkNanos(J)V')
+    confirm_pos = pm.find('HARD_GATE pause_confirmed isPlaying=0 before_read_return')
+    true_return_pos = pm.rfind('return v0')
+    if pause_pos < 0 or len(is_playing_positions) < 2:
+        bad.append('bufferGatePause missing pause/post-pause isPlaying barrier')
+    else:
+        post_check = is_playing_positions[1]
+        if not (pause_pos < post_check < park_pos < confirm_pos < true_return_pos):
+            bad.append('bufferGatePause ordering invalid')
+    if 'goto ' not in pm:
+        bad.append('bufferGatePause missing retry loop')
+
+    sm = _method(player, ' start(I)V').group(0)
+    note_pos = sm.find('WebDavBufferGate;->noteStart')
+    direct_start_pos = sm.find('IMediaPlayer;->start()V')
+    blocked_log_pos = sm.find('HARD_GATE Player.start blocked while buffer<resume')
+    if note_pos < 0 or blocked_log_pos < 0 or direct_start_pos < 0 or not (note_pos < blocked_log_pos < direct_start_pos):
+        bad.append('Player.start hard gate ordering invalid')
 
     required_ra = (
         'afterConsume()V',
@@ -573,11 +602,14 @@ def verify_roundtrip(root: Path, report: Path, g):
     # but before the value is returned to AVOS in both read overloads.
     for sig in (' read()I', ' read([BII)I'):
         m = _method(ra, sig).group(0)
-        read_pos = m.find('Landroid')  # harmless init
+        if sig == ' read()I':
+            read_pos = m.find('PipedInputStream;->read()I')
+        else:
+            read_pos = m.find('PipedInputStream;->read([BII)I')
         consume_pos = m.find('->afterConsume()V')
-        return_pos = m.rfind('return v0')
-        if consume_pos < 0 or return_pos < 0 or consume_pos > return_pos:
-            bad.append(sig+' does not gate before return')
+        return_pos = m.find('return v0', consume_pos)
+        if read_pos < 0 or consume_pos < 0 or return_pos < 0 or not (read_pos < consume_pos < return_pos):
+            bad.append(sig+' does not gate after read and before return')
 
     required_gate = (
         '.method public static declared-synchronized onLow(Ljava/lang/Object;)V',
@@ -594,6 +626,16 @@ def verify_roundtrip(root: Path, report: Path, g):
     )
     for x in required_gate:
         if x not in gate: bad.append('Gate missing '+x)
+
+    lm = _method(gate, ' onLow(Ljava/lang/Object;)V').group(0)
+    low_pause_pos = lm.find('Player;->bufferGatePause()Z')
+    low_log_pos = lm.find('HARD_GATE low<24MiB decoder_paused_before_read_return')
+    if low_pause_pos < 0 or low_log_pos < 0 or low_pause_pos > low_log_pos:
+        bad.append('onLow does not complete bufferGatePause before low confirmation')
+
+    rm = _method(gate, ' onReady(Ljava/lang/Object;)V').group(0)
+    if 'sSource:Ljava/lang/Object;' not in rm or 'sPlayWanted:Z' not in rm or 'Player;->bufferGateResume()Z' not in rm:
+        bad.append('onReady missing same-stream/play-intent resume guards')
 
     result={'status':'FAIL' if bad else 'PASS','differences':bad,
             'proof':'read-drain below 24MiB -> synchronized gate -> IMediaPlayer.pause before read return; all Player.start paths gated while blocked; same-stream >45MiB only; normal pause cancels auto-resume'}
