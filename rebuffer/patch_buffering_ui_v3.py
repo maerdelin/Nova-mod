@@ -3,78 +3,56 @@ from pathlib import Path
 import re, sys
 
 root = Path(sys.argv[1])
-smalis = list(root.rglob("*.smali"))
-outer = None
-candidate_methods = []
-
 OUTER_DESC = "Lcom/archos/mediacenter/video/player/PlayerActivity;"
+LISTENER_DESC = "Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;"
+FRONTEND_DESC = "Lcom/archos/mediacenter/video/player/PlayerService$PlayerFrontend;"
+
+outer_paths = list(root.rglob("PlayerActivity.smali"))
+listener_paths = list(root.rglob("PlayerActivity$PlayerListener.smali"))
+
+if len(outer_paths) != 1:
+    raise SystemExit(f"expected exactly one PlayerActivity.smali, got {outer_paths}")
+if len(listener_paths) != 1:
+    raise SystemExit(f"expected exactly one PlayerActivity$PlayerListener.smali, got {listener_paths}")
+
+outer = outer_paths[0]
+listener = listener_paths[0]
+os = outer.read_text(errors="ignore")
+ls = listener.read_text(errors="ignore")
+
+class_re = re.compile(r"(?m)^\.class[^\n]*\s(L[^;]+;)$")
+outer_class = class_re.search(os)
+listener_class = class_re.search(ls)
+if not outer_class or outer_class.group(1) != OUTER_DESC:
+    raise SystemExit("PlayerActivity descriptor mismatch")
+if not listener_class or listener_class.group(1) != LISTENER_DESC:
+    raise SystemExit("PlayerListener descriptor mismatch")
+if f".implements {FRONTEND_DESC}" not in ls:
+    raise SystemExit("PlayerListener no longer implements PlayerService$PlayerFrontend")
 
 method_re = re.compile(
-    r"(?ms)^\\.method[^\\n]*\\s(?P<name>[^\\s(]+)\\(I\\)V\\n.*?^\\.end method\\n"
+    r"(?ms)^\.method[^\n]*\sonBufferingUpdate\(I\)V\n.*?^\.end method\n?"
 )
+m = method_re.search(ls)
+if not m:
+    raise SystemExit("exact PlayerListener.onBufferingUpdate(I)V method not found")
 
-for p in smalis:
-    ps = p.read_text(errors="ignore")
-    if p.name == "PlayerActivity.smali" and OUTER_DESC in ps:
-        outer = p
+old = m.group(0)
+if "Landroid/widget/TextView;->setText" not in old:
+    raise SystemExit("onBufferingUpdate no longer contains TextView.setText; refuse unsafe patch")
 
-    for m in method_re.finditer(ps):
-        body = m.group(0)
-        score = 0
-        if "->mBufferView:Landroid/widget/TextView;" in body:
-            score += 8
-        if "->isInPlaybackState()Z" in body:
-            score += 6
-        if "Landroid/widget/TextView;->setText" in body:
-            score += 4
-        if OUTER_DESC in body:
-            score += 3
-        if "%" in body:
-            score += 1
-        if score > 0:
-            candidate_methods.append((score, p, m.start(), m.end(), body, m.group("name")))
-
-if outer is None:
-    raise SystemExit("PlayerActivity.smali not found")
-
-if not candidate_methods:
-    raise SystemExit("no behavioral buffering callback candidate found")
-
-candidate_methods.sort(key=lambda x: (x[0], str(x[1]), x[2]), reverse=True)
-best_score = candidate_methods[0][0]
-best = [x for x in candidate_methods if x[0] == best_score]
-if best_score < 14:
-    details = "\n".join(f"score={x[0]} file={x[1]} method={x[5]}" for x in candidate_methods[:10])
-    raise SystemExit("buffering callback score too weak:\n" + details)
-if len(best) != 1:
-    details = "\n".join(f"score={x[0]} file={x[1]} method={x[5]}" for x in best)
-    raise SystemExit("ambiguous buffering callback candidates:\n" + details)
-
-score, listener, start, end, old, method_name = best[0]
-ls = listener.read_text(errors="ignore")
-class_m = re.search(r"(?m)^\\.class[^\\n]*\\s(L[^;]+;)$", ls)
-if not class_m:
-    raise SystemExit("listener class descriptor not found")
-listener_desc = class_m.group(1)
-
-outer_field_m = re.search(
-    re.escape(listener_desc) + r"->([^:]+):" + re.escape(OUTER_DESC),
-    old,
+field_re = re.compile(
+    r"(?m)^\.field[^\n]*\s(?P<name>[^\s:]+):" + re.escape(OUTER_DESC) + r"$"
 )
-if not outer_field_m:
-    raise SystemExit(
-        f"buffering callback found but outer PlayerActivity field not found: {listener} {method_name}"
-    )
-outer_field = outer_field_m.group(1)
+fm = field_re.search(ls)
+if not fm:
+    raise SystemExit("PlayerListener outer PlayerActivity field not found")
+outer_field = fm.group("name")
 
 print(f"BUFFER_UI_LISTENER={listener}")
-print(f"BUFFER_UI_METHOD={method_name}")
-print(f"BUFFER_UI_SCORE={score}")
-print(f"BUFFER_UI_CLASS={listener_desc}")
+print("BUFFER_UI_METHOD=onBufferingUpdate(I)V")
 print(f"BUFFER_UI_OUTER_FIELD={outer_field}")
 
-# Add a small stable helper to PlayerActivity itself.
-os = outer.read_text(errors="ignore")
 helper = r'''
 .method public novaSetNetworkBuffering(Z)V
     .locals 2
@@ -98,6 +76,7 @@ helper = r'''
 .end method
 
 '''
+
 if ".method public novaSetNetworkBuffering(Z)V" not in os:
     pos = os.find(".method")
     if pos < 0:
@@ -105,24 +84,15 @@ if ".method public novaSetNetworkBuffering(Z)V" not in os:
     os = os[:pos] + helper + os[pos:]
     outer.write_text(os)
 
-# Re-read listener after outer patch in case both paths ever coincide.
 ls = listener.read_text(errors="ignore")
-matches = list(method_re.finditer(ls))
-target = None
-for m in matches:
-    if m.group("name") != method_name:
-        continue
-    body = m.group(0)
-    if "->mBufferView:Landroid/widget/TextView;" in body and "->isInPlaybackState()Z" in body:
-        target = m
-        break
-if target is None:
-    raise SystemExit("selected buffering callback disappeared before patch")
+m = method_re.search(ls)
+if not m:
+    raise SystemExit("onBufferingUpdate disappeared before patch")
+old = m.group(0)
 
-old = target.group(0)
 if ":nova_ui_original" not in old:
-    locals_m = re.search(r"(?m)^    \\.locals (\\d+)\\n", old)
-    regs_m = re.search(r"(?m)^    \\.registers (\\d+)\\n", old)
+    locals_m = re.search(r"(?m)^    \.locals (\d+)\n", old)
+    regs_m = re.search(r"(?m)^    \.registers (\d+)\n", old)
     if locals_m:
         count = max(2, int(locals_m.group(1)))
         old = old[:locals_m.start()] + f"    .locals {count}\n" + old[locals_m.end():]
@@ -132,13 +102,13 @@ if ":nova_ui_original" not in old:
         old = old[:regs_m.start()] + f"    .registers {count}\n" + old[regs_m.end():]
         insert_pos = old.find("\n", old.find(".registers")) + 1
     else:
-        raise SystemExit("buffering callback has neither .locals nor .registers")
+        raise SystemExit("onBufferingUpdate has neither .locals nor .registers")
 
     prefix = f"""
     const/4 v0, -0x1
     if-ne p1, v0, :nova_ui_check_end
 
-    iget-object v0, p0, {listener_desc}->{outer_field}:{OUTER_DESC}
+    iget-object v0, p0, {LISTENER_DESC}->{outer_field}:{OUTER_DESC}
     const/4 v1, 0x1
     invoke-virtual {{v0, v1}}, {OUTER_DESC}->novaSetNetworkBuffering(Z)V
     return-void
@@ -147,7 +117,7 @@ if ":nova_ui_original" not in old:
     const/4 v0, -0x2
     if-ne p1, v0, :nova_ui_original
 
-    iget-object v0, p0, {listener_desc}->{outer_field}:{OUTER_DESC}
+    iget-object v0, p0, {LISTENER_DESC}->{outer_field}:{OUTER_DESC}
     const/4 v1, 0x0
     invoke-virtual {{v0, v1}}, {OUTER_DESC}->novaSetNetworkBuffering(Z)V
     return-void
@@ -155,22 +125,22 @@ if ":nova_ui_original" not in old:
     :nova_ui_original
 """
     new = old[:insert_pos] + prefix + old[insert_pos:]
-    ls = ls[:target.start()] + new + ls[target.end():]
+    ls = ls[:m.start()] + new + ls[m.end():]
     listener.write_text(ls)
 
-# Structural verification.
 outer_text = outer.read_text(errors="ignore")
 listener_text = listener.read_text(errors="ignore")
 for needle in ["novaSetNetworkBuffering(Z)V", "mProgressView:Landroid/view/View;"]:
     if needle not in outer_text:
-        raise SystemExit("outer verify failed " + needle)
+        raise SystemExit("outer verify failed: " + needle)
 for needle in [
     "const/4 v0, -0x1",
     "const/4 v0, -0x2",
     "novaSetNetworkBuffering(Z)V",
     ":nova_ui_original",
+    f".implements {FRONTEND_DESC}",
 ]:
     if needle not in listener_text:
-        raise SystemExit("listener verify failed " + needle)
+        raise SystemExit("listener verify failed: " + needle)
 
 print("PATCH_BUFFERING_UI=PASS")
