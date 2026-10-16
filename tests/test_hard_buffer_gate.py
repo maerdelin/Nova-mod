@@ -25,10 +25,10 @@ class HardBufferInvariantTests(unittest.TestCase):
         self.assertIn('CAPACITY:I = 0x4000000', self.s)
         self.assertIn('LOW_WATERMARK:I = 0x1800000', self.s)
         self.assertIn('RESUME_WATERMARK:I = 0x2d00000', self.s)
-        self.assertIn('HARD_RESUME buffer>45MiB', self.s)
+        self.assertIn('WATCHDOG_RESUME buffer>45MiB_or_clean_eof', self.s)
 
     def test_initial_start_floor_after_prepare(self):
-        before = self.method(self.s, '.method public static beforeNativeStart()Z')
+        before = self.method(self.s, '.method public static beforeNativeStart(Landroid/net/Uri;)Z')
         # 24 MiB + one maximum 256 KiB read budget.
         self.assertIn('const v3, 0x1840000', before)
         self.assertIn('->initialHold:Z', before)
@@ -98,7 +98,7 @@ class HardBufferInvariantTests(unittest.TestCase):
         # patch_player_text must inject both cancel and setPlaybackActive(false)
         src = p.patch_player_text.__code__
         self.assertTrue(callable(p.patch_player_text))
-        module_text = open(p.__file__, encoding='utf-8').read()
+        with open(p.__file__, encoding='utf-8') as fh:\n            module_text = fh.read()
         self.assertGreaterEqual(module_text.count('cancelBufferPause()V'), 3)
         self.assertGreaterEqual(module_text.count('setPlaybackActive(Z)V'), 3)
 
