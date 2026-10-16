@@ -47,66 +47,36 @@ if ".method public novaSetNetworkBuffering(Z)V" not in os:
     outer.write_text(os)
 
 ls=listener.read_text()
-m=re.search(r'(?ms)^\.method public onBufferingUpdate\(I\)V\n.*?^\.end method\n',ls)
+m=re.search(r'(?ms)^\\.method public onBufferingUpdate\\(I\\)V\\n.*?^\\.end method\\n',ls)
 if not m: raise SystemExit("onBufferingUpdate method not found")
 old=m.group(0)
-new=r'''.method public onBufferingUpdate(I)V
-    .locals 2
-
+if "nova_ui_original" not in old:
+    lm=re.search(r'(?m)^    \\.locals (\\d+)\\n',old)
+    if not lm: raise SystemExit("onBufferingUpdate has no .locals")
+    count=max(2,int(lm.group(1)))
+    old=old[:lm.start()]+f"    .locals {count}\\n"+old[lm.end():]
+    insert_pos=old.find("\\n", old.find(".locals"))+1
+    prefix=r'''
     const/4 v0, -0x1
-    if-ne p1, v0, :check_end
-
+    if-ne p1, v0, :nova_ui_check_end
     iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;->this$0:Lcom/archos/mediacenter/video/player/PlayerActivity;
     const/4 v1, 0x1
     invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/PlayerActivity;->novaSetNetworkBuffering(Z)V
     return-void
 
-    :check_end
+    :nova_ui_check_end
     const/4 v0, -0x2
-    if-ne p1, v0, :normal
-
+    if-ne p1, v0, :nova_ui_original
     iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;->this$0:Lcom/archos/mediacenter/video/player/PlayerActivity;
     const/4 v1, 0x0
     invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/PlayerActivity;->novaSetNetworkBuffering(Z)V
     return-void
 
-    :normal
-    iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;->this$0:Lcom/archos/mediacenter/video/player/PlayerActivity;
-    invoke-static {v0}, Lcom/archos/mediacenter/video/player/PlayerActivity;->access$000(Lcom/archos/mediacenter/video/player/PlayerActivity;)Lcom/archos/mediacenter/video/player/Player;
-    move-result-object v0
-    invoke-virtual {v0}, Lcom/archos/mediacenter/video/player/Player;->isInPlaybackState()Z
-    move-result v0
-    if-nez v0, :done
-
-    :done
-    return-void
-.end method
+    :nova_ui_original
 '''
-# Preserve normal upstream behavior by using a safer body if access$000 is not present.
-if "access$000(Lcom/archos/mediacenter/video/player/PlayerActivity;)" not in os:
-    new=r'''.method public onBufferingUpdate(I)V
-    .locals 2
-
-    const/4 v0, -0x1
-    if-ne p1, v0, :check_end
-    iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;->this$0:Lcom/archos/mediacenter/video/player/PlayerActivity;
-    const/4 v1, 0x1
-    invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/PlayerActivity;->novaSetNetworkBuffering(Z)V
-    return-void
-
-    :check_end
-    const/4 v0, -0x2
-    if-ne p1, v0, :return_normal
-    iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;->this$0:Lcom/archos/mediacenter/video/player/PlayerActivity;
-    const/4 v1, 0x0
-    invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/PlayerActivity;->novaSetNetworkBuffering(Z)V
-
-    :return_normal
-    return-void
-.end method
-'''
-ls=ls[:m.start()]+new+ls[m.end():]
-listener.write_text(ls)
+    new=old[:insert_pos]+prefix+old[insert_pos:]
+    ls=ls[:m.start()]+new+ls[m.end():]
+    listener.write_text(ls)
 
 # Structural verification.
 for needle in ["novaSetNetworkBuffering(Z)V","mProgressView:Landroid/view/View;"]:
