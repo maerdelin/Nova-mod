@@ -64,6 +64,14 @@ jobs:
           set -euo pipefail
           python3 scripts/granular_build.py             --apk inputs/official.apk             --metadata inputs/upstream.json             --apktool tools/apktool.jar             --work work/granular             --reports reports             --output work/main-baseline-UNSIGNED.apk
 
+      - name: Patch only buffering UI bridge onto main baseline
+        run: |
+          set -euo pipefail
+          java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f work/main-baseline-UNSIGNED.apk -o work/ui
+          python3 rebuffer/patch_buffering_ui_v3.py work/ui
+          java -Xmx4g -jar tools/apktool.jar b work/ui -o work/ui-UNSIGNED.apk
+          grep -R -q 'novaSetNetworkBuffering(Z)V' work/ui/smali* || true
+
       - name: Build AVOS from pinned official source with root cache/rebuffer
         run: |
           set -euo pipefail
@@ -90,14 +98,6 @@ jobs:
           grep -q '(s->flags & STREAM_FILE_NONLOCAL)' "$src/Source/stream_video.c"
           ! grep -R -q 'PipedInputStream\|NetworkReadAheadInputStream\|PREFILL_TIMEOUT' rebuffer
           git diff --check
-
-      - name: Patch only buffering UI bridge onto main baseline
-        run: |
-          set -euo pipefail
-          java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f work/main-baseline-UNSIGNED.apk -o work/ui
-          python3 rebuffer/patch_buffering_ui_v3.py work/ui
-          java -Xmx4g -jar tools/apktool.jar b work/ui -o work/ui-UNSIGNED.apk
-          grep -R -q 'novaSetNetworkBuffering(Z)V' work/ui/smali* || true
 
       - name: Inject rebuilt native AVOS
         run: |
