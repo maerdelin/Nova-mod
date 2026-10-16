@@ -260,6 +260,16 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    # Preserve selected pre-ISO-patch WebDAV smali for architecture review.
+    for rel, outname in (
+        ('com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali', 'diag-HttpSession.smali'),
+        ('com/archos/filecorelibrary/ReadOptions$1.smali', 'diag-ReadOptions1.smali'),
+        ('com/archos/filecorelibrary/OwnedStreams$1.smali', 'diag-OwnedStreams1.smali'),
+    ):
+        hits = list(candidate.glob('smali*/' + rel))
+        if len(hits) == 1:
+            shutil.copyfile(hits[0], args.reports / outname)
+            print('DIAG_SMALI=' + outname + ' source=' + hits[0].as_posix())
     iso_patch.apply(candidate, args.iso_native, args.reports / 'iso-patch.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
