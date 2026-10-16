@@ -84,6 +84,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
         'Lcom/archos/mediacenter/video/player/BlurayIsoProxy;',
         'Lcom/archos/mediacenter/video/player/IsoPlayerFactory;',
         'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
+        'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
     }
     for name in ia.keys() & ib.keys():
         a = ia[name].read_text()
