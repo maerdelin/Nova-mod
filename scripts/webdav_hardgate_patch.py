@@ -29,6 +29,7 @@ WEB_DAV_BUFFER_GATE_SMALI = r'''.class public final Lcom/archos/mediacenter/vide
 .field private static volatile sPlayWanted:Z
 .field private static volatile sPlayer:Lcom/archos/mediacenter/video/player/Player;
 .field private static volatile sSource:Ljava/lang/Object;
+.field private static volatile sUri:Ljava/lang/String;
 
 .method private constructor <init>()V
     .locals 0
@@ -55,6 +56,9 @@ WEB_DAV_BUFFER_GATE_SMALI = r'''.class public final Lcom/archos/mediacenter/vide
 
     :attach_webdav
     sput-object p0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    invoke-virtual {p1}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-result-object v0
+    sput-object v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sUri:Ljava/lang/String;
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sActive:Z
     sput-boolean v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sBlocked:Z
@@ -70,6 +74,7 @@ WEB_DAV_BUFFER_GATE_SMALI = r'''.class public final Lcom/archos/mediacenter/vide
     const/4 v0, 0x0
     sput-object v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
     sput-object v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sSource:Ljava/lang/Object;
+    sput-object v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sUri:Ljava/lang/String;
     const/4 v1, 0x0
     sput-boolean v1, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sActive:Z
     sput-boolean v1, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sBlocked:Z
@@ -105,8 +110,19 @@ WEB_DAV_BUFFER_GATE_SMALI = r'''.class public final Lcom/archos/mediacenter/vide
     return-void
 .end method
 
-.method public static declared-synchronized onStreamStart(Ljava/lang/Object;)V
-    .locals 3
+.method public static declared-synchronized onStreamStart(Ljava/lang/Object;Landroid/net/Uri;)V
+    .locals 4
+    sget-object v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    if-eqz v0, :ignore
+    sget-object v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sUri:Ljava/lang/String;
+    if-eqz v0, :ignore
+    if-eqz p1, :ignore
+    invoke-virtual {p1}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-result-object v1
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+    move-result v2
+    if-eqz v2, :ignore
+
     sput-object p0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sSource:Ljava/lang/Object;
     const/4 v0, 0x1
     sput-boolean v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sActive:Z
@@ -114,8 +130,14 @@ WEB_DAV_BUFFER_GATE_SMALI = r'''.class public final Lcom/archos/mediacenter/vide
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->sPausedByBuffer:Z
     const-string v1, "NovaNetBuf"
-    const-string v2, "HARD_GATE stream_start blocked=1"
+    const-string v2, "HARD_GATE stream_start uri_match=1 blocked=1"
     invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    return-void
+
+    :ignore
+    const-string v2, "NovaNetBuf"
+    const-string v3, "HARD_GATE stream_start ignored uri/player mismatch"
+    invoke-static {v2, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     return-void
 .end method
 
@@ -371,10 +393,20 @@ def patch_read_ahead(text: str) -> str:
     invoke-direct {v1, v0}, Ljava/io/PipedOutputStream;-><init>(Ljava/io/PipedInputStream;)V
     iput-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeOut:Ljava/io/PipedOutputStream;
 
-    invoke-static {p0}, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->onStreamStart(Ljava/lang/Object;)V
-
     new-instance v2, Ljava/lang/Thread;'''
     if old not in text: raise RuntimeError('read-ahead constructor anchor changed')
+    text = text.replace(old, new, 1)
+
+    old = '''    new-instance v2, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    invoke-direct {v2, p1}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;-><init>(Ljava/io/InputStream;)V
+
+    const-string v3, "NovaNetBuf"'''
+    new = '''    new-instance v2, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    invoke-direct {v2, p1}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;-><init>(Ljava/io/InputStream;)V
+    invoke-static {v2, p0}, Lcom/archos/mediacenter/video/player/WebDavBufferGate;->onStreamStart(Ljava/lang/Object;Landroid/net/Uri;)V
+
+    const-string v3, "NovaNetBuf"'''
+    if old not in text: raise RuntimeError('wrap stream-start anchor changed')
     text = text.replace(old, new, 1)
 
     old = '''    const/4 v1, 0x1
@@ -483,7 +515,7 @@ def apply(root: Path, report: Path | None = None):
         'status': 'PASS',
         'hard_decoder_gate': status,
         'invariant': 'if a WebDAV read leaves <24MiB, IMediaPlayer.pause completes before read returns; Player.start is blocked until same stream >45MiB',
-        'stale_stream_guard': 'stream object identity token',
+        'stale_stream_guard': 'stream object identity token + attached WebDAV URI equality',
         'user_pause_guard': 'normal Player.pause cancels auto-resume intent',
     }
     if report:
@@ -535,6 +567,8 @@ def verify_roundtrip(root: Path, report: Path, g):
 
     required_gate = (
         '.method public static declared-synchronized onLow(Ljava/lang/Object;)V',
+        '.method public static declared-synchronized onStreamStart(Ljava/lang/Object;Landroid/net/Uri;)V',
+        'sUri:Ljava/lang/String;',
         '.method public static declared-synchronized onReady(Ljava/lang/Object;)V',
         'sSource:Ljava/lang/Object;',
         'sBlocked:Z',
