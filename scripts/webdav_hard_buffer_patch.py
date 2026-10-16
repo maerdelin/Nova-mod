@@ -1066,7 +1066,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'IMediaPlayer;->start()V',
                 'PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1',
                 'PLAYER_HARD_RESUME nativeStart=1 targetPlaying=1',
-                'NetworkReadAheadInputStream;->beforeNativeStart()Z',
+                'NetworkReadAheadInputStream;->beforeNativeStart(Landroid/net/Uri;)Z',
                 ' bufferStartHeldCurrent()V',
             )
             for token in req:
@@ -1079,7 +1079,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 bad.append(label + ': manual pause does not disarm auto-resume')
             if 'cancelBufferPause()V' not in stop_m or 'setPlaybackActive(Z)V' not in stop_m:
                 bad.append(label + ': stop does not disarm auto-resume')
-            gate = start_m.find('NetworkReadAheadInputStream;->beforeNativeStart()Z')
+            gate = start_m.find('NetworkReadAheadInputStream;->beforeNativeStart(Landroid/net/Uri;)Z')
             focus = start_m.find('Player;->acquireFocus()Z')
             native_start = start_m.find('IMediaPlayer;->start()V')
             if not (0 <= gate < focus < native_start):
