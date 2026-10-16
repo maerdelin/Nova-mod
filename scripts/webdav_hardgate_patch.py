@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 import re
 
-METHOD_RE = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
+METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
 
 GATE = 'Lcom/archos/mediacenter/video/player/WebDavBufferGate;'
 PLAYER = 'Lcom/archos/mediacenter/video/player/Player;'
