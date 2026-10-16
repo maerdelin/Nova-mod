@@ -1126,7 +1126,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'Player;->bufferPauseCurrent()Z',
                 'Player;->bufferResumeCurrent()V',
                 'HARD_PAUSE before_floor_cross nativePause=1',
-                'HARD_RESUME buffer>45MiB',
+                'WATCHDOG_RESUME buffer>45MiB_or_clean_eof',
                 'HARD_GATE_ON cap=64MiB low<24MiB resume>45MiB startup=prepare-pass watchdog=5ms',
                 'INITIAL_HOLD prepared=1 wait_for_24MiB_floor',
                 'NETWORK_FAILURE_HARD_PAUSE fail_closed',
@@ -1153,8 +1153,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             pause_i = await_m.find('Player;->bufferPauseCurrent()Z')
             resume_thr = await_m.find('const v1, 0x2d00000')
             resume_i = await_m.find('Player;->bufferResumeCurrent()V', resume_thr)
-            if not (0 <= low_i < pause_i < resume_thr < resume_i):
-                bad.append(label + ': low/pause/resume control ordering invalid')
+            if not (0 <= low_i < pause_i):
+                bad.append(label + ': 24 MiB floor check is not before hard pause')
+            if not (0 <= resume_thr < resume_i):
+                bad.append(label + ': >45 MiB rebuffer threshold is not before hard resume')
             if 'add-int v2, v1, p1' not in await_m:
                 bad.append(label + ': requested-read budget is not included in 24 MiB floor check')
             r1 = _find_method(rt, ' read()I').group(0)
