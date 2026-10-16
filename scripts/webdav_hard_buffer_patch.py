@@ -1253,15 +1253,23 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             ht = activity_handler[0].read_text()
             hm = _find_method(ht, ' handleMessage(Landroid/os/Message;)V').group(0)
             for token in (
-                ':nova_buffer_hide_progress',
                 'const/4 v2, 0x7',
-                'if-eq v1, v2, :nova_buffer_hide_progress',
                 'const/16 p1, 0x8',
                 'PlayerActivity;->x(Lcom/archos/mediacenter/video/player/PlayerActivity;)Landroid/view/View;',
                 'Landroid/view/View;->setVisibility(I)V',
             ):
                 if token not in hm:
                     bad.append(label + ': buffering UI handler missing ' + token)
+            branch = re.search(r'const/4 v2, 0x7\s+if-eq v1, v2, :([^\s]+)', hm)
+            if not branch:
+                bad.append(label + ': message 7 is not routed by an equality branch')
+            else:
+                target = ':' + branch.group(1)
+                ti = hm.find(target)
+                gone = hm.find('const/16 p1, 0x8', ti)
+                hide = hm.find('Landroid/view/View;->setVisibility(I)V', gone)
+                if ti < 0 or gone < ti or hide < gone:
+                    bad.append(label + ': message 7 branch does not reach progress GONE')
 
         if len(player) == 1:
             pt = player[0].read_text()
