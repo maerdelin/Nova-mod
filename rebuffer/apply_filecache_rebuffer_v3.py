@@ -551,6 +551,12 @@ print("patched FFmpeg byte-addressed file cache")
 # ---------------------------------------------------------------------------
 p = avos / "Source/stream_video.c"
 s = p.read_text()
+video_proto_anchor = "static void \t_do_stuff( STREAM *s );\n"
+video_proto_new = video_proto_anchor + "void nova_rebuffer_enter(STREAM *s, const char *reason);\nvoid nova_rebuffer_arm_startup(STREAM *s);\nvoid nova_rebuffer_hold_outputs(STREAM *s);\nstatic void nova_rebuffer_poll(STREAM *s);\n"
+if "static void nova_rebuffer_poll(STREAM *s);" not in s:
+    if video_proto_anchor not in s:
+        raise SystemExit("video rebuffer prototype anchor missing")
+    s = s.replace(video_proto_anchor, video_proto_new, 1)
 
 parser_anchor = """		if( thread_state_get( &s->parser_tstate ) == THREAD_RUNNING ) {
 			// call parser if needed
