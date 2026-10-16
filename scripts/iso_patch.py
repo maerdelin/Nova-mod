@@ -374,19 +374,13 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 
 .field private static final CAPACITY:I = 0x2000000
 .field private static final CHUNK:I = 0x40000
-.field private static final LOW_WATERMARK:I = 0x200000
-.field private static final START_WATERMARK:I = 0x800000
 .field private static final TAG:Ljava/lang/String; = "NovaNetBuf"
 
-.field private volatile buffering:Z
 .field private volatile closed:Z
-.field private volatile eof:Z
 .field private volatile failure:Ljava/io/IOException;
 .field private final pipeIn:Ljava/io/PipedInputStream;
 .field private final pipeOut:Ljava/io/PipedOutputStream;
 .field private final source:Ljava/io/InputStream;
-.field private stage:I
-.field private target:I
 
 .method private constructor <init>(Ljava/io/InputStream;)V
     .locals 5
@@ -394,12 +388,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     invoke-direct {p0}, Ljava/io/InputStream;-><init>()V
 
     iput-object p1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
-
-    const/4 v0, 0x1
-    iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-
-    const v0, 0x800000
-    iput v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->target:I
 
     new-instance v0, Ljava/io/PipedInputStream;
     const v1, 0x2000000
@@ -447,7 +435,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     invoke-direct {v2, p1}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;-><init>(Ljava/io/InputStream;)V
 
     const-string v3, "NovaNetBuf"
-    const-string v4, "READ_AHEAD_ON webdav cap=32MiB low=2MiB start=8MiB rebuffer=16/24/28MiB"
+    const-string v4, "READ_AHEAD_ON webdav cap=32MiB mode=continuous"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     return-object v2
@@ -470,82 +458,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 
     :return_original
     return-object p1
-.end method
-
-.method private awaitReady()V
-    .locals 5
-
-    :loop
-    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
-    if-nez v0, :return
-
-    iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
-    invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
-    move-result v0
-
-    iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-    if-nez v1, :waiting
-
-    const v1, 0x200000
-    if-gt v0, v1, :return
-
-    const/4 v1, 0x1
-    iput-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-
-    iget v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->stage:I
-    add-int/lit8 v1, v1, 0x1
-    const/4 v2, 0x3
-    if-le v1, v2, :stage_ok
-    move v1, v2
-
-    :stage_ok
-    iput v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->stage:I
-
-    const/4 v2, 0x1
-    if-ne v1, v2, :stage_two
-    const v2, 0x1000000
-    const-string v3, "BUFFER_LOW stage=1 target=16MiB"
-    goto :set_target
-
-    :stage_two
-    const/4 v2, 0x2
-    if-ne v1, v2, :stage_three
-    const v2, 0x1800000
-    const-string v3, "BUFFER_LOW stage=2 target=24MiB"
-    goto :set_target
-
-    :stage_three
-    const v2, 0x1c00000
-    const-string v3, "BUFFER_LOW stage=3 target=28MiB"
-
-    :set_target
-    iput v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->target:I
-    const-string v4, "NovaNetBuf"
-    invoke-static {v4, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-
-    :waiting
-    iget-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
-    if-nez v1, :return
-
-    iget v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->target:I
-    if-lt v0, v1, :wait_more
-
-    const/4 v1, 0x0
-    iput-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-
-    const-string v1, "NovaNetBuf"
-    const-string v2, "BUFFER_READY"
-    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-
-    return-void
-
-    :wait_more
-    const-wide/32 v1, 0x989680
-    invoke-static {v1, v2}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
-    goto :loop
-
-    :return
-    return-void
 .end method
 
 .method public run()V
@@ -581,9 +493,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     iput-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->failure:Ljava/io/IOException;
 
     :finish
-    const/4 v1, 0x1
-    iput-boolean v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
-
     :try_start_1
     iget-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeOut:Ljava/io/PipedOutputStream;
     invoke-virtual {v1}, Ljava/io/PipedOutputStream;->close()V
@@ -604,8 +513,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .method public read()I
     .locals 2
 
-    invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitReady()V
-
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0}, Ljava/io/PipedInputStream;->read()I
     move-result v0
@@ -625,8 +532,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .method public read([BII)I
     .locals 2
 
-    invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitReady()V
-
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0, p1, p2, p3}, Ljava/io/PipedInputStream;->read([BII)I
     move-result v0
@@ -644,14 +549,8 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .end method
 
 .method public available()I
-    .locals 2
+    .locals 1
 
-    iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
-    if-eqz v0, :actual
-    const/4 v0, 0x0
-    return v0
-
-    :actual
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
     move-result v0
@@ -660,8 +559,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 
 .method public skip(J)J
     .locals 2
-
-    invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitReady()V
 
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0, p1, p2}, Ljava/io/PipedInputStream;->skip(J)J
@@ -674,7 +571,6 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 
     const/4 v0, 0x1
     iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->closed:Z
-    iput-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->eof:Z
 
     :try_start_0
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
@@ -1014,7 +910,7 @@ def apply(root: Path, native_dir: Path, report: Path | None = None):
         'iso_player_factory_path': iso_factory_path.relative_to(root).as_posix(),
         'network_readahead_path': read_ahead_path.relative_to(root).as_posix(),
         'native': copied,
-        'strategy': 'Kodi-style WebDAV producer/read-ahead + Dangbei-style staged buffer watermarks; bounded probe ranges bypass read-ahead; persistent ISO playback Range stream; stock Nova Avos native stack preserved',
+        'strategy': 'Kodi-style continuous WebDAV producer/read-ahead with no artificial startup or rebuffer gate; bounded probe ranges bypass read-ahead; persistent ISO playback Range stream; stock Nova Avos native stack preserved',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)

@@ -109,14 +109,14 @@ class IsoPatchTests(unittest.TestCase):
     def test_webdav_readahead_uses_background_pipe(self):
         self.assertIn('PipedInputStream;-><init>(I)V', iso_patch.READ_AHEAD_SMALI)
         self.assertIn('const v1, 0x2000000', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('const v0, 0x40000', iso_patch.READ_AHEAD_SMALI)
         self.assertIn('Nova WebDAV read-ahead', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('READ_AHEAD_ON webdav cap=32MiB low=2MiB start=8MiB rebuffer=16/24/28MiB', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('BUFFER_LOW stage=1 target=16MiB', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('BUFFER_LOW stage=2 target=24MiB', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('BUFFER_LOW stage=3 target=28MiB', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('BUFFER_READY', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('LockSupport;->parkNanos(J)V', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('READ_AHEAD_ON webdav cap=32MiB mode=continuous', iso_patch.READ_AHEAD_SMALI)
         self.assertIn('implements Ljava/lang/Runnable;', iso_patch.READ_AHEAD_SMALI)
+        self.assertNotIn('awaitReady()V', iso_patch.READ_AHEAD_SMALI)
+        self.assertNotIn('BUFFER_LOW', iso_patch.READ_AHEAD_SMALI)
+        self.assertNotIn('BUFFER_READY', iso_patch.READ_AHEAD_SMALI)
+        self.assertNotIn('LockSupport;->parkNanos', iso_patch.READ_AHEAD_SMALI)
 
     def test_iso_playback_uses_persistent_range_stream(self):
         source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
