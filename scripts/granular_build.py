@@ -108,6 +108,8 @@ def main():
         'com/archos/medialib/IMediaPlayer.smali',
         'com/archos/mediacenter/video/player/Player.smali',
         'com/archos/mediacenter/video/player/PlayerController.smali',
+        'com/archos/mediacenter/video/player/PlayerActivity.smali',
+        'com/archos/mediacenter/video/player/Player$Listener.smali',
     )
     full_out = []
     for suffix in wanted:
