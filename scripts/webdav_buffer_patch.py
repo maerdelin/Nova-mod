@@ -15,6 +15,13 @@ import re
 
 METHOD_RE = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
 
+def _one(paths, label):
+    paths = list(paths)
+    if len(paths) != 1:
+        raise RuntimeError(f'{label}: expected one target, got {len(paths)}: {paths}')
+    return paths[0]
+
+
 STREAM_SOURCE_URI_SMALI = r'''.method public getSourceUri()Landroid/net/Uri;
     .locals 1
 
