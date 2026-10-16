@@ -160,7 +160,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
                 bad.append(label + ': WebDAV read-ahead injection invalid')
             if sst.count(' shouldUseNetworkReadAhead()Z') != 1:
                 bad.append(label + ': WebDAV sequential-range policy invalid')
-            for token in ('requestedStart:J', 'requestedEnd:J', 'const-wide/32 v2, 0x800000'):
+            for token in ('requestedStart:J', 'requestedEnd:J', 'length:J', 'const-wide/32 v2, 0x800000', 'const-wide/16 v4, 0x1'):
                 if token not in sst:
                     bad.append(label + ': WebDAV range gate missing ' + token)
         read_ahead = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'))
@@ -271,7 +271,7 @@ def main():
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
         'bluray_iso_support': True,
-        'webdav_readahead': '32 MiB asynchronous sequential-media read-ahead; 2 MiB low-watermark and 8/16/24/28 MiB startup/rebuffer hysteresis; small probe ranges bypassed; persistent ISO playback Range connection',
+        'webdav_readahead': '32 MiB asynchronous long-sequential-media read-ahead; 2 MiB low-watermark and 8/16/24/28 MiB startup/rebuffer hysteresis; bounded probe/seek ranges bypassed; persistent ISO playback Range connection',
         'native_module_replacement': 'none; official Nova native libraries preserved',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
