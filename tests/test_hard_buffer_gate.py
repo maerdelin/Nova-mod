@@ -54,8 +54,18 @@ class HardBufferInvariantTests(unittest.TestCase):
         pm = p.PLAYER_BUFFER_METHODS_SMALI
         self.assertIn('IMediaPlayer;->pause()V', pm)
         self.assertIn('IMediaPlayer;->start()V', pm)
-        self.assertIn('PLAYER_HARD_PAUSE nativePause=1 targetPlaying=1', pm)
+        self.assertIn('PLAYER_HARD_PAUSE nativePause=1 verifiedNotPlaying=1 targetPlaying=1', pm)\n        self.assertIn('PLAYER_HARD_PAUSE_VERIFY_FAIL isPlaying=1 fail_closed', pm)
         self.assertIn('PLAYER_HARD_RESUME nativeStart=1 targetPlaying=1', pm)
+
+    def test_native_pause_confirmation_is_fail_closed(self):
+        pm = self.method(p.PLAYER_BUFFER_METHODS_SMALI, '.method public static bufferPauseCurrent()Z')
+        pause = pm.index('IMediaPlayer;->pause()V')
+        verify = pm.index('IMediaPlayer;->isPlaying()Z', pause)
+        fail = pm.index('PLAYER_HARD_PAUSE_VERIFY_FAIL isPlaying=1 fail_closed', verify)
+        ok = pm.index('PLAYER_HARD_PAUSE nativePause=1 verifiedNotPlaying=1 targetPlaying=1', fail)
+        self.assertLess(pause, verify)
+        self.assertLess(verify, fail)
+        self.assertLess(fail, ok)
 
     def test_independent_watchdog_is_5ms_and_enforces_floor(self):
         monitor = self.method(self.s, '.method public monitorLoop()V')
