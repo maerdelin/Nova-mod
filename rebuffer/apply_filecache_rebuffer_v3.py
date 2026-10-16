@@ -468,14 +468,14 @@ if "NOVA_FILE_CACHE *nova_cache;" not in s:
         raise SystemExit("FF_PRIV anchor missing")
     s = s.replace(ffpriv_anchor, ffpriv_new, 1)
 
-open_anchor = """DBGP serprintf("FFMPEG: opening url [%s]\r\n", s->src.url);
+open_anchor = r"""DBGP serprintf("FFMPEG: opening url [%s]\r\n", s->src.url);
 
 	if( avformat_open_input(&ff_p->fmt, s->src.url, NULL, &ff_p->fmt_opts ) != 0) {
 serprintf("FFMPEG: cannot open file [%s]\r\n", s->src.url);
 		goto ErrorExit4;
 	}
 """
-open_new = """DBGP serprintf("FFMPEG: opening url [%s]\r\n", s->src.url);
+open_new = r"""DBGP serprintf("FFMPEG: opening url [%s]\r\n", s->src.url);
 
 	int nova_cached_input = (ff_p->flags & STREAM_PARSER_FILE_NONLOCAL) &&
 		(!strncmp(s->src.url, "http://localhost:", 17) ||
