@@ -19,7 +19,7 @@ class HardBufferInvariantTests(unittest.TestCase):
         self.assertIn('->buffering:Z', ctor)
         self.assertIn('startup=prepare-pass watchdog=5ms', self.s)
         # The true safety gate is before Player nativeStart, not parser/probe reads.
-        self.assertIn('.method public static beforeNativeStart()Z', self.s)
+        self.assertIn('.method public static beforeNativeStart(Landroid/net/Uri;)Z', self.s)
 
     def test_exact_thresholds_and_capacity(self):
         self.assertIn('CAPACITY:I = 0x4000000', self.s)
@@ -65,10 +65,21 @@ class HardBufferInvariantTests(unittest.TestCase):
         self.assertIn('NETWORK_FAILURE_HARD_PAUSE fail_closed', monitor)
         self.assertIn('->monitorLoop()V', p.WATCHDOG_SMALI)
 
-    def test_playback_phase_requests_cannot_bypass_guard(self):
+    def test_only_long_sequential_media_stream_becomes_guarded_main_stream(self):
         policy = p.STREAM_SESSION_POLICY_SMALI
-        self.assertIn('NetworkReadAheadInputStream;->isPlaybackActive()Z', policy)
-        self.assertIn('if-nez v5, :yes', policy)
+        self.assertIn('supersedableMediaRequest:Z', policy)
+        self.assertIn('requestedStart:J', policy)
+        self.assertIn('requestedEnd:J', policy)
+        self.assertIn('length:J', policy)
+        self.assertIn('const-wide/32 v2, 0x800000', policy)
+        self.assertNotIn('isPlaybackActive()Z', policy)
+
+    def test_webdav_native_start_fails_closed_without_guarded_media_stream(self):
+        before = self.method(self.s, '.method public static beforeNativeStart(Landroid/net/Uri;)Z')
+        self.assertIn('const-string v1, "webdav"', before)
+        self.assertIn('const-string v1, "webdavs"', before)
+        self.assertIn('activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;', before)
+        self.assertIn('INITIAL_HOLD webdav_without_guarded_media_stream fail_closed', before)
 
     def test_old_stream_cannot_bypass_gate(self):
         ctor = self.method(self.s, '.method private constructor <init>')
