@@ -602,26 +602,44 @@ static int nova_rebuffer_can_resume(STREAM *s)
 	return nova_queue_ready_ms(s, pst) >= NOVA_REBUFFER_RESUME_MS;
 }
 
-static void nova_rebuffer_enter(STREAM *s, const char *reason)
+void nova_rebuffer_hold_outputs(STREAM *s)
 {
-	if (!s || s->nova_rebuffer_active || s->paused || !(s->flags & STREAM_FILE_NONLOCAL))
+	if (!s) return;
+	stream_audio_mute(s);
+	if (s->audio_ctx && s->audio_sink_open)
+		audio_interface_pause(s->audio_ctx);
+	sfdec2_android_sync_on_pause(s, 1);
+}
+
+static void nova_rebuffer_mark(STREAM *s, const char *reason)
+{
+	if (!s || s->nova_rebuffer_active || !(s->flags & STREAM_FILE_NONLOCAL))
 		return;
 	s->nova_rebuffer_active = 1;
 	s->nova_rebuffer_started_ms = atime();
 	s->nova_rebuffer_resume_ms = NOVA_REBUFFER_RESUME_MS;
 	s->nova_rebuffer_count++;
-	stream_audio_mute(s);
-	if (s->audio_ctx && s->audio_sink_open)
-		audio_interface_pause(s->audio_ctx);
-	sfdec2_android_sync_on_pause(s, 1);
 	STREAM_PARSER_STATS st;
 	STREAM_PARSER_STATS *pst = s->parser && s->parser->get_stats ? s->parser->get_stats(s, &st) : NULL;
-	serprintf("NOVA_REBUFFER_START reason=%s count=%d aq=%d vq=%d buffered=%dms used=%d/%d\n",
+	serprintf("NOVA_REBUFFER_START reason=%s count=%d aq=%d vq=%d buffered=%dms used=%d/%d\\n",
 		reason ? reason : "unknown", s->nova_rebuffer_count,
 		pst ? pst->audio_chunks : -1, pst ? pst->video_chunks : -1,
 		pst ? nova_queue_ready_ms(s, pst) : -1,
 		pst ? pst->buffer_used : -1, pst ? pst->buffer_size : -1);
 	if (s->message_cb) s->message_cb(s, STREAM_BUFFERING_START);
+}
+
+void nova_rebuffer_arm_startup(STREAM *s)
+{
+	nova_rebuffer_mark(s, "startup");
+}
+
+void nova_rebuffer_enter(STREAM *s, const char *reason)
+{
+	if (!s || s->paused) return;
+	nova_rebuffer_mark(s, reason);
+	if (s->nova_rebuffer_active)
+		nova_rebuffer_hold_outputs(s);
 }
 
 static void nova_rebuffer_poll(STREAM *s)
@@ -727,6 +745,26 @@ print("patched AVOS rebuffer state machine")
 # Audio starvation entry + freeze.
 p = avos / "Source/stream_audio.c"
 s = p.read_text()
+audio_entry_anchor = """static void _audio_decode( STREAM *s )
+{
+	static int out_of_audio;
+	
+"""
+audio_entry_new = """static void _audio_decode( STREAM *s )
+{
+	static int out_of_audio;
+	
+	if (s->nova_rebuffer_active) {
+		stream_yield_RT();
+		return;
+	}
+	
+"""
+if "if (s->nova_rebuffer_active)" not in s[s.find("static void _audio_decode"):s.find("static void _audio_decode")+500]:
+    if audio_entry_anchor not in s:
+        raise SystemExit("audio entry anchor missing")
+    s = s.replace(audio_entry_anchor, audio_entry_new, 1)
+
 audio_loop_anchor = """		// no more audio in this chunk, then look for next
 		while( s->audio_buffer_size <= 0 && !_abort( s ) ){
 			
