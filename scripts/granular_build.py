@@ -147,6 +147,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             st = stream_http.read_text()
             if st.count(' getSourceUri()Landroid/net/Uri;') != 1:
                 bad.append(label + ': StreamOverHttp source URI bridge invalid')
+            copy_methods = [m.group(0) for m in g.METHOD_RE.finditer(st)
+                            if ' copyStream(' in m.group(0).splitlines()[0]]
+            if len(copy_methods) != 1 or 'Ljava/io/OutputStream;->flush()V' in copy_methods[0]:
+                bad.append(label + ': StreamOverHttp still flushes each transfer chunk')
         stream_session = next(iter(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali')), None)
         if stream_session is None:
             bad.append(label + ': StreamOverHttp.HttpSession missing')
@@ -154,6 +158,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             sst = stream_session.read_text()
             if sst.count('NetworkReadAheadInputStream;->wrap') != 1:
                 bad.append(label + ': WebDAV read-ahead injection invalid')
+            if sst.count(' shouldUseNetworkReadAhead()Z') != 1:
+                bad.append(label + ': WebDAV sequential-range policy invalid')
+            for token in ('requestedStart:J', 'requestedEnd:J', 'const-wide/32 v2, 0x800000'):
+                if token not in sst:
+                    bad.append(label + ': WebDAV range gate missing ' + token)
         read_ahead = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'))
         if len(read_ahead) != 1:
             bad.append(label + ': NetworkReadAheadInputStream missing/duplicate')
@@ -162,7 +171,12 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             for token in (
                 'PipedInputStream;-><init>(I)V',
                 'PipedOutputStream;',
-                'READ_AHEAD_ON webdav cap=33554432',
+                'READ_AHEAD_ON webdav cap=32MiB low=2MiB start=8MiB rebuffer=16/24/28MiB',
+                'BUFFER_LOW stage=1 target=16MiB',
+                'BUFFER_LOW stage=2 target=24MiB',
+                'BUFFER_LOW stage=3 target=28MiB',
+                'BUFFER_READY',
+                'LockSupport;->parkNanos(J)V',
                 'Nova WebDAV read-ahead',
             ):
                 if token not in rat:
@@ -257,7 +271,7 @@ def main():
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
         'bluray_iso_support': True,
-        'webdav_readahead': '32 MiB asynchronous primary-media read-ahead plus persistent ISO playback Range connection',
+        'webdav_readahead': '32 MiB asynchronous sequential-media read-ahead; 2 MiB low-watermark and 8/16/24/28 MiB startup/rebuffer hysteresis; small probe ranges bypassed; persistent ISO playback Range connection',
         'native_module_replacement': 'none; official Nova native libraries preserved',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
