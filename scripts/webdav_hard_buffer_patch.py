@@ -76,6 +76,16 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     invoke-direct {v1, v0}, Ljava/io/PipedOutputStream;-><init>(Ljava/io/PipedInputStream;)V
     iput-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeOut:Ljava/io/PipedOutputStream;
 
+    sget-object v2, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
+    if-eqz v2, :no_old_stream
+    if-eq v2, p0, :no_old_stream
+    invoke-virtual {v2}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->close()V
+
+    const-string v3, "NovaNetBuf"
+    const-string v4, "HARD_GATE_REPLACE_OLD close_previous=1"
+    invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    :no_old_stream
     sput-object p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
 
     new-instance v2, Ljava/lang/Thread;
@@ -157,7 +167,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return-object p1
 .end method
 
-.method private awaitReady()V
+.method private awaitBudget(I)V
     .locals 5
 
     :loop
@@ -165,7 +175,7 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     if-nez v0, :return
 
     sget-object v0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->activeStream:Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;
-    if-ne v0, p0, :return
+    if-ne v0, p0, :stale
 
     iget-boolean v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->playbackActive:Z
     if-nez v0, :active
@@ -183,17 +193,23 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     if-nez v1, :waiting
 
     const v1, 0x1800000
-    if-ge v0, v1, :return
+    add-int v2, v1, p1
+    if-ge v0, v2, :return
 
     invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->bufferPauseCurrent()Z
     move-result v2
-    if-eqz v2, :return
 
-    const/4 v2, 0x1
-    iput-boolean v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
+    const/4 v3, 0x1
+    iput-boolean v3, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->buffering:Z
 
     const-string v3, "NovaNetBuf"
-    const-string v4, "HARD_PAUSE buffer<24MiB"
+    if-eqz v2, :pause_confirmed
+    const-string v4, "HARD_WAIT floor_would_cross_24MiB player_already_not_running"
+    invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    goto :waiting
+
+    :pause_confirmed
+    const-string v4, "HARD_PAUSE before_floor_cross nativePause=1"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     :waiting
@@ -214,6 +230,10 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     return-void
 
     :check_ready
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
+    invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
+    move-result v0
+
     const v1, 0x2d00000
     if-le v0, v1, :wait_more
 
@@ -224,12 +244,15 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     const-string v3, "NovaNetBuf"
     const-string v4, "HARD_RESUME buffer>45MiB"
     invoke-static {v3, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-    return-void
+    goto :loop
 
     :wait_more
     const-wide/32 v1, 0x989680
     invoke-static {v1, v2}, Ljava/util/concurrent/locks/LockSupport;->parkNanos(J)V
     goto :loop
+
+    :stale
+    invoke-virtual {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->close()V
 
     :return
     return-void
@@ -290,7 +313,9 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .method public read()I
     .locals 2
 
-    invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitReady()V
+    const/4 v0, 0x1
+    invoke-direct {p0, v0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitBudget(I)V
+
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0}, Ljava/io/PipedInputStream;->read()I
     move-result v0
@@ -306,9 +331,15 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .end method
 
 .method public read([BII)I
-    .locals 2
+    .locals 3
 
-    invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitReady()V
+    const v0, 0x40000
+    if-le p3, v0, :budget_ready
+    move p3, v0
+
+    :budget_ready
+    invoke-direct {p0, p3}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitBudget(I)V
+
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0, p1, p2, p3}, Ljava/io/PipedInputStream;->read([BII)I
     move-result v0
@@ -333,11 +364,19 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .end method
 
 .method public skip(J)J
-    .locals 2
+    .locals 5
 
-    invoke-direct {p0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitReady()V
-    iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
-    invoke-virtual {v0, p1, p2}, Ljava/io/PipedInputStream;->skip(J)J
+    const v0, 0x40000
+    invoke-direct {p0, v0}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->awaitBudget(I)V
+
+    const-wide/32 v0, 0x40000
+    cmp-long v2, p1, v0
+    if-lez v2, :skip_ready
+    move-wide p1, v0
+
+    :skip_ready
+    iget-object v2, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
+    invoke-virtual {v2, p1, p2}, Ljava/io/PipedInputStream;->skip(J)J
     move-result-wide v0
     return-wide v0
 .end method
@@ -805,7 +844,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 'const v1, 0x2d00000',
                 'Player;->bufferPauseCurrent()Z',
                 'Player;->bufferResumeCurrent()V',
-                'HARD_PAUSE buffer<24MiB',
+                'HARD_PAUSE before_floor_cross nativePause=1',
                 'HARD_RESUME buffer>45MiB',
                 'HARD_GATE_ON cap=64MiB low<24MiB resume>45MiB startup=probe-pass',
                 'HARD_GATE_INIT_OOM fail_closed',
@@ -820,13 +859,24 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             available = _find_method(rt, ' available()I').group(0)
             if '->buffering:Z' in available:
                 bad.append(label + ': available() still fakes zero during buffering')
-            await_m = _find_method(rt, ' awaitReady()V').group(0)
+            await_m = _find_method(rt, ' awaitBudget(I)V').group(0)
             low_i = await_m.find('const v1, 0x1800000')
             pause_i = await_m.find('Player;->bufferPauseCurrent()Z')
             resume_thr = await_m.find('const v1, 0x2d00000')
             resume_i = await_m.find('Player;->bufferResumeCurrent()V', resume_thr)
             if not (0 <= low_i < pause_i < resume_thr < resume_i):
                 bad.append(label + ': low/pause/resume control ordering invalid')
+            if 'add-int v2, v1, p1' not in await_m:
+                bad.append(label + ': requested-read budget is not included in 24 MiB floor check')
+            rb = _find_method(rt, ' read([BII)I').group(0)
+            if 'const v0, 0x40000' not in rb or 'move p3, v0' not in rb or 'awaitBudget(I)V' not in rb:
+                bad.append(label + ': bulk read is not capped/budgeted at 256 KiB')
+            sk = _find_method(rt, ' skip(J)J').group(0)
+            if 'const-wide/32 v0, 0x40000' not in sk or 'awaitBudget(I)V' not in sk:
+                bad.append(label + ': skip is not capped/budgeted at 256 KiB')
+            ctor = _find_method(rt, ' constructor <init>(Ljava/io/InputStream;)V').group(0)
+            if 'HARD_GATE_REPLACE_OLD close_previous=1' not in ctor or '->close()V' not in ctor:
+                bad.append(label + ': previous guarded stream is not fail-closed before replacement')
             if not re.search(r'\bif-ge v0, v1, :\S+', await_m):
                 bad.append(label + ': <24 MiB branch invariant missing')
             if not re.search(r'\bif-le v0, v1, :\S+', await_m):
@@ -887,7 +937,7 @@ def apply(root: Path, report: Path | None = None):
         'resume_strictly_above_mib': 45,
         'startup_policy': 'probe/prepare pass-through; guard arms only after native player start',
         'failure_policy': 'fail closed if hard buffer cannot initialize; never fall back to unguarded WebDAV playback',
-        'strategy': 'hard Player/AVOS pause before returning more input below 24 MiB; resume only above 45 MiB; 64 MiB producer cap',
+        'strategy': 'hard Player/AVOS pause before any read/skip could cross the 24 MiB floor; bulk consumption capped at 256 KiB; resume only above 45 MiB; 64 MiB producer cap',
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
