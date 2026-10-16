@@ -64,6 +64,48 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('SEEK_ZERO_SKIP iso=1', iso_patch.ISO_FACTORY_SMALI)
         self.assertIn('Player;->seekTo(I)V', iso_patch.ISO_FACTORY_SMALI)
 
+    def test_stream_over_http_source_uri_patch(self):
+        text = """.class public Lcom/archos/filecorelibrary/StreamOverHttp;
+.super Ljava/lang/Object;
+.field private final mUri:Landroid/net/Uri;
+"""
+        out, status = iso_patch.patch_stream_over_http_text(text)
+        self.assertIn('getSourceUri()Landroid/net/Uri;', out)
+        self.assertIn('->mUri:Landroid/net/Uri;', out)
+        self.assertEqual(status, 'applied')
+
+    def test_stream_http_session_wraps_primary_webdav_input(self):
+        text = """.class public Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;
+.super Ljava/lang/Object;
+.field final synthetic this$0:Lcom/archos/filecorelibrary/StreamOverHttp;
+.field private supersedableMediaRequest:Z
+.method private publishInput(Ljava/io/InputStream;)V
+    .locals 1
+    return-void
+.end method
+"""
+        out, status = iso_patch.patch_stream_http_session_text(text)
+        self.assertIn('.locals 3', out)
+        self.assertIn('NetworkReadAheadInputStream;->wrap', out)
+        self.assertIn('supersedableMediaRequest:Z', out)
+        self.assertIn('getSourceUri()Landroid/net/Uri;', out)
+        self.assertEqual(status, 'applied')
+
+    def test_webdav_readahead_uses_background_pipe(self):
+        self.assertIn('PipedInputStream;-><init>(I)V', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('const v1, 0x2000000', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('Nova WebDAV read-ahead', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('READ_AHEAD_ON webdav cap=33554432', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('implements Ljava/lang/Runnable;', iso_patch.READ_AHEAD_SMALI)
+
+    def test_iso_playback_uses_persistent_range_stream(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn('fetch_range_playback', source)
+        self.assertIn('STREAM_OPEN_READY', source)
+        self.assertIn('Range: bytes=%" PRId64 "-\\r\\nConnection: close', source)
+        self.assertIn('s->input.playback_mode = 1;', source)
+        self.assertIn('close_playback_stream(&s->input);', source)
+
     def test_iso_player_factory_forces_avos_then_restores_any_decoder(self):
         self.assertIn('const/4 v0, 0x1', iso_patch.ISO_FACTORY_SMALI)
         self.assertIn('AvosMediaPlayer;', iso_patch.ISO_FACTORY_SMALI)

@@ -83,6 +83,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
         'Lcom/archos/mediacenter/video/player/Player;',
         'Lcom/archos/mediacenter/video/player/BlurayIsoProxy;',
         'Lcom/archos/mediacenter/video/player/IsoPlayerFactory;',
+        'Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;',
     }
     for name in ia.keys() & ib.keys():
         a = ia[name].read_text()
@@ -138,6 +139,33 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path):
             )
             if pst.count(wrapper) != 1:
                 bad.append(label + ': PlayerService ISO initial seek wrapper invalid')
+        stream_http = next(iter(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp.smali')), None)
+        if stream_http is None:
+            bad.append(label + ': StreamOverHttp missing')
+        else:
+            st = stream_http.read_text()
+            if st.count(' getSourceUri()Landroid/net/Uri;') != 1:
+                bad.append(label + ': StreamOverHttp source URI bridge invalid')
+        stream_session = next(iter(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali')), None)
+        if stream_session is None:
+            bad.append(label + ': StreamOverHttp.HttpSession missing')
+        else:
+            sst = stream_session.read_text()
+            if sst.count('NetworkReadAheadInputStream;->wrap') != 1:
+                bad.append(label + ': WebDAV read-ahead injection invalid')
+        read_ahead = list(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'))
+        if len(read_ahead) != 1:
+            bad.append(label + ': NetworkReadAheadInputStream missing/duplicate')
+        else:
+            rat = read_ahead[0].read_text()
+            for token in (
+                'PipedInputStream;-><init>(I)V',
+                'PipedOutputStream;',
+                'READ_AHEAD_ON webdav cap=33554432',
+                'Nova WebDAV read-ahead',
+            ):
+                if token not in rat:
+                    bad.append(label + ': NetworkReadAheadInputStream missing ' + token)
         proxies = list(root.glob('smali*/com/archos/mediacenter/video/player/BlurayIsoProxy.smali'))
         if len(proxies) != 1:
             bad.append(label + ': BlurayIsoProxy missing/duplicate')
@@ -228,6 +256,7 @@ def main():
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
         'bluray_iso_support': True,
+        'webdav_readahead': '32 MiB asynchronous primary-media read-ahead plus persistent ISO playback Range connection',
         'native_module_replacement': 'none; official Nova native libraries preserved',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')

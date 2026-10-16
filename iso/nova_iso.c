@@ -43,6 +43,12 @@ typedef struct {
     uint64_t cache_clock;
     uint64_t range_requests;
     uint64_t fetched_bytes;
+    int playback_mode;
+    int stream_fd;
+    int64_t stream_pos;
+    uint8_t stream_prefix[HEADER_MAX];
+    size_t stream_prefix_off;
+    size_t stream_prefix_len;
     pthread_mutex_t lock;
 } iso_input;
 
@@ -195,6 +201,138 @@ static ssize_t fetch_range(iso_input *in, int64_t start, size_t want, uint8_t *o
     return (ssize_t)copied;
 }
 
+static void close_playback_stream(iso_input *in) {
+    if (in->stream_fd >= 0) {
+        shutdown(in->stream_fd, SHUT_RDWR);
+        close(in->stream_fd);
+    }
+    in->stream_fd = -1;
+    in->stream_pos = -1;
+    in->stream_prefix_off = 0;
+    in->stream_prefix_len = 0;
+}
+
+static int open_playback_stream(iso_input *in, int64_t start) {
+    uint64_t req_id = ++in->range_requests;
+    int64_t t0 = mono_ms();
+    close_playback_stream(in);
+
+    LOGI("STREAM_OPEN_BEGIN id=%" PRIu64 " start=%" PRId64, req_id, start);
+    int fd = connect_loopback(in->port);
+    if (fd < 0) {
+        LOGE("STREAM_OPEN_CONNECT_FAIL id=%" PRIu64 " start=%" PRId64 " errno=%d",
+             req_id, start, errno);
+        return -1;
+    }
+
+    int rcvbuf = 4 * 1024 * 1024;
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
+    char req[8192];
+    int q = snprintf(req, sizeof(req),
+        "GET %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+        "Range: bytes=%" PRId64 "-\r\nConnection: close\r\n\r\n",
+        in->path, in->port, start);
+    if (q <= 0 || (size_t)q >= sizeof(req) || send_all(fd, req, (size_t)q) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    uint8_t header[HEADER_MAX];
+    size_t used = 0;
+    ssize_t body_at = -1;
+    while (used < sizeof(header)) {
+        ssize_t n = recv(fd, header + used, sizeof(header) - used, 0);
+        if (n <= 0) {
+            close(fd);
+            return -1;
+        }
+        size_t old = used;
+        used += (size_t)n;
+        size_t begin = old > 3 ? old - 3 : 0;
+        for (size_t i = begin; i + 3 < used; i++) {
+            if (header[i] == '\r' && header[i+1] == '\n' &&
+                header[i+2] == '\r' && header[i+3] == '\n') {
+                body_at = (ssize_t)(i + 4);
+                break;
+            }
+        }
+        if (body_at >= 0) break;
+    }
+    if (body_at < 0) {
+        LOGE("STREAM_OPEN_HEADER_FAIL id=%" PRIu64 " start=%" PRId64, req_id, start);
+        close(fd);
+        return -1;
+    }
+
+    header[(size_t)body_at > 0 ? (size_t)body_at - 1 : 0] = 0;
+    int status = 0;
+    if (sscanf((char *)header, "HTTP/%*s %d", &status) != 1 ||
+        (status != 206 && !(status == 200 && start == 0))) {
+        LOGE("STREAM_OPEN_STATUS_FAIL id=%" PRIu64 " start=%" PRId64 " status=%d",
+             req_id, start, status);
+        close(fd);
+        return -1;
+    }
+
+    size_t prefix = used - (size_t)body_at;
+    if (prefix > sizeof(in->stream_prefix)) prefix = sizeof(in->stream_prefix);
+    if (prefix) memcpy(in->stream_prefix, header + body_at, prefix);
+    in->stream_prefix_off = 0;
+    in->stream_prefix_len = prefix;
+    in->stream_fd = fd;
+    in->stream_pos = start;
+
+    LOGI("STREAM_OPEN_READY id=%" PRIu64 " start=%" PRId64
+         " status=%d headerMs=%" PRId64 " prefix=%zu",
+         req_id, start, status, mono_ms() - t0, prefix);
+    return 0;
+}
+
+static ssize_t fetch_range_playback(iso_input *in, int64_t start, size_t want, uint8_t *out) {
+    int64_t t0 = mono_ms();
+    int reused = in->stream_fd >= 0 && in->stream_pos == start;
+    if (!reused) {
+        if (open_playback_stream(in, start) < 0) return -1;
+    }
+
+    size_t copied = 0;
+    if (in->stream_prefix_off < in->stream_prefix_len) {
+        size_t avail = in->stream_prefix_len - in->stream_prefix_off;
+        size_t take = avail < want ? avail : want;
+        memcpy(out, in->stream_prefix + in->stream_prefix_off, take);
+        in->stream_prefix_off += take;
+        copied += take;
+        in->stream_pos += (int64_t)take;
+        if (in->stream_prefix_off == in->stream_prefix_len) {
+            in->stream_prefix_off = 0;
+            in->stream_prefix_len = 0;
+        }
+    }
+
+    while (copied < want) {
+        ssize_t n = recv(in->stream_fd, out + copied, want - copied, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            LOGE("STREAM_READ_FAIL start=%" PRId64 " copied=%zu errno=%d", start, copied, errno);
+            close_playback_stream(in);
+            return copied ? (ssize_t)copied : -1;
+        }
+        if (n == 0) {
+            close_playback_stream(in);
+            break;
+        }
+        copied += (size_t)n;
+        in->stream_pos += n;
+    }
+
+    in->fetched_bytes += copied;
+    LOGI("STREAM_READ start=%" PRId64 " got=%zu ms=%" PRId64
+         " reused=%d next=%" PRId64 " totalFetched=%" PRIu64,
+         start, copied, mono_ms() - t0, reused, in->stream_pos, in->fetched_bytes);
+    return (ssize_t)copied;
+}
+
 static iso_cache_slot *cache_find(iso_input *in, int64_t byte_pos) {
     for (int i = 0; i < CACHE_SLOTS; i++) {
         iso_cache_slot *slot = &in->cache[i];
@@ -231,7 +369,9 @@ static int cache_fill(iso_input *in, int64_t byte_pos, iso_cache_slot **out) {
          " evictStart=%" PRId64 " evictLen=%zu",
          slot_index, byte_pos, aligned, slot->start, slot->len);
 
-    ssize_t got = fetch_range(in, aligned, CACHE_BYTES, slot->data);
+    ssize_t got = in->playback_mode
+        ? fetch_range_playback(in, aligned, CACHE_BYTES, slot->data)
+        : fetch_range(in, aligned, CACHE_BYTES, slot->data);
     if (got < UDF_BLOCK || byte_pos < aligned ||
         byte_pos + UDF_BLOCK > aligned + got) {
         LOGE("CACHE_FILL_FAIL slot=%d byte=%" PRId64 " aligned=%" PRId64 " got=%zd",
@@ -555,6 +695,7 @@ static void session_destroy(iso_session *s) {
         s->listen_fd = -1;
     }
     if (s->thread_started) pthread_join(s->thread, NULL);
+    close_playback_stream(&s->input);
     if (s->bd) bd_close(s->bd);
     for (int i = 0; i < CACHE_SLOTS; i++) free(s->input.cache[i].data);
     pthread_mutex_destroy(&s->input.lock);
@@ -571,6 +712,8 @@ static iso_session *session_create(const char *url) {
     s->listen_fd = -1;
     s->client_fd = -1;
     s->client_thread_started = 0;
+    s->input.stream_fd = -1;
+    s->input.stream_pos = -1;
     pthread_mutex_init(&s->input.lock, NULL);
     pthread_mutex_init(&s->client_lock, NULL);
     pthread_mutex_init(&s->io_lock, NULL);
@@ -641,6 +784,9 @@ static iso_session *session_create(const char *url) {
         session_destroy(s);
         return NULL;
     }
+
+    s->input.playback_mode = 1;
+    LOGI("CACHE_MODE playback persistent_range=1 window=%d slots=%d", CACHE_BYTES, CACHE_SLOTS);
 
     s->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (s->listen_fd < 0) { session_destroy(s); return NULL; }
