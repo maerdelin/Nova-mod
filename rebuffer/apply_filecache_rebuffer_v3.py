@@ -66,6 +66,11 @@ replace_once(
 # ---------------------------------------------------------------------------
 p = avos / "Source/stream_parser_ffmpeg.c"
 s = p.read_text()
+if '#include "atime.h"' not in s:
+    at_anchor = '#include "util.h"\\n'
+    if at_anchor not in s:
+        raise SystemExit("ffmpeg atime include anchor missing")
+    s = s.replace(at_anchor, at_anchor + '#include "atime.h"\\n', 1)
 
 inc_anchor = '#include <signal.h>\n'
 inc_new = '#include <signal.h>\n#include <pthread.h>\n#include <unistd.h>\n'
