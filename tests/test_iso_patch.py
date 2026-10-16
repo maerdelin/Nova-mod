@@ -68,10 +68,16 @@ class IsoPatchTests(unittest.TestCase):
         text = """.class public Lcom/archos/filecorelibrary/StreamOverHttp;
 .super Ljava/lang/Object;
 .field private final mUri:Landroid/net/Uri;
+.method private copyStream(Ljava/io/InputStream;Ljava/io/OutputStream;[BJ)V
+    .locals 1
+    invoke-virtual {p2}, Ljava/io/OutputStream;->flush()V
+    return-void
+.end method
 """
         out, status = iso_patch.patch_stream_over_http_text(text)
         self.assertIn('getSourceUri()Landroid/net/Uri;', out)
         self.assertIn('->mUri:Landroid/net/Uri;', out)
+        self.assertNotIn('Ljava/io/OutputStream;->flush()V', out)
         self.assertEqual(status, 'applied')
 
     def test_stream_http_session_wraps_primary_webdav_input(self):
@@ -79,6 +85,9 @@ class IsoPatchTests(unittest.TestCase):
 .super Ljava/lang/Object;
 .field final synthetic this$0:Lcom/archos/filecorelibrary/StreamOverHttp;
 .field private supersedableMediaRequest:Z
+.field private partialResponse:Z
+.field private requestedStart:J
+.field private requestedEnd:J
 .method private publishInput(Ljava/io/InputStream;)V
     .locals 1
     return-void
@@ -87,7 +96,10 @@ class IsoPatchTests(unittest.TestCase):
         out, status = iso_patch.patch_stream_http_session_text(text)
         self.assertIn('.locals 3', out)
         self.assertIn('NetworkReadAheadInputStream;->wrap', out)
-        self.assertIn('supersedableMediaRequest:Z', out)
+        self.assertIn('shouldUseNetworkReadAhead()Z', out)
+        self.assertIn('const-wide/32 v2, 0x800000', out)
+        self.assertIn('requestedStart:J', out)
+        self.assertIn('requestedEnd:J', out)
         self.assertIn('getSourceUri()Landroid/net/Uri;', out)
         self.assertEqual(status, 'applied')
 
@@ -95,7 +107,12 @@ class IsoPatchTests(unittest.TestCase):
         self.assertIn('PipedInputStream;-><init>(I)V', iso_patch.READ_AHEAD_SMALI)
         self.assertIn('const v1, 0x2000000', iso_patch.READ_AHEAD_SMALI)
         self.assertIn('Nova WebDAV read-ahead', iso_patch.READ_AHEAD_SMALI)
-        self.assertIn('READ_AHEAD_ON webdav cap=33554432', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('READ_AHEAD_ON webdav cap=32MiB low=2MiB start=8MiB rebuffer=16/24/28MiB', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('BUFFER_LOW stage=1 target=16MiB', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('BUFFER_LOW stage=2 target=24MiB', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('BUFFER_LOW stage=3 target=28MiB', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('BUFFER_READY', iso_patch.READ_AHEAD_SMALI)
+        self.assertIn('LockSupport;->parkNanos(J)V', iso_patch.READ_AHEAD_SMALI)
         self.assertIn('implements Ljava/lang/Runnable;', iso_patch.READ_AHEAD_SMALI)
 
     def test_iso_playback_uses_persistent_range_stream(self):
