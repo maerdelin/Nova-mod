@@ -10,7 +10,8 @@ for p in smalis:
     s=p.read_text(errors="ignore")
     if ".class public Lcom/archos/mediacenter/video/player/PlayerActivity;" in s:
         outer=p
-    if "Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;" in s and ".method public onBufferingUpdate(I)V" in s:
+    if ("Lcom/archos/mediacenter/video/player/PlayerActivity$PlayerListener;" in s
+            and re.search(r"(?m)^\\.method [^\\n]*onBufferingUpdate\\(I\\)V$", s)):
         listener=p
 if not outer or not listener:
     raise SystemExit(f"PlayerActivity smali not found outer={outer} listener={listener}")
