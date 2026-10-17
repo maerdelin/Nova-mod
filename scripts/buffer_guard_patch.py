@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, re
 from pathlib import Path
 
-METHOD_RE = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
+METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
 
 def one(paths, label):
     xs=list(paths)
@@ -18,7 +18,7 @@ def method(text, sig):
     return xs[0]
 
 def bump_locals(block, extra=1):
-    m=re.search(r'(?m)^    \\.locals (\\d+)\\s*$', block)
+    m=re.search(r'(?m)^    \.locals (\d+)\s*$', block)
     if not m:
         raise RuntimeError("method has no .locals")
     n=int(m.group(1))
@@ -119,7 +119,8 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     :thread
     sget-boolean v1, Lcom/archos/filecorelibrary/NovaBufferGuard;->threadStarted:Z
     if-nez v1, :log
-    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->threadStarted:Z
+    const/4 v4, 0x1
+    sput-boolean v4, Lcom/archos/filecorelibrary/NovaBufferGuard;->threadStarted:Z
     new-instance v1, Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-direct {v1}, Lcom/archos/filecorelibrary/NovaBufferGuard;-><init>()V
     new-instance v2, Ljava/lang/Thread;
@@ -157,7 +158,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sub-long v2, v0, v2
     const-wide/16 v4, 0x3e8
     cmp-long v2, v2, v4
-    if-ltz v2, :done
+    if-gez v2, :done
     sput-wide v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->lastLogMs:J
 
     new-instance v0, Ljava/lang/StringBuilder;
@@ -239,7 +240,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sub-long/2addr v9, v13
     const-wide/16 v13, 0x3e8
     cmp-long v15, v9, v13
-    if-gez v15, :arm_check
+    if-ltz v15, :arm_check
     goto :loop
 
     :arm_check
@@ -251,7 +252,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     if-ge v9, v10, :arm_now
     const-wide/16 v9, 0x1388
     cmp-long v13, v11, v9
-    if-gez v13, :arm_now
+    if-ltz v13, :arm_now
     goto :loop
 
     :arm_now
@@ -267,7 +268,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 
     const-wide/16 v9, 0x1388
     cmp-long v13, v11, v9
-    if-gtz v13, :loop
+    if-gez v13, :loop
 
     invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->novaResumeFromBuffer()V
     const/4 v9, 0x0
@@ -437,6 +438,7 @@ SESSION_EXTRA = r'''.method public novaDelivered(I)V
     iget-wide v1, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedStart:J
     iget-wide v3, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->requestedEnd:J
     iget-wide v5, p0, Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;->length:J
+    move v7, p1
     invoke-static/range {v0 .. v7}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onBytes(IJJJI)V
     :done
     return-void
