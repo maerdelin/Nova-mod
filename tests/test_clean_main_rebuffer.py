@@ -47,8 +47,8 @@ class CleanMainRebufferTests(unittest.TestCase):
         self.assertNotIn("onPlaybackStarted()V", start[:native])
 
     def test_manual_pause_and_stop_disarm(self):
-        self.assertIn("onPlaybackStopped()V", r.patch_player)
         self.assertTrue(callable(r.patch_player))
+        self.assertIn("novaCancelRebufferPause()V", r.PLAYER_METHODS)
 
     def test_only_long_playback_webdav_is_eligible(self):
         self.assertIn("supersedableMediaRequest:Z", r.SESSION_METHOD)
