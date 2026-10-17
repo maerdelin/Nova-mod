@@ -106,7 +106,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sub-long v4, v0, v2
     const-wide/32 v2, 0x2d00000
     cmp-long v6, v4, v2
-    if-ltz v6, :done
+    if-gez v6, :done
 
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
@@ -334,10 +334,13 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
     iget-wide v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->remaining:J
     const-wide/16 v4, 0x0
     cmp-long v6, v2, v4
-    if-lez v6, :loop
+    if-lez v6, :known_remaining
+    goto :loop
+
+    :known_remaining
     int-to-long v4, v7
     sub-long/2addr v2, v4
-    sput-wide v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->remaining:J
+    iput-wide v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->remaining:J
     goto :loop
 
     :eof
