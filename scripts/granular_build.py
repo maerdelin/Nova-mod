@@ -13,8 +13,6 @@ import zipfile
 import granular as g
 import check_upstream as upstream
 import buffer_guard_patch
-import fix_generated_guard
-import prefetch_guard_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -57,17 +55,56 @@ def bootstrap(jar: Path, work: Path, selected: Path, reports: Path):
     g.verify(work / 'reference-mod', work / 'reference-test', reports / 'baseline-equivalence.json')
     g.write_json(reports / 'bootstrap.json', {'status': 'PASS', 'generated_spec': True, 'stats': patch['stats']})
 
+def overlay_native(candidate: Path, native_root: Path, reports: Path):
+    expected = {}
+    for abi_dir in sorted((candidate / 'lib').iterdir()):
+        if not abi_dir.is_dir():
+            continue
+        dst = abi_dir / 'libavos.so'
+        if not dst.is_file():
+            continue
+        src = native_root / abi_dir.name / 'libavos.so'
+        if not src.is_file():
+            raise g.Conflict(f'Missing rebuilt libavos.so for ABI {abi_dir.name}: {src}')
+        before = upstream.sha256_file(dst)
+        shutil.copyfile(src, dst)
+        after = upstream.sha256_file(dst)
+        if before == after:
+            raise g.Conflict(f'Rebuilt libavos.so for {abi_dir.name} is byte-identical to official payload')
+        expected[f'lib/{abi_dir.name}/libavos.so'] = {
+            'official_sha256': before,
+            'rebuilt_sha256': after,
+        }
+    if not expected:
+        raise g.Conflict('No lib/<abi>/libavos.so entries found in decoded APK')
+    g.write_json(reports / 'native-overlay.json', {
+        'status': 'PASS',
+        'changed_entries': expected,
+        'only_library_replaced': 'libavos.so',
+    })
+
+
 def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
     with zipfile.ZipFile(selected) as a, zipfile.ZipFile(rebuilt) as b:
         if b.testzip() is not None or len(b.namelist()) != len(set(b.namelist())):
             raise g.Conflict('Rebuilt APK has invalid/duplicate entries')
         keep = [n for n in a.namelist() if n.startswith(('lib/', 'assets/')) and not n.endswith('/')]
-        changed = [n for n in keep if n not in b.namelist() or a.read(n) != b.read(n)]
-        if changed:
-            raise g.Conflict('Upstream native/asset payload was not preserved: ' + str(changed[:10]))
+        allowed = {n for n in keep if n.startswith('lib/') and n.endswith('/libavos.so')}
+        changed = {n for n in keep if n not in b.namelist() or a.read(n) != b.read(n)}
+        unexpected = sorted(changed - allowed)
+        missing = sorted(allowed - changed)
+        if unexpected:
+            raise g.Conflict('Unexpected native/asset payload changes: ' + str(unexpected[:10]))
+        if missing:
+            raise g.Conflict('Expected rebuilt libavos.so did not change: ' + str(missing))
         if b.getinfo('resources.arsc').compress_type != zipfile.ZIP_STORED:
             raise g.Conflict('resources.arsc must be stored uncompressed')
-    g.write_json(reports / 'upstream-payload.json', {'status': 'PASS', 'native_and_asset_entries_preserved': len(keep)})
+    g.write_json(reports / 'upstream-payload.json', {
+        'status': 'PASS',
+        'preserved_native_and_asset_entries': len(keep) - len(allowed),
+        'replaced_libavos_entries': sorted(allowed),
+        'unexpected_changes': [],
+    })
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -77,6 +114,8 @@ def main():
     p.add_argument('--work', type=Path, required=True)
     p.add_argument('--reports', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--native-lib-root', type=Path, required=True,
+                   help='Directory containing <abi>/libavos.so rebuilt from patched aos-avos')
     args = p.parse_args()
     selected = upstream.load_selection(args.metadata, args.apk)
     args.work.mkdir(parents=True, exist_ok=True)
@@ -91,8 +130,7 @@ def main():
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
     buffer_guard_patch.apply(candidate, args.reports / 'buffer-guard.json')
-    fix_generated_guard.apply(candidate)
-    prefetch_guard_patch.apply(candidate, args.reports / 'prefetch-guard.json')
+    overlay_native(candidate, args.native_lib_root, args.reports)
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +142,9 @@ def main():
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
-        'whole_module_replacements': 0, 'spec_bootstrapped': generated,
+        'whole_module_replacements': 0, 'native_replacements': ['libavos.so'],
+        'native_rebuffer_control': '24MiB low / 45MiB resume using AVOS parser queue bytes',
+        'spec_bootstrapped': generated,
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 
