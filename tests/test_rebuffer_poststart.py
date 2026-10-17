@@ -13,16 +13,17 @@ class CleanMainPostStartRebufferTests(unittest.TestCase):
         self.assertIn('.method private publishInput', m.group(0))
 
     def test_old_hard_gate_code_is_absent(self):
-        src = Path('scripts/rebuffer_poststart.py').read_text(encoding='utf-8')
-        for token in ('initialHold', 'beforeNativeStart', 'awaitBudget', 'bufferStartHeldCurrent'):
-            self.assertNotIn(token, src)
+        generated = r.READ_AHEAD_SMALI + r.PLAYER_HELPERS_SMALI
+        for token in ('initialHold', 'beforeNativeStart', 'awaitBudget', 'bufferStartHeldCurrent', 'INITIAL_HOLD'):
+            self.assertNotIn(token, generated)
 
     def test_startup_has_no_watermark_gate(self):
-        src = r.patch_player.__doc__ or ''
-        # Functional invariant is checked from patch code itself below.
-        code = Path('scripts/rebuffer_poststart.py').read_text(encoding='utf-8')
-        self.assertIn('Main startup remains byte-for-byte unchanged until its successful tail.', code)
-        self.assertNotIn('INITIAL_HOLD', code)
+        started = r._method(r.READ_AHEAD_SMALI, ' onPlaybackStarted()V').group(0)
+        self.assertNotIn('0x1800000', started)
+        self.assertNotIn('0x2d00000', started)
+        self.assertNotIn('ensureBudget', started)
+        self.assertNotIn('initialHold', started)
+        self.assertIn('PLAYBACK_STARTED main-start-complete protection-waiting-for-24MiB', started)
 
     def test_threshold_constants(self):
         s = r.READ_AHEAD_SMALI
