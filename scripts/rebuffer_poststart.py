@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-METHOD_RE = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
+METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
 
 def _one(paths, label):
     paths = list(paths)
