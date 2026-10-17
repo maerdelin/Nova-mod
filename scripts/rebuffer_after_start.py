@@ -509,3 +509,92 @@ def apply(root:Path, report:Path|None=None):
     result={'status':'PASS','player':ps,'session':ss,'stream':sts,'startup':'main path unchanged; protection activates only after IMediaPlayer.start','low_mib':24,'resume_mib':45,'capacity_mib':64}
     if report: report.write_text(json.dumps(result,indent=2)+'\n')
     return result
+
+
+def verify_roundtrip(expected:Path, actual:Path, report:Path, g):
+    sa=g.resource_map(expected); sb=g.resource_map(actual)
+    ia=g.class_index(expected); ib=g.class_index(actual)
+    bad=[]
+    if ia.keys()!=ib.keys():
+        bad.append("class set differs")
+
+    intentional={
+        "Lcom/archos/mediacenter/video/player/Player;",
+        "Lcom/archos/filecorelibrary/StreamOverHttp;",
+        "Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;",
+        "Lcom/archos/filecorelibrary/NovaRebufferInputStream;",
+        "Lcom/archos/filecorelibrary/NovaRebufferInputStream$Watchdog;",
+    }
+
+    for name in ia.keys() & ib.keys():
+        if name in intentional:
+            continue
+        a=ia[name].read_text().replace("const-string/jumbo","const-string")
+        b=ib[name].read_text().replace("const-string/jumbo","const-string")
+        if a!=b and g.logical_class(a,sa)!=g.logical_class(b,sb):
+            bad.append(name)
+
+    aa={p.relative_to(expected).as_posix() for p in expected.rglob("*.xml")
+        if p.relative_to(expected).as_posix().startswith(("res/","AndroidManifest.xml"))}
+    bb={p.relative_to(actual).as_posix() for p in actual.rglob("*.xml")
+        if p.relative_to(actual).as_posix().startswith(("res/","AndroidManifest.xml"))}
+    if aa!=bb:
+        bad.append("XML resource set differs")
+    for path in aa & bb:
+        if (expected/path).read_bytes()!=(actual/path).read_bytes():
+            if g.logical_xml(g.ET.parse(expected/path).getroot())!=g.logical_xml(g.ET.parse(actual/path).getroot()):
+                bad.append(path)
+
+    for root,label in ((expected,"expected"),(actual,"roundtrip")):
+        p=_one(root.glob("smali*/com/archos/mediacenter/video/player/Player.smali"),label+" Player")
+        pt=p.read_text()
+        start=_find_method(pt," start(I)V").group(0)
+        native=start.find("IMediaPlayer;->start()V")
+        active=start.find("NovaRebufferInputStream;->onPlaybackStarted()V")
+        if native<0 or active<0 or active<native:
+            bad.append(label+": protection activation is not after native start")
+        if any(x in pt for x in ("initialHold","beforeNativeStart","awaitBudget","bufferStartHeldCurrent")):
+            bad.append(label+": legacy startup gate remains")
+        for token in ("novaPauseForBuffer()Z","novaResumeFromBuffer()V","novaCancelRebufferPause()V","sNovaRebufferPaused:Z"):
+            if token not in pt:
+                bad.append(label+": Player missing "+token)
+
+        hs=_one(root.glob("smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali"),label+" HttpSession")
+        ht=hs.read_text()
+        for token in ("shouldUseNovaRebuffer()Z","supersedableMediaRequest:Z","ReadMode;->PLAYBACK","0x800000","webdav","webdavs"):
+            if token not in ht:
+                bad.append(label+": HttpSession missing "+token)
+
+        st=_one(root.glob("smali*/com/archos/filecorelibrary/StreamOverHttp.smali"),label+" StreamOverHttp").read_text()
+        if "NovaRebufferInputStream;->wrap(Ljava/io/InputStream;)Ljava/io/InputStream;" not in st:
+            bad.append(label+": StreamOverHttp wrapper call missing")
+
+        rt=_one(root.glob("smali*/com/archos/filecorelibrary/NovaRebufferInputStream.smali"),label+" rebuffer").read_text()
+        for token in (
+            "CAPACITY:I = 0x4000000","LOW:I = 0x1800000","RESUME:I = 0x2d00000",
+            "PREFETCH_ON cap=64MiB startup=main-pass","PROTECTION_ACTIVE after_native_start",
+            "PAUSE buffer<24MiB","RESUME buffer>45MiB_or_eof",
+            "Player;->novaPauseForBuffer()Z","Player;->novaResumeFromBuffer()V",
+            "const-class v0, Lcom/archos/mediacenter/video/player/Player;"
+        ):
+            if token not in rt:
+                bad.append(label+": rebuffer missing "+token)
+        if any(x in rt for x in ("initialHold","beforeNativeStart","awaitBudget","bufferStartHeldCurrent")):
+            bad.append(label+": legacy gate term remains in rebuffer class")
+
+        wd=list(root.glob("smali*/com/archos/filecorelibrary/NovaRebufferInputStream$Watchdog.smali"))
+        if len(wd)!=1 or "access$monitor" not in wd[0].read_text():
+            bad.append(label+": watchdog helper missing/invalid")
+
+    result={
+        "status":"FAIL" if bad else "PASS",
+        "classes_compared":len(ia),
+        "xml_files_compared":len(aa),
+        "differences":sorted(set(bad)),
+        "comparison":"strict non-intentional class/XML comparison with const-string jumbo normalization; explicit semantic invariants for post-start rebuffer classes",
+        "runtime_tested":False,
+    }
+    g.write_json(report,result)
+    if bad:
+        raise g.Conflict("Post-start rebuffer verification failed: "+str(result["differences"][:30]))
+    return result
