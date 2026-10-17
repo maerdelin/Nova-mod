@@ -19,6 +19,8 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 .field private static volatile consumed:J
 .field private static volatile total:J
 .field private static volatile primed:Z
+.field private static volatile startDeferred:Z
+.field private static volatile playbackStarted:Z
 .field private static volatile primeTarget:J
 
 .method private constructor <init>()V
@@ -44,6 +46,12 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     .locals 2
     const/4 v0, 0x1
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->playbackStarted:Z
+    const/4 v0, 0x0
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYBACK_ACTIVE prefetch=64MiB low=24MiB resume=45MiB"
     invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
@@ -55,6 +63,9 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->playbackStarted:Z
     invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYBACK_STOP"
@@ -80,8 +91,10 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 
     const/4 v3, 0x0
     sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->eof:Z
-    sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
     sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
+
+    sget-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->playbackStarted:Z
+    sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
 
     const/4 v3, 0x1
     sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
@@ -95,12 +108,9 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     :prime_target_done
     sput-wide v4, Lcom/archos/filecorelibrary/NovaBufferGuard;->primeTarget:J
 
-    const/4 v3, 0x1
-    invoke-static {v3}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
-
     const-string v1, "PREFETCH_START totalBytes="
     invoke-static {v1, p0, p1}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
-    const-string v1, "PREFETCH_ACTIVE targetBytes="
+    const-string v1, "PREFETCH_TARGET bytes="
     invoke-static {v1, v4, v5}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
     return v0
 .end method
@@ -111,42 +121,48 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     return v0
 .end method
 
-.method public static awaitPrimed(I)V
+.method public static shouldDeferStart()Z
     .locals 7
-    :wait
-    sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
-    if-ne p0, v0, :done
+    sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
+    if-eqz v0, :allow
 
-    sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
-    if-nez v0, :done
+    sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->playbackStarted:Z
+    if-nez v0, :allow
 
     sget-wide v1, Lcom/archos/filecorelibrary/NovaBufferGuard;->produced:J
     sget-wide v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->consumed:J
     sub-long/2addr v1, v3
 
     sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->eof:Z
-    if-nez v0, :prime
+    if-nez v0, :ready
 
     sget-wide v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->primeTarget:J
     cmp-long v0, v1, v3
-    if-ltz v0, :sleep
+    if-ltz v0, :defer
 
-    :prime
+    :ready
     const/4 v0, 0x1
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
     const/4 v0, 0x0
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
     invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
-    const-string v0, "PREFETCH_PRIMED bytes="
+    const-string v0, "START_READY prefetchBytes="
     invoke-static {v0, v1, v2}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
-    goto :done
+    const/4 v0, 0x0
+    return v0
 
-    :sleep
-    const-wide/16 v5, 0x19
-    invoke-static {v5, v6}, Landroid/os/SystemClock;->sleep(J)V
-    goto :wait
+    :defer
+    const/4 v0, 0x1
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
+    const-string v0, "START_DEFERRED prefetchBytes="
+    invoke-static {v0, v1, v2}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
+    const/4 v0, 0x1
+    return v0
 
-    :done
-    return-void
+    :allow
+    const/4 v0, 0x0
+    return v0
 .end method
 
 .method public static onPrefetchProduced(II)V
@@ -159,10 +175,28 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     add-long/2addr v0, v2
     sput-wide v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->produced:J
 
-    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
-    if-eqz v2, :done
     sget-wide v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->consumed:J
     sub-long v4, v0, v2
+
+    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    if-eqz v2, :runtime_resume
+    sget-wide v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->primeTarget:J
+    cmp-long v6, v4, v2
+    if-gez v6, :done
+
+    const/4 v0, 0x1
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    const/4 v0, 0x0
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
+    const-string v0, "PREFETCH_PRIMED bytes="
+    invoke-static {v0, v4, v5}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->novaStartAfterPrime()V
+    goto :done
+
+    :runtime_resume
+    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
+    if-eqz v2, :done
     const-wide/32 v2, 0x2d00000
     cmp-long v6, v4, v2
     if-gez v6, :done
@@ -188,7 +222,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     add-long/2addr v0, v2
     sput-wide v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->consumed:J
 
-    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->playbackStarted:Z
     if-eqz v2, :done
     sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     if-nez v2, :done
@@ -219,6 +253,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     .locals 5
     sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
     if-ne p0, v0, :done
+
     const/4 v0, 0x1
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->eof:Z
 
@@ -228,6 +263,20 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     const-string v0, "PREFETCH_EOF bufferedBytes="
     invoke-static {v0, v1, v2}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
 
+    sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    if-eqz v0, :runtime_eof
+
+    const/4 v0, 0x1
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    const/4 v0, 0x0
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->startDeferred:Z
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
+    const-string v0, "PREFETCH_PRIMED_EOF bytes="
+    invoke-static {v0, v1, v2}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
+    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->novaStartAfterPrime()V
+    goto :done
+
+    :runtime_eof
     sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     if-eqz v0, :done
     const/4 v0, 0x0
@@ -251,7 +300,6 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     return-void
 .end method
 '''
-
 PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetchInputStream;
 .super Ljava/io/InputStream;
 .source "NovaPrefetchInputStream.java"
@@ -309,13 +357,9 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
 
 .method public read([BII)I
     .locals 7
-    if-nez p3, :prime
+    if-nez p3, :loop
     const/4 v0, 0x0
     return v0
-
-    :prime
-    iget v6, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
-    invoke-static {v6}, Lcom/archos/filecorelibrary/NovaBufferGuard;->awaitPrimed(I)V
 
     :loop
     iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->current:[B
@@ -557,14 +601,15 @@ def apply(root: Path, report: Path | None = None):
 
     result = {
         "status": "PASS",
-        "strategy": "WebDAV prebuffer 45MiB then hysteresis 24MiB/45MiB with producer independent from AVOS",
+        "strategy": "FFmpeg/parser reads stay open; native Player start is gated at 45MiB, then runtime hysteresis 24MiB/45MiB",
         "capacity_bytes": 67108864,
         "pause_below_bytes": 25165824,
         "resume_at_bytes": 47185920,
         "producer": "dedicated upstream reader thread with explicit per-request generation",
         "consumer": "StreamOverHttp socket writer via 256 x 256KiB ArrayBlockingQueue chunks",
         "startup_prebuffer_bytes": 47185920,
-        "activation": "onPrefetchStart; no Player.start dependency",
+        "startup_gate": "Player.start before IMediaPlayer.start; never InputStream.read",
+        "activation": "onPrefetchStart plus explicit Player native-start gate",
         "logging": "ADB logcat tag NovaBufGuard"
     }
     if report:
