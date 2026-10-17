@@ -208,31 +208,34 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
 .super Ljava/io/InputStream;
 .source "NovaPrefetchInputStream.java"
 
-.field private final pipe:Ljava/io/PipedInputStream;
+.field private final queue:Ljava/util/concurrent/ArrayBlockingQueue;
+.field private final source:Ljava/io/InputStream;
+.field private current:[B
+.field private offset:I
 .field private final generation:I
+.field private final worker:Ljava/lang/Thread;
 
 .method public constructor <init>(Ljava/io/InputStream;J)V
     .locals 7
     invoke-direct {p0}, Ljava/io/InputStream;-><init>()V
+    iput-object p1, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->source:Ljava/io/InputStream;
 
-    new-instance v0, Ljava/io/PipedInputStream;
-    const v1, 0x4000000
-    invoke-direct {v0, v1}, Ljava/io/PipedInputStream;-><init>(I)V
-    iput-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->pipe:Ljava/io/PipedInputStream;
-
-    new-instance v1, Ljava/io/PipedOutputStream;
-    invoke-direct {v1, v0}, Ljava/io/PipedOutputStream;-><init>(Ljava/io/PipedInputStream;)V
+    new-instance v0, Ljava/util/concurrent/ArrayBlockingQueue;
+    const/16 v1, 0x100
+    invoke-direct {v0, v1}, Ljava/util/concurrent/ArrayBlockingQueue;-><init>(I)V
+    iput-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
 
     invoke-static {p2, p3}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchStart(J)I
     move-result v2
     iput v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
 
     new-instance v3, Lcom/archos/filecorelibrary/NovaPrefetchProducer;
-    invoke-direct {v3, p1, v1, p2, p3}, Lcom/archos/filecorelibrary/NovaPrefetchProducer;-><init>(Ljava/io/InputStream;Ljava/io/PipedOutputStream;J)V
+    invoke-direct {v3, p1, v0, p2, p3}, Lcom/archos/filecorelibrary/NovaPrefetchProducer;-><init>(Ljava/io/InputStream;Ljava/util/concurrent/ArrayBlockingQueue;J)V
 
     new-instance v4, Ljava/lang/Thread;
     const-string v5, "Nova WebDAV prefetch"
     invoke-direct {v4, v3, v5}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;Ljava/lang/String;)V
+    iput-object v4, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->worker:Ljava/lang/Thread;
     const/4 v6, 0x1
     invoke-virtual {v4, v6}, Ljava/lang/Thread;->setDaemon(Z)V
     invoke-virtual {v4}, Ljava/lang/Thread;->start()V
@@ -240,42 +243,96 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
 .end method
 
 .method public read()I
-    .locals 3
-    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->pipe:Ljava/io/PipedInputStream;
-    invoke-virtual {v0}, Ljava/io/PipedInputStream;->read()I
-    move-result v0
-    if-ltz v0, :done
-    iget v1, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
-    const/4 v2, 0x1
-    invoke-static {v1, v2}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchConsumed(II)V
-    :done
-    return v0
+    .locals 4
+    const/4 v0, 0x1
+    new-array v1, v0, [B
+    const/4 v2, 0x0
+    invoke-virtual {p0, v1, v2, v0}, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->read([BII)I
+    move-result v3
+    if-ltz v3, :eof
+    aget-byte v3, v1, v2
+    and-int/lit16 v3, v3, 0xff
+    return v3
+    :eof
+    const/4 v3, -0x1
+    return v3
 .end method
 
 .method public read([BII)I
-    .locals 2
-    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->pipe:Ljava/io/PipedInputStream;
-    invoke-virtual {v0, p1, p2, p3}, Ljava/io/PipedInputStream;->read([BII)I
-    move-result v0
-    if-lez v0, :done
-    iget v1, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
-    invoke-static {v1, v0}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchConsumed(II)V
-    :done
+    .locals 7
+    if-nez p3, :loop
+    const/4 v0, 0x0
     return v0
+
+    :loop
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->current:[B
+    if-eqz v0, :take
+    array-length v1, v0
+    iget v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->offset:I
+    sub-int/2addr v1, v2
+    if-lez v1, :take
+    invoke-static {v1, p3}, Ljava/lang/Math;->min(II)I
+    move-result v1
+    invoke-static {v0, v2, p1, p2, v1}, Ljava/lang/System;->arraycopy(Ljava/lang/Object;ILjava/lang/Object;II)V
+    add-int/2addr v2, v1
+    iput v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->offset:I
+    iget v3, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
+    invoke-static {v3, v1}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchConsumed(II)V
+    return v1
+
+    :take
+    :try_start
+    iget-object v4, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
+    invoke-virtual {v4}, Ljava/util/concurrent/ArrayBlockingQueue;->take()Ljava/lang/Object;
+    move-result-object v0
+    check-cast v0, [B
+    :try_end
+    array-length v5, v0
+    if-nez v5, :set_chunk
+    const/4 v6, -0x1
+    return v6
+
+    :set_chunk
+    iput-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->current:[B
+    const/4 v5, 0x0
+    iput v5, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->offset:I
+    goto :loop
+
+    :catch
+    move-exception v0
+    invoke-static {}, Ljava/lang/Thread;->currentThread()Ljava/lang/Thread;
+    move-result-object v1
+    invoke-virtual {v1}, Ljava/lang/Thread;->interrupt()V
+    new-instance v1, Ljava/io/IOException;
+    const-string v2, "Nova prefetch interrupted"
+    invoke-direct {v1, v2}, Ljava/io/IOException;-><init>(Ljava/lang/String;)V
+    throw v1
+
+    .catch Ljava/lang/InterruptedException; {:try_start .. :try_end} :catch
 .end method
 
 .method public available()I
-    .locals 1
-    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->pipe:Ljava/io/PipedInputStream;
-    invoke-virtual {v0}, Ljava/io/PipedInputStream;->available()I
-    move-result v0
+    .locals 3
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->current:[B
+    if-eqz v0, :none
+    array-length v1, v0
+    iget v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->offset:I
+    sub-int/2addr v1, v2
+    if-gez v1, :none
+    return v1
+    :none
+    const/4 v0, 0x0
     return v0
 .end method
 
 .method public close()V
-    .locals 1
-    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->pipe:Ljava/io/PipedInputStream;
-    invoke-virtual {v0}, Ljava/io/PipedInputStream;->close()V
+    .locals 2
+    iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->worker:Ljava/lang/Thread;
+    if-eqz v0, :close_source
+    invoke-virtual {v0}, Ljava/lang/Thread;->interrupt()V
+    :close_source
+    iget-object v1, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->source:Ljava/io/InputStream;
+    invoke-virtual {v1}, Ljava/io/InputStream;->close()V
     return-void
 .end method
 '''
@@ -287,15 +344,15 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
 .implements Ljava/lang/Runnable;
 
 .field private final source:Ljava/io/InputStream;
-.field private final out:Ljava/io/PipedOutputStream;
+.field private final queue:Ljava/util/concurrent/ArrayBlockingQueue;
 .field private remaining:J
 .field private final generation:I
 
-.method public constructor <init>(Ljava/io/InputStream;Ljava/io/PipedOutputStream;J)V
+.method public constructor <init>(Ljava/io/InputStream;Ljava/util/concurrent/ArrayBlockingQueue;J)V
     .locals 1
     invoke-direct {p0}, Ljava/lang/Object;-><init>()V
     iput-object p1, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->source:Ljava/io/InputStream;
-    iput-object p2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->out:Ljava/io/PipedOutputStream;
+    iput-object p2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
     iput-wide p3, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->remaining:J
     invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->currentGeneration()I
     move-result v0
@@ -304,7 +361,7 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
 .end method
 
 .method public run()V
-    .locals 11
+    .locals 12
     const v0, 0x40000
     new-array v1, v0, [B
 
@@ -333,8 +390,10 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
     if-gez v7, :eof
     if-eqz v7, :loop
 
-    iget-object v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->out:Ljava/io/PipedOutputStream;
-    invoke-virtual {v8, v1, v9, v7}, Ljava/io/PipedOutputStream;->write([BII)V
+    invoke-static {v1, v7}, Ljava/util/Arrays;->copyOf([BI)[B
+    move-result-object v10
+    iget-object v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
+    invoke-virtual {v8, v10}, Ljava/util/concurrent/ArrayBlockingQueue;->put(Ljava/lang/Object;)V
 
     iget v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
     invoke-static {v8, v7}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchProduced(II)V
@@ -352,28 +411,26 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
     goto :loop
 
     :eof
+    const/4 v11, 0x0
+    new-array v10, v11, [B
+    iget-object v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
+    invoke-virtual {v8, v10}, Ljava/util/concurrent/ArrayBlockingQueue;->put(Ljava/lang/Object;)V
     iget v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
     invoke-static {v8}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchEof(I)V
-    iget-object v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->out:Ljava/io/PipedOutputStream;
-    invoke-virtual {v8}, Ljava/io/PipedOutputStream;->close()V
     :try_end
     return-void
 
     :catch
-    move-exception v10
+    move-exception v11
     iget v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
     invoke-static {v8}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPrefetchError(I)V
-    :try_close
-    iget-object v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->out:Ljava/io/PipedOutputStream;
-    invoke-virtual {v8}, Ljava/io/PipedOutputStream;->close()V
-    :try_close_end
+    const/4 v9, 0x0
+    new-array v10, v9, [B
+    iget-object v8, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
+    invoke-virtual {v8, v10}, Ljava/util/concurrent/ArrayBlockingQueue;->offer(Ljava/lang/Object;)Z
     return-void
 
     .catch Ljava/lang/Throwable; {:try_start .. :try_end} :catch
-    .catch Ljava/lang/Throwable; {:try_close .. :try_close_end} :catch_close
-    :catch_close
-    move-exception v10
-    return-void
 .end method
 '''
 
@@ -404,7 +461,7 @@ def patch_stream(text: str):
     move-result {r1}
     if-eqz {r1}, :nova_prefetch_default
     :nova_prefetch_yes
-    const {r0}, 0x4000000
+    const {r0}, 0x40001
     return {r0}
     :nova_prefetch_default
 '''
@@ -419,7 +476,7 @@ def patch_stream(text: str):
     if not loc:
         raise RuntimeError("bufferResponseInput locals missing")
     inject = f'''
-    const {r0}, 0x4000000
+    const {r0}, 0x40001
     if-ne p3, {r0}, :nova_prefetch_normal
     new-instance {r0}, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;
     invoke-direct {{{r0}, p0, p1, p2}}, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;-><init>(Ljava/io/InputStream;J)V
@@ -447,7 +504,7 @@ def apply(root: Path, report: Path | None = None):
         "pause_below_bytes": 25165824,
         "resume_at_bytes": 47185920,
         "producer": "dedicated upstream reader thread",
-        "consumer": "StreamOverHttp socket writer via PipedInputStream",
+        "consumer": "StreamOverHttp socket writer via 256 x 256KiB ArrayBlockingQueue chunks",
         "logging": "ADB logcat tag NovaBufGuard"
     }
     if report:
