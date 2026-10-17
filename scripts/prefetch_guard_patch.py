@@ -90,6 +90,12 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     return v0
 .end method
 
+.method public static currentGeneration()I
+    .locals 1
+    sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
+    return v0
+.end method
+
 .method public static onPrefetchProduced(II)V
     .locals 7
     sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
@@ -222,7 +228,7 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
     iput v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
 
     new-instance v3, Lcom/archos/filecorelibrary/NovaPrefetchProducer;
-    invoke-direct {v3, p1, v1, p2, p3, v2}, Lcom/archos/filecorelibrary/NovaPrefetchProducer;-><init>(Ljava/io/InputStream;Ljava/io/PipedOutputStream;JI)V
+    invoke-direct {v3, p1, v1, p2, p3}, Lcom/archos/filecorelibrary/NovaPrefetchProducer;-><init>(Ljava/io/InputStream;Ljava/io/PipedOutputStream;J)V
 
     new-instance v4, Ljava/lang/Thread;
     const-string v5, "Nova WebDAV prefetch"
@@ -285,13 +291,15 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
 .field private remaining:J
 .field private final generation:I
 
-.method public constructor <init>(Ljava/io/InputStream;Ljava/io/PipedOutputStream;JI)V
-    .locals 0
+.method public constructor <init>(Ljava/io/InputStream;Ljava/io/PipedOutputStream;J)V
+    .locals 1
     invoke-direct {p0}, Ljava/lang/Object;-><init>()V
     iput-object p1, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->source:Ljava/io/InputStream;
     iput-object p2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->out:Ljava/io/PipedOutputStream;
     iput-wide p3, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->remaining:J
-    iput p5, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
+    invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->currentGeneration()I
+    move-result v0
+    iput v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
     return-void
 .end method
 
