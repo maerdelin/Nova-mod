@@ -366,6 +366,11 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
 .method public declared-synchronized read([BII)I
     .locals 2
 
+    const v0, 0x40000
+    if-le p3, v0, :nova_read_len_ready
+    move p3, v0
+
+    :nova_read_len_ready
     invoke-direct {p0, p3}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->ensureBudget(I)V
 
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
@@ -838,6 +843,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         bulk = _method(rt, ' read([BII)I').group(0)
         if 'declared-synchronized read([BII)I' not in bulk.splitlines()[0]:
             policy_bad.append(label + ': bulk read is not serialized')
+        if 'const v0, 0x40000' not in bulk or 'move p3, v0' not in bulk:
+            policy_bad.append(label + ': bulk read is not capped at 256KiB')
         if 'ensureBudget(I)V' not in bulk or bulk.find('ensureBudget(I)V') > bulk.find('PipedInputStream;->read([BII)I'):
             policy_bad.append(label + ': floor check does not precede consumption')
 
