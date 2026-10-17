@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-METHOD_RE = re.compile(r'^\\.method [^\\n]+\\n.*?^\\.end method', re.M | re.S)
+METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
 
 
 def one(paths, label):
@@ -17,12 +17,14 @@ def one(paths, label):
 def method(text, sig):
     xs = [m for m in METHOD_RE.finditer(text) if sig in m.group(0).splitlines()[0]]
     if len(xs) != 1:
-        raise RuntimeError(f"{sig}: expected 1, got {len(xs)}")
+        headers = [m.group(0).splitlines()[0] for m in METHOD_RE.finditer(text)
+                   if "setVideoURI" in m.group(0).splitlines()[0]]
+        raise RuntimeError(f"{sig}: expected 1, got {len(xs)}; candidates={headers}")
     return xs[0]
 
 
 def bump_locals(block, extra=1):
-    m = re.search(r'(?m)^    \\.locals (\\d+)\\s*$', block)
+    m = re.search(r'(?m)^    \.locals (\d+)\s*$', block)
     if not m:
         raise RuntimeError("method has no .locals")
     n = int(m.group(1))
@@ -39,7 +41,7 @@ def patch_player(text):
     b, newreg = bump_locals(b, 2)
     scheme = f"v{newreg}"
     tmp = f"v{newreg + 1}"
-    loc = re.search(r'(?m)^    \\.locals \\d+\\s*$', b)
+    loc = re.search(r'(?m)^    \.locals \d+\s*$', b)
     if not loc:
         raise RuntimeError("setVideoURI locals anchor missing")
 
