@@ -89,7 +89,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v2
     const-string v3, "NovaBufGuard"
-    invoke-static {v3, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v3, v2}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     :same_range
     sget-wide v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->rangeDelivered:J
@@ -133,7 +133,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     :log
     const-string v1, "NovaBufGuard"
     const-string v2, "PLAYBACK_ACTIVE startup=main-pass low=3000ms resume=5000ms"
-    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v1, v2}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     return-void
 .end method
 
@@ -146,7 +146,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYBACK_STOP"
-    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v0, v1}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     return-void
 .end method
 
@@ -182,7 +182,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v0
     const-string v1, "NovaBufGuard"
-    invoke-static {v1, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v1, v0}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     :done
     return-void
 .end method
@@ -260,7 +260,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sput-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
     const-string v9, "NovaBufGuard"
     const-string v10, "GUARD_ARMED after-normal-playback"
-    invoke-static {v9, v10}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v9, v10}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     :enforce
     sget-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
@@ -276,7 +276,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v9}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v9, "NovaBufGuard"
     const-string v10, "RESUME ahead>=5000ms"
-    invoke-static {v9, v10}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v9, v10}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 
     :not_buffering
@@ -292,7 +292,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v9}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v9, "NovaBufGuard"
     const-string v10, "PAUSE ahead<3000ms"
-    invoke-static {v9, v10}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v9, v10}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 .end method
 '''
@@ -340,7 +340,7 @@ PLAYER_EXTRA = r'''.method public static novaPauseForBuffer()Z
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->pause()V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYER_NATIVE_PAUSE"
-    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v0, v1}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     const/4 v0, 0x1
     return v0
     :no
@@ -362,7 +362,7 @@ PLAYER_EXTRA = r'''.method public static novaPauseForBuffer()Z
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->start()V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYER_NATIVE_RESUME"
-    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v0, v1}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
     :done
     return-void
 .end method
