@@ -339,6 +339,39 @@ PLAYER_EXTRA = r'''.method public static novaLog(Ljava/lang/String;Ljava/lang/St
     return-void
 .end method
 
+.method public static novaStartAfterPrime()V
+    .locals 4
+    sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    if-eqz v0, :done
+
+    iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
+    const/4 v2, 0x5
+    if-ne v1, v2, :done
+
+    iget v1, v0, Lcom/archos/mediacenter/video/player/Player;->mCurrentState:I
+    if-eq v1, v2, :done
+    if-lez v1, :done
+    const/4 v3, 0x1
+    if-eq v1, v3, :done
+
+    iget-object v1, v0, Lcom/archos/mediacenter/video/player/Player;->mMediaPlayer:Lcom/archos/medialib/IMediaPlayer;
+    if-eqz v1, :done
+    invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->isPlaying()Z
+    move-result v3
+    if-nez v3, :done
+
+    invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->start()V
+    const/4 v2, 0x5
+    iput v2, v0, Lcom/archos/mediacenter/video/player/Player;->mCurrentState:I
+    invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPlaybackStarted()V
+    const-string v0, "NovaBufGuard"
+    const-string v1, "PLAYER_NATIVE_START_AFTER_PRIME"
+    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
+
+    :done
+    return-void
+.end method
+
 .method public static novaSetBufferingUi(Z)V
     .locals 2
     sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
@@ -454,19 +487,31 @@ def patch_player(text):
     text=text[:m.start()]+b+text[m.end():]
 
     m=method(text," start(I)V"); b=m.group(0)
+    b, newreg=bump_locals(b,1)
+    gate=f"v{newreg}"
     anchor='    invoke-interface {v3}, Lcom/archos/medialib/IMediaPlayer;->start()V'
     if anchor not in b:
         raise RuntimeError("Player.start native start anchor missing")
-    # activate only after original current-state assignment, not before native start
     idx=b.find(anchor)
     state_idx=b.find('->mCurrentState:I', idx)
     if state_idx<0:
         raise RuntimeError("Player.start state anchor missing")
-    line_end=b.find('\n', state_idx)
-    b=b[:line_end+1]+'    invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPlaybackStarted()V\n'+b[line_end+1:]
+    state_end=b.find('\n', state_idx)
+    if state_end<0:
+        raise RuntimeError("Player.start state line end missing")
+    native_block=b[idx:state_end+1]
+    gate_block=f'''    const/4 {gate}, 0x5
+    iput {gate}, p0, Lcom/archos/mediacenter/video/player/Player;->mTargetState:I
+    invoke-static {{}}, Lcom/archos/filecorelibrary/NovaBufferGuard;->shouldDeferStart()Z
+    move-result {gate}
+    if-nez {gate}, :nova_start_deferred
+{native_block}    invoke-static {{}}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPlaybackStarted()V
+    :nova_start_deferred
+'''
+    b=b[:idx]+gate_block+b[state_end+1:]
     text=text[:m.start()]+b+text[m.end():]
 
-    for sig in (" pause(I)V"," stopPlayback()V"," onCompletion(Lcom/archos/medialib/IMediaPlayer;)V"):
+    for sig in (" stopPlayback()V"," onCompletion(Lcom/archos/medialib/IMediaPlayer;)V"):
         m=method(text,sig); b=m.group(0)
         loc=re.search(r'(?m)^    \.locals \d+\s*$',b)
         if not loc: raise RuntimeError(sig+" locals missing")
@@ -535,7 +580,7 @@ def apply(root:Path, report:Path|None=None):
     result={
       "status":"PASS","player":ps,"activity":acts,"session":ss,"stream":sts,
       "policy":{
-        "startup":"guard may activate from first primary WebDAV proxy bytes; pause below 24 MiB and resume at 45 MiB",
+        "startup":"FFmpeg/parser reads are never gated; Player native start may be deferred until WebDAV prefetch reaches 45 MiB",
         "webdav_native_buffer_mib":128,
         "low_bytes":25165824,"resume_bytes":47185920,
         "measurement":"absolute bytes delivered by StreamOverHttp to AVOS localhost socket minus estimated consumed bytes",
