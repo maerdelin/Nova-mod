@@ -296,6 +296,24 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v9, v10}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 .end method
+
+.method public static main([Ljava/lang/String;)V
+    .locals 2
+    const-class v0, Lcom/archos/filecorelibrary/NovaBufferGuard;
+    invoke-virtual {v0}, Ljava/lang/Class;->getName()Ljava/lang/String;
+    move-result-object v1
+    const-class v0, Lcom/archos/mediacenter/video/player/Player;
+    invoke-virtual {v0}, Ljava/lang/Class;->getName()Ljava/lang/String;
+    move-result-object v1
+    const-class v0, Lcom/archos/mediacenter/video/player/PlayerActivity;
+    invoke-virtual {v0}, Ljava/lang/Class;->getName()Ljava/lang/String;
+    move-result-object v1
+    const-class v0, Lcom/archos/filecorelibrary/StreamOverHttp;
+    invoke-virtual {v0}, Ljava/lang/Class;->getName()Ljava/lang/String;
+    move-result-object v1
+    return-void
+.end method
+
 '''
 
 UI_RUNNABLE = r'''.class final Lcom/archos/mediacenter/video/player/NovaBufferUiRunnable;
@@ -601,6 +619,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             "PAUSE ahead<3000ms",
             "RESUME ahead>=5000ms",
             "logState()V",
+            "main([Ljava/lang/String;)V",
+            "const-class v0, Lcom/archos/mediacenter/video/player/Player;",
         ):
             if token not in guard:
                 bad.append(label + ": guard missing " + token)

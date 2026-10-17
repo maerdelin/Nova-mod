@@ -63,6 +63,18 @@ def main():
                 raise RuntimeError('App exited or crashed after ' + category + '\n' + crash[-5000:])
             report['launches'].append({'category': category, 'component': component,
                                        'status': 'PASS', 'pid': pid, 'observation_seconds': 12})
+        base_apk = adb('shell', 'pm', 'path', PACKAGE).splitlines()[0].replace('package:', '').strip()
+        if not base_apk:
+            raise RuntimeError('Unable to resolve installed base APK for ART verification')
+        art_verify = adb('shell', 'dalvikvm', '-cp', base_apk,
+                         'com.archos.filecorelibrary.NovaBufferGuard', timeout=90)
+        (args.reports / 'art-buffer-guard.txt').write_text(art_verify + '\n')
+        report['art_class_verification'] = {
+            'status': 'PASS',
+            'entrypoint': 'com.archos.filecorelibrary.NovaBufferGuard',
+            'loads': ['NovaBufferGuard', 'Player', 'PlayerActivity', 'StreamOverHttp']
+        }
+        print('ART_CLASS_VERIFY=PASS')
         report['status'] = 'PASS'
         print('INSTALL_AND_LAUNCH=PASS')
     except Exception as exc:

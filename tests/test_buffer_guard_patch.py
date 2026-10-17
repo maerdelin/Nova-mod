@@ -32,6 +32,10 @@ class BufferGuardStaticChecks(unittest.TestCase):
     def test_roundtrip_normalizes_jumbo(self):
         self.assertIn('replace("const-string/jumbo", "const-string")', PATCH)
 
+    def test_art_entrypoint_present(self):
+        self.assertIn(".method public static main([Ljava/lang/String;)V", PATCH)
+        self.assertIn("const-class v0, Lcom/archos/mediacenter/video/player/Player;", PATCH)
+
     def test_state_machine_directions(self):
         for token in (
             "if-gez v2, :done",
