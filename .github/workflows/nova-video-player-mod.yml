@@ -2,6 +2,8 @@ name: Nova Video Player mod
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: ['ci/main-clean-ci-base']
   schedule:
     - cron: '0 3 * * *'
   push:
