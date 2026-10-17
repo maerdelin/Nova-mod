@@ -87,6 +87,22 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    # CLEAN MAIN AUDIT ONLY: capture exact current player/WebDAV control surfaces before any new buffer patch.
+    audit_paths = (
+        'com/archos/mediacenter/video/player/Player.smali',
+        'com/archos/filecorelibrary/StreamOverHttp.smali',
+        'com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali',
+        'com/archos/medialib/AvosMediaPlayer.smali',
+        'com/archos/medialib/IMediaPlayer.smali',
+    )
+    audit = []
+    for suffix in audit_paths:
+        hits = list(candidate.glob('smali*/' + suffix))
+        audit.append('===== ' + suffix + ' count=' + str(len(hits)) + ' =====')
+        for pth in hits:
+            txt = pth.read_text(errors='ignore')
+            audit.append(txt)
+    (args.reports / 'clean-main-player-audit.txt').write_text('\n'.join(audit) + '\n')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
