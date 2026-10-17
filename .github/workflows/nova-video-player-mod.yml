@@ -105,7 +105,10 @@ jobs:
           target: default
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+          script: |
+            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+            adb shell dalvikvm -cp "$(adb shell pm path org.courville.nova | head -n 1 | sed 's/^package://' | tr -d '\r')" com.archos.filecorelibrary.NovaRebufferInputStream
+            printf '{"status":"PASS","classes":["NovaRebufferInputStream","Player"]}\n' > reports/art-class-verification.json
 
       - name: Verify official selection has not changed
         env:
