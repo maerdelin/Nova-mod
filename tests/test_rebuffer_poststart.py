@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from scripts import rebuffer_poststart as r
 
 class CleanMainPostStartRebufferTests(unittest.TestCase):
@@ -12,15 +13,15 @@ class CleanMainPostStartRebufferTests(unittest.TestCase):
         self.assertIn('.method private publishInput', m.group(0))
 
     def test_old_hard_gate_code_is_absent(self):
-        src = open('scripts/rebuffer_poststart.py', encoding='utf-8').read()
+        src = Path('scripts/rebuffer_poststart.py').read_text(encoding='utf-8')
         for token in ('initialHold', 'beforeNativeStart', 'awaitBudget', 'bufferStartHeldCurrent'):
             self.assertNotIn(token, src)
 
     def test_startup_has_no_watermark_gate(self):
         src = r.patch_player.__doc__ or ''
         # Functional invariant is checked from patch code itself below.
-        code = open('scripts/rebuffer_poststart.py', encoding='utf-8').read()
-        self.assertIn('Start remains untouched until after the original native start and state assignment.', code)
+        code = Path('scripts/rebuffer_poststart.py').read_text(encoding='utf-8')
+        self.assertIn('Main startup remains byte-for-byte unchanged until its successful tail.', code)
         self.assertNotIn('INITIAL_HOLD', code)
 
     def test_threshold_constants(self):
@@ -29,15 +30,17 @@ class CleanMainPostStartRebufferTests(unittest.TestCase):
         self.assertIn('LOW_WATERMARK:I = 0x1800000', s)
         self.assertIn('RESUME_WATERMARK:I = 0x2d00000', s)
 
-    def test_activation_is_post_start_only(self):
-        code = open('scripts/rebuffer_poststart.py', encoding='utf-8').read()
-        start = code.index("start_anchor = (")
-        window = code[start:start+2200]
-        self.assertIn('IMediaPlayer;->start()V', window)
-        self.assertIn('mCurrentState:I', window)
+    def test_activation_is_at_successful_start_tail(self):
+        code = Path('scripts/rebuffer_poststart.py').read_text(encoding='utf-8')
+        start = code.index("tail_anchor = (")
+        window = code[start:start+3200]
+        self.assertIn('VideoEffectRenderer;->onPlay()V', window)
+        self.assertIn(':nova_rebuffer_start_done', window)
         self.assertIn('onPlaybackStarted()V', window)
-        self.assertLess(window.index('IMediaPlayer;->start()V'), window.index('mCurrentState:I'))
-        self.assertLess(window.index('mCurrentState:I'), window.index('onPlaybackStarted()V'))
+        self.assertLess(window.index('VideoEffectRenderer;->onPlay()V'), window.index('onPlaybackStarted()V'))
+        self.assertNotIn('LOW_WATERMARK', window)
+        self.assertNotIn('0x1800000', window)
+        self.assertNotIn('0x2d00000', window)
 
     def test_protection_arms_only_after_playback(self):
         s = r.READ_AHEAD_SMALI
