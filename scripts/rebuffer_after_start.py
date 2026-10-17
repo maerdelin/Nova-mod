@@ -296,7 +296,13 @@ REBUFFER_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NovaRebuffe
 .end method
 
 .method public static main([Ljava/lang/String;)V
-    .locals 0
+    .locals 2
+    const-class v0, Lcom/archos/filecorelibrary/NovaRebufferInputStream;
+    invoke-virtual {v0}, Ljava/lang/Class;->getName()Ljava/lang/String;
+    move-result-object v1
+    const-class v0, Lcom/archos/mediacenter/video/player/Player;
+    invoke-virtual {v0}, Ljava/lang/Class;->getName()Ljava/lang/String;
+    move-result-object v1
     return-void
 .end method
 '''
