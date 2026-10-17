@@ -103,6 +103,7 @@ def main():
             txt = pth.read_text(errors='ignore')
             audit.append(txt)
     (args.reports / 'clean-main-player-audit.txt').write_text('\n'.join(audit) + '\n')
+    raise RuntimeError('CLEAN_MAIN_AUDIT_DONE')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
