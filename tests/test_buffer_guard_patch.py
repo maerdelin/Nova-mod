@@ -9,9 +9,9 @@ class BufferGuardStaticChecks(unittest.TestCase):
         for token in (
             "NovaBufGuard",
             "HttpSession;->novaDelivered(I)V",
-            "PLAYBACK_ACTIVE startup=main-pass low=3000ms resume=5000ms",
-            "PAUSE ahead<3000ms",
-            "RESUME ahead>=5000ms",
+            "PLAYBACK_ACTIVE low=24MiB resume=45MiB source=proxy-or-player",
+            "PAUSE ahead<24MiB",
+            "RESUME ahead>=45MiB",
             "PLAYER_NATIVE_PAUSE",
             "PLAYER_NATIVE_RESUME",
             '"webdav_native_buffer_mib":128',
@@ -29,9 +29,9 @@ class BufferGuardStaticChecks(unittest.TestCase):
     def test_state_machine_directions(self):
         for token in (
             "if-gez v2, :done",
-            "if-ltz v15, :arm_check",
-            "if-ltz v13, :arm_now",
-            "if-gez v13, :loop",
+            "invoke-static {v2, v11, v12, v13}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logState(IJZ)V",
+            "const-wide/32 v9, 0x2d00000",
+            "const-wide/32 v9, 0x1800000",
             "move v7, p1",
         ):
             self.assertIn(token, PATCH)
