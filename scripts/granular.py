@@ -448,11 +448,18 @@ def logical_xml(element):
     return (element.tag, sorted(element.attrib.items()),text,children,tail)
 
 def verify(old: Path, target: Path, report: Path | None=None):
-    sa=resource_map(old);sb=resource_map(target);ia=class_index(old);ib=class_index(target);bad=[]
+    sa=resource_map(old);sb=resource_map(target);ia=class_index(old);ib=class_index(target);bad=[];details={}
     if ia.keys()!=ib.keys():bad.append('class set differs')
     for name in ia.keys()&ib.keys():
         a=ia[name].read_text();b=ib[name].read_text()
-        if a!=b and logical_class(a,sa)!=logical_class(b,sb):bad.append(name)
+        if a!=b:
+            la=logical_class(a,sa);lb=logical_class(b,sb)
+            if la!=lb:
+                bad.append(name)
+                if len(details)<4:
+                    left=json.dumps(la,ensure_ascii=False,indent=2,sort_keys=True).splitlines()
+                    right=json.dumps(lb,ensure_ascii=False,indent=2,sort_keys=True).splitlines()
+                    details[name]=list(difflib.unified_diff(left,right,fromfile='candidate',tofile='roundtrip',n=3))[:120]
     aa={p.relative_to(old).as_posix() for p in old.rglob('*.xml') if p.relative_to(old).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
     bb={p.relative_to(target).as_posix() for p in target.rglob('*.xml') if p.relative_to(target).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
     if aa!=bb:bad.append('XML resource set differs')
@@ -460,6 +467,7 @@ def verify(old: Path, target: Path, report: Path | None=None):
         if (old/path).read_bytes()!=(target/path).read_bytes():
             if logical_xml(ET.parse(old/path).getroot())!=logical_xml(ET.parse(target/path).getroot()):bad.append(path)
     result={'status':'FAIL' if bad else 'PASS','classes_compared':len(ia),'xml_files_compared':len(aa),'differences':sorted(bad),
+            'details':details,
             'comparison':'decoded instructions, branch targets, class metadata and XML properties; ignores nops/formatting/debug info','runtime_tested':False}
     if report:write_json(report,result)
     if bad:raise Conflict('Logical verification failed: '+str(bad[:20]))
