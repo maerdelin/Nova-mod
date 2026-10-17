@@ -49,6 +49,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 .field private static volatile mediaLength:J
 .field private static volatile lastRangeChangeMs:J
 .field private static volatile lastLogMs:J
+.field private static volatile lastAheadMs:J
 
 .method public constructor <init>()V
     .locals 0
@@ -150,7 +151,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     return-void
 .end method
 
-.method private static logState(IJJZ)V
+.method private static logState()V
     .locals 6
     invoke-static {}, Landroid/os/SystemClock;->uptimeMillis()J
     move-result-wide v0
@@ -163,18 +164,18 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 
     new-instance v0, Ljava/lang/StringBuilder;
     invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
-    const-string v1, "STATE posMs="
+    const-string v1, "STATE delivered="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v0, p0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-    const-string v1, " delivered="
-    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v0, p1, p2}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
+    sget-wide v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->deliveredAbs:J
+    invoke-virtual {v0, v2, v3}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
     const-string v1, " aheadMs="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v0, p3, p4}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
+    sget-wide v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->lastAheadMs:J
+    invoke-virtual {v0, v2, v3}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
     const-string v1, " buffering="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v0, p5}, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
+    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
+    invoke-virtual {v0, v2}, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
     const-string v1, " armed="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
@@ -231,8 +232,8 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     mul-long/2addr v11, v9
     div-long/2addr v11, v3
 
-    sget-boolean v13, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
-    invoke-static {v2, v5, v6, v11, v12, v13}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logState(IJJZ)V
+    sput-wide v11, Lcom/archos/filecorelibrary/NovaBufferGuard;->lastAheadMs:J
+    invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logState()V
 
     invoke-static {}, Landroid/os/SystemClock;->uptimeMillis()J
     move-result-wide v9
