@@ -51,6 +51,20 @@ class CleanMainPostStartRebufferTests(unittest.TestCase):
         self.assertEqual(ha, hb)
         self.assertNotEqual(ha, hc)
 
+    def test_only_vm_default_static_values_are_normalized(self):
+        self.assertEqual(r._canonical_field('.field public static flag:Z = false'),
+                         '.field public static flag:Z')
+        self.assertEqual(r._canonical_field('.field public static count:I = 0x0'),
+                         '.field public static count:I')
+        self.assertEqual(r._canonical_field('.field public static obj:Ljava/lang/Object; = null'),
+                         '.field public static obj:Ljava/lang/Object;')
+        self.assertNotEqual(r._canonical_field('.field public static flag:Z = true'),
+                            '.field public static flag:Z')
+        self.assertNotEqual(r._canonical_field('.field public static count:I = 0x1'),
+                            '.field public static count:I')
+        self.assertNotEqual(r._canonical_field('.field public static obj:Ljava/lang/Object; = "x"'),
+                            '.field public static obj:Ljava/lang/Object;')
+
     def test_threshold_constants(self):
         s = r.READ_AHEAD_SMALI
         self.assertIn('CAPACITY:I = 0x4000000', s)
