@@ -206,3 +206,110 @@ def apply(root: Path, report: Path|None=None):
         report.parent.mkdir(parents=True,exist_ok=True)
         report.write_text(json.dumps(result,indent=2)+'\n')
     return result
+
+
+def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
+    sa=g.resource_map(expected); sb=g.resource_map(actual)
+    ia=g.class_index(expected); ib=g.class_index(actual); bad=[]
+    if ia.keys()!=ib.keys():
+        bad.append('class set differs')
+    intentional={
+        'Lcom/archos/mediacenter/video/player/Player;',
+        'Lcom/archos/filecorelibrary/StreamOverHttp$HttpSession;',
+        'Lcom/archos/filecorelibrary/MainRebufferInputStream;',
+    }
+    for name in ia.keys() & ib.keys():
+        if name in intentional:
+            continue
+        a=ia[name].read_text(); b=ib[name].read_text()
+        if a!=b and g.logical_class(a,sa)!=g.logical_class(b,sb):
+            bad.append(name)
+
+    aa={p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
+        if p.relative_to(expected).as_posix().startswith(('res/','AndroidManifest.xml'))}
+    bb={p.relative_to(actual).as_posix() for p in actual.rglob('*.xml')
+        if p.relative_to(actual).as_posix().startswith(('res/','AndroidManifest.xml'))}
+    if aa!=bb:
+        bad.append('XML resource set differs')
+    for path in aa & bb:
+        if (expected/path).read_bytes()!=(actual/path).read_bytes():
+            if g.logical_xml(g.ET.parse(expected/path).getroot())!=g.logical_xml(g.ET.parse(actual/path).getroot()):
+                bad.append(path)
+
+    forbidden=('initialHold','beforeNativeStart','awaitBudget','bufferStartHeldCurrent','HARD_GATE')
+    for root,label in ((expected,'expected'),(actual,'roundtrip')):
+        player=list(root.glob('smali*/com/archos/mediacenter/video/player/Player.smali'))
+        session=list(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali'))
+        rb=list(root.glob('smali*/com/archos/filecorelibrary/MainRebufferInputStream.smali'))
+        if len(player)!=1: bad.append(label+': Player missing/duplicate')
+        if len(session)!=1: bad.append(label+': HttpSession missing/duplicate')
+        if len(rb)!=1: bad.append(label+': MainRebufferInputStream missing/duplicate')
+        if len(player)==1:
+            pt=player[0].read_text()
+            if any(x in pt for x in forbidden): bad.append(label+': old gate code remains in Player')
+            for token in ('.field private static volatile sNovaBufferPaused:Z',
+                          ' bufferPauseCurrent()Z',' bufferResumeCurrent()V',
+                          ' cancelBufferPause()V',' isBufferPaused()Z',
+                          'MainRebufferInputStream;->activateCurrent()V',
+                          'MainRebufferInputStream;->deactivateCurrent()V'):
+                if token not in pt: bad.append(label+': Player missing '+token)
+            sm=_method(pt,' start(I)V').group(0)
+            ns=sm.find('IMediaPlayer;->start()V')
+            state=sm.find('->mCurrentState:I',ns)
+            activate=sm.find('MainRebufferInputStream;->activateCurrent()V',state)
+            if not (0<=ns<state<activate):
+                bad.append(label+': activation is not strictly after native start and PLAYING state')
+        if len(session)==1:
+            st=session[0].read_text()
+            if st.count('MainRebufferInputStream;->wrap')!=1:
+                bad.append(label+': playback wrapper count is not exactly one')
+            pm=_method(st,' publishInput(Ljava/io/InputStream;)V').group(0)
+            for token in ('supersedableMediaRequest:Z',
+                          'StreamOverHttp$ReadMode;->PLAYBACK',
+                          'MainRebufferInputStream;->wrap'):
+                if token not in pm: bad.append(label+': publishInput missing '+token)
+        if len(rb)==1:
+            rt=rb[0].read_text()
+            if any(x in rt for x in forbidden): bad.append(label+': old gate code remains in rebuffer class')
+            for token in ('.field private static final CAPACITY:I = 0x4000000',
+                          '.field private static final LOW:I = 0x1800000',
+                          '.field private static final RESUME:I = 0x2d00000',
+                          'REBUFFER_WRAP prestart=main-direct',
+                          'REBUFFER_ACTIVE after-native-start cap=64MiB',
+                          'REBUFFER_ARMED buffer>=24MiB',
+                          'REBUFFER_RESUME buffer>45MiB',
+                          'REBUFFER_PAUSE low-or-empty',
+                          'Ljava/io/InputStream;->read()I',
+                          'Ljava/io/InputStream;->read([BII)I',
+                          'Ljava/io/InputStream;->skip(J)J',
+                          'Ljava/io/InputStream;->available()I'):
+                if token not in rt: bad.append(label+': rebuffer invariant missing '+token)
+            ctor=_method(rt,' constructor <init>(Ljava/io/InputStream;)V').group(0)
+            if 'PipedInputStream' in ctor or 'Thread;->start()V' in ctor:
+                bad.append(label+': pre-start constructor starts buffering')
+            act=_method(rt,' activateInstance()V').group(0)
+            if 'PipedInputStream' not in act or '0x4000000' not in act or 'Thread;->start()V' not in act:
+                bad.append(label+': activation does not create/start 64 MiB producer')
+            for sig in (' read()I',' read([BII)I',' skip(J)J',' available()I'):
+                m=_method(rt,sig).group(0)
+                if 'started:Z' not in m or 'Ljava/io/InputStream;' not in m:
+                    bad.append(label+': '+sig+' lacks direct-main pre-start path')
+            br=_method(rt,' beforeRead(I)V').group(0)
+            if 'const v1, 0x1800000' not in br or 'add-int v2, v1, p1' not in br:
+                bad.append(label+': 24 MiB floor/budget check missing')
+            if 'const v1, 0x2d00000' not in br or 'if-le v0, v1, :wait' not in br:
+                bad.append(label+': strict >45 MiB resume check missing')
+            throws=[x.strip() for x in rt.splitlines() if x.strip().startswith('throw ')]
+            if throws not in (['throw v1','throw v1'],):
+                bad.append(label+': unexpected throw-register pattern '+repr(throws))
+
+    result={'status':'FAIL' if bad else 'PASS',
+            'classes_compared':len(ia),'xml_files_compared':len(aa),
+            'differences':sorted(bad),
+            'comparison':'strict all non-intentional classes/XML; explicit post-start rebuffer invariants for Player/HttpSession/MainRebufferInputStream',
+            'runtime_tested':False}
+    g.write_json(report,result)
+    if bad:
+        raise g.Conflict('Main rebuffer roundtrip verification failed: '+str(bad[:30]))
+    print(json.dumps(result,indent=2))
+    return result
