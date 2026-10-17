@@ -443,7 +443,7 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
 .field private final source:Ljava/io/InputStream;
 .field private final queue:Ljava/util/concurrent/ArrayBlockingQueue;
 .field private remaining:J
-.field private final generation:I
+.field private generation:I
 
 .method public constructor <init>(Ljava/io/InputStream;Ljava/util/concurrent/ArrayBlockingQueue;J)V
     .locals 1
