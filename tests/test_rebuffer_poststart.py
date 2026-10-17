@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from scripts import rebuffer_poststart as r
+from scripts import granular as g
 
 class CleanMainPostStartRebufferTests(unittest.TestCase):
     def test_method_regex_matches_real_smali_shape(self):
@@ -24,6 +25,31 @@ class CleanMainPostStartRebufferTests(unittest.TestCase):
         self.assertNotIn('ensureBudget', started)
         self.assertNotIn('initialHold', started)
         self.assertIn('PLAYBACK_STARTED main-start-complete protection-waiting-for-24MiB', started)
+
+    def test_header_field_order_is_nonsemantic_but_field_content_is_strict(self):
+        a = """.class public Lx;
+.super Ljava/lang/Object;
+.source "X.java"
+.field private a:I = 0x1
+.field public static b:Ljava/lang/String;
+"""
+        b = """.class public Lx;
+.super Ljava/lang/Object;
+.source "X.java"
+.field public static b:Ljava/lang/String;
+.field private a:I = 0x1
+"""
+        changed = """.class public Lx;
+.super Ljava/lang/Object;
+.source "X.java"
+.field public static b:Ljava/lang/String;
+.field private a:I = 0x2
+"""
+        ha = r._logical_header_field_order_insensitive(a, {}, g)
+        hb = r._logical_header_field_order_insensitive(b, {}, g)
+        hc = r._logical_header_field_order_insensitive(changed, {}, g)
+        self.assertEqual(ha, hb)
+        self.assertNotEqual(ha, hc)
 
     def test_threshold_constants(self):
         s = r.READ_AHEAD_SMALI
