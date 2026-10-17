@@ -762,15 +762,35 @@ def apply(root: Path, report: Path | None = None):
     return result
 
 
+def _canonical_field(line: str) -> str:
+    """Normalize only DEX-implicit static default values observed in round-trip."""
+    line = line.strip()
+    if not line.startswith('.field ') or ' static ' not in (' ' + line + ' '):
+        return line
+    if ' = ' not in line:
+        return line
+    lhs, value = line.rsplit(' = ', 1)
+    if ':' not in lhs:
+        return line
+    field_type = lhs.rsplit(':', 1)[1]
+    # DEX static_values may omit trailing values equal to the VM default.
+    if field_type == 'Z' and value == 'false':
+        return lhs
+    if field_type == 'I' and value == '0x0':
+        return lhs
+    if (field_type.startswith('L') or field_type.startswith('[')) and value == 'null':
+        return lhs
+    return line
+
 def _logical_header_field_order_insensitive(text: str, symbols, g):
-    """Compare class metadata strictly while treating field declaration order as non-semantic."""
+    """Compare metadata strictly; only field order and proven implicit defaults normalize."""
     methods, rest = g.split_methods(text)
     field_lines = []
     other_lines = []
     for line in rest.splitlines():
         stripped = line.strip()
         if stripped.startswith('.field '):
-            field_lines.append(stripped)
+            field_lines.append(_canonical_field(stripped))
         else:
             other_lines.append(line)
     return {
@@ -922,7 +942,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         'classes_compared': len(ia),
         'xml_files_compared': len(aa),
         'differences': bad,
-        'normalization': 'const-string/jumbo equivalent; class field declaration order treated as non-semantic but field contents/metadata remain strict',
+        'normalization': 'const-string/jumbo equivalent; field order non-semantic; only observed DEX-implicit static defaults Z=false, I=0x0, ref=null normalized; all non-default field contents and metadata strict',
         'policy_checks': 'clean-main post-start activation, no startup watermark gate, 24MiB floor, >45MiB resume',
     }
     g.write_json(report, result)
