@@ -89,7 +89,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v2
     const-string v3, "NovaBufGuard"
-    invoke-static {v3, v2}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v3, v2}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
 
     :same_range
     sget-wide v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->rangeDelivered:J
@@ -133,7 +133,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     :log
     const-string v1, "NovaBufGuard"
     const-string v2, "PLAYBACK_ACTIVE startup=main-pass low=3000ms resume=5000ms"
-    invoke-static {v1, v2}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v1, v2}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     return-void
 .end method
 
@@ -146,7 +146,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYBACK_STOP"
-    invoke-static {v0, v1}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     return-void
 .end method
 
@@ -182,7 +182,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v0
     const-string v1, "NovaBufGuard"
-    invoke-static {v1, v0}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v1, v0}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     :done
     return-void
 .end method
@@ -260,7 +260,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sput-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
     const-string v9, "NovaBufGuard"
     const-string v10, "GUARD_ARMED after-normal-playback"
-    invoke-static {v9, v10}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v9, v10}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
 
     :enforce
     sget-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
@@ -276,7 +276,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v9}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v9, "NovaBufGuard"
     const-string v10, "RESUME ahead>=5000ms"
-    invoke-static {v9, v10}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v9, v10}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 
     :not_buffering
@@ -292,7 +292,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     invoke-static {v9}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v9, "NovaBufGuard"
     const-string v10, "PAUSE ahead<3000ms"
-    invoke-static {v9, v10}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v9, v10}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 .end method
 '''
@@ -323,7 +323,72 @@ UI_RUNNABLE = r'''.class final Lcom/archos/mediacenter/video/player/NovaBufferUi
 .end method
 '''
 
-PLAYER_EXTRA = r'''.method public static novaPauseForBuffer()Z
+PLAYER_EXTRA = r'''.method public static novaLog(Ljava/lang/String;Ljava/lang/String;)I
+    .locals 9
+
+    invoke-static {p0, p1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    move-result v0
+
+    :try_start
+    sget-object v1, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    if-eqz v1, :done
+    iget-object v1, v1, Lcom/archos/mediacenter/video/player/Player;->mContext:Landroid/content/Context;
+    if-eqz v1, :done
+
+    const-string v2, "logs"
+    invoke-virtual {v1, v2}, Landroid/content/Context;->getExternalFilesDir(Ljava/lang/String;)Ljava/io/File;
+    move-result-object v2
+    if-eqz v2, :done
+    invoke-virtual {v2}, Ljava/io/File;->mkdirs()Z
+
+    new-instance v3, Ljava/io/File;
+    const-string v4, "nova_debug.log"
+    invoke-direct {v3, v2, v4}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
+
+    invoke-virtual {v3}, Ljava/io/File;->length()J
+    move-result-wide v4
+    const-wide/32 v6, 0xa00000
+    cmp-long v8, v4, v6
+    if-lez v8, :no_rotate
+    invoke-virtual {v3}, Ljava/io/File;->delete()Z
+
+    :no_rotate
+    new-instance v2, Ljava/io/FileWriter;
+    const/4 v4, 0x1
+    invoke-direct {v2, v3, v4}, Ljava/io/FileWriter;-><init>(Ljava/io/File;Z)V
+
+    new-instance v3, Ljava/lang/StringBuilder;
+    invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+    move-result-wide v4
+    invoke-virtual {v3, v4, v5}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
+    const-string v4, " "
+    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v3, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v4, " "
+    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v3, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v4, "\n"
+    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v3
+
+    invoke-virtual {v2, v3}, Ljava/io/Writer;->write(Ljava/lang/String;)V
+    invoke-virtual {v2}, Ljava/io/Writer;->flush()V
+    invoke-virtual {v2}, Ljava/io/Writer;->close()V
+    :try_end
+    goto :done
+
+    :catch
+    move-exception v1
+
+    :done
+    return v0
+
+    .catch Ljava/lang/Throwable; {:try_start .. :try_end} :catch
+.end method
+
+.method public static novaPauseForBuffer()Z
     .locals 4
     sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
     if-eqz v0, :no
@@ -340,7 +405,7 @@ PLAYER_EXTRA = r'''.method public static novaPauseForBuffer()Z
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->pause()V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYER_NATIVE_PAUSE"
-    invoke-static {v0, v1}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     const/4 v0, 0x1
     return v0
     :no
@@ -362,7 +427,7 @@ PLAYER_EXTRA = r'''.method public static novaPauseForBuffer()Z
     invoke-interface {v1}, Lcom/archos/medialib/IMediaPlayer;->start()V
     const-string v0, "NovaBufGuard"
     const-string v1, "PLAYER_NATIVE_RESUME"
-    invoke-static {v0, v1}, Lcom/archos/filecorelibrary/NovaLocalLog;->i(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     :done
     return-void
 .end method
@@ -567,7 +632,7 @@ def apply(root:Path, report:Path|None=None):
         "webdav_native_buffer_mib":128,
         "low_ms":3000,"resume_ms":5000,"range_grace_ms":1000,
         "measurement":"absolute bytes delivered by StreamOverHttp to AVOS localhost socket, mapped to media time using file length/duration",
-        "ui":"reuse PlayerActivity native progress overlay"
+        "ui":"reuse PlayerActivity native progress overlay","local_log":"Android/data/<package>/files/logs/nova_debug.log; logcat mirrored; rotates above 10 MiB"
       }
     }
     if report:
