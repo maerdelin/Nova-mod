@@ -21,7 +21,7 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-def sub_once(text: str, pattern: str, repl: str, label: str) -> str:
+def sub_once(text: str, pattern: str, repl, label: str) -> str:
     out, count = re.subn(pattern, repl, text, count=1, flags=re.M)
     if count != 1:
         raise RuntimeError(f"{label}: expected one regex anchor, got {count}")
@@ -211,7 +211,7 @@ def patch_stream_video(path: Path) -> None:
     text = sub_once(
         text,
         r"(static\s+void\s+\*_player_thread\s*\(\s*void\s+\*data\s*\)\s*\n\{)",
-        REBUFFER_THREAD + r"\n\1",
+        lambda m: REBUFFER_THREAD + "\n" + m.group(1),
         "insert rebuffer thread",
     )
 
