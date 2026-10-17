@@ -2,6 +2,15 @@ import unittest
 from scripts import rebuffer_poststart as r
 
 class CleanMainPostStartRebufferTests(unittest.TestCase):
+    def test_method_regex_matches_real_smali_shape(self):
+        sample = """.method private publishInput(Ljava/io/InputStream;)V
+    .locals 2
+    return-void
+.end method
+"""
+        m = r._method(sample, ' publishInput(Ljava/io/InputStream;)V')
+        self.assertIn('.method private publishInput', m.group(0))
+
     def test_old_hard_gate_code_is_absent(self):
         src = open('scripts/rebuffer_poststart.py', encoding='utf-8').read()
         for token in ('initialHold', 'beforeNativeStart', 'awaitBudget', 'bufferStartHeldCurrent'):
