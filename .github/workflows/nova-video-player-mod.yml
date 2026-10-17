@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: nova-video-player-mod-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -103,7 +103,18 @@ jobs:
           target: default
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+          script: |
+            set -euo pipefail
+            adb logcat -c
+            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+            adb shell cmd package compile -m verify -f org.courville.nova | tee reports/art-package-verify.txt
+            sleep 2
+            adb logcat -d -v threadtime > reports/art-verifier-logcat.txt
+            if grep -E -i 'VerifyError|Verifier rejected class|FATAL EXCEPTION.*org\.courville\.nova' reports/art-verifier-logcat.txt; then
+              echo '::error::ART verifier/runtime error detected after full package verify'
+              exit 1
+            fi
+            printf '{"status":"PASS","package":"org.courville.nova","compiler_filter":"verify","forbidden_log_patterns":["VerifyError","Verifier rejected class"]}\n' > reports/art-verification.json
 
       - name: Verify official selection has not changed
         env:
