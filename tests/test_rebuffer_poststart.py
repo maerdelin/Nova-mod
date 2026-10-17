@@ -58,6 +58,13 @@ class CleanMainPostStartRebufferTests(unittest.TestCase):
         read = s[s.index('.method public declared-synchronized read([BII)I'):s.index('.end method', s.index('.method public declared-synchronized read([BII)I'))]
         self.assertLess(read.index('ensureBudget(I)V'), read.index('PipedInputStream;->read([BII)I'))
 
+    def test_bulk_read_is_capped_before_floor_check(self):
+        s = r.READ_AHEAD_SMALI
+        read = r._method(s, ' read([BII)I').group(0)
+        self.assertIn('const v0, 0x40000', read)
+        self.assertIn('move p3, v0', read)
+        self.assertLess(read.index('move p3, v0'), read.index('ensureBudget(I)V'))
+
     def test_resume_requires_strictly_above_45m(self):
         s = r.READ_AHEAD_SMALI
         ensure = s[s.index('.method private ensureBudget(I)V'):s.index('.end method', s.index('.method private ensureBudget(I)V'))]
