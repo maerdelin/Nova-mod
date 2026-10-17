@@ -32,10 +32,8 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 .implements Ljava/lang/Runnable;
 
 .field private static final TAG:Ljava/lang/String; = "NovaBufGuard"
-.field private static final LOW_MS:J = 0xbb8L
-.field private static final RESUME_MS:J = 0x1388L
-.field private static final ARM_PROGRESS_MS:I = 0x3e8
-.field private static final RANGE_GRACE_MS:J = 0x3e8L
+.field private static final LOW_BYTES:J = 0x1800000L
+.field private static final RESUME_BYTES:J = 0x2d00000L
 
 .field private static volatile active:Z
 .field private static volatile armed:Z
@@ -99,6 +97,11 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sget-wide v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->rangeStart:J
     add-long/2addr v2, v0
     sput-wide v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->deliveredAbs:J
+
+    sget-boolean v4, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
+    if-nez v4, :done
+    invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->onPlaybackStarted()V
+    :done
     return-void
 .end method
 
@@ -108,7 +111,8 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
     const/4 v0, 0x0
     sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
-    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
+    const/4 v3, 0x1
+    sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
 
     sget-object v1, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
     if-eqz v1, :thread
@@ -132,7 +136,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 
     :log
     const-string v1, "NovaBufGuard"
-    const-string v2, "PLAYBACK_ACTIVE startup=main-pass low=3000ms resume=5000ms"
+    const-string v2, "PLAYBACK_ACTIVE low=24MiB resume=45MiB source=proxy-or-player"
     invoke-static {v1, v2}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     return-void
 .end method
@@ -150,7 +154,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     return-void
 .end method
 
-.method private static logState(IJJZ)V
+.method private static logState(IJZ)V
     .locals 6
     invoke-static {}, Landroid/os/SystemClock;->uptimeMillis()J
     move-result-wide v0
@@ -166,19 +170,12 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     const-string v1, "STATE posMs="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     invoke-virtual {v0, p0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-    const-string v1, " delivered="
+    const-string v1, " aheadBytes="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     invoke-virtual {v0, p1, p2}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
-    const-string v1, " aheadMs="
-    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v0, p3, p4}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
     const-string v1, " buffering="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v0, p5}, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
-    const-string v1, " armed="
-    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
-    invoke-virtual {v0, v2}, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
+    invoke-virtual {v0, p3}, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
     invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v0
     const-string v1, "NovaBufGuard"
@@ -227,46 +224,14 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     const-wide/16 v11, 0x0
 
     :ahead_nonnegative
-    int-to-long v9, v1
-    mul-long/2addr v11, v9
-    div-long/2addr v11, v3
-
     sget-boolean v13, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
-    invoke-static {v2, v5, v6, v11, v12, v13}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logState(IJJZ)V
-
-    invoke-static {}, Landroid/os/SystemClock;->uptimeMillis()J
-    move-result-wide v9
-    sget-wide v13, Lcom/archos/filecorelibrary/NovaBufferGuard;->lastRangeChangeMs:J
-    sub-long/2addr v9, v13
-    const-wide/16 v13, 0x3e8
-    cmp-long v15, v9, v13
-    if-ltz v15, :arm_check
-    goto :loop
-
-    :arm_check
-    sget-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
-    if-nez v9, :enforce
-    sget v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->playbackStartPos:I
-    sub-int v9, v2, v9
-    const/16 v10, 0x3e8
-    if-ge v9, v10, :arm_now
-    const-wide/16 v9, 0x1388
-    cmp-long v13, v11, v9
-    if-ltz v13, :arm_now
-    goto :loop
-
-    :arm_now
-    const/4 v9, 0x1
-    sput-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->armed:Z
-    const-string v9, "NovaBufGuard"
-    const-string v10, "GUARD_ARMED after-normal-playback"
-    invoke-static {v9, v10}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
+    invoke-static {v2, v11, v12, v13}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logState(IJZ)V
 
     :enforce
     sget-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     if-eqz v9, :not_buffering
 
-    const-wide/16 v9, 0x1388
+    const-wide/32 v9, 0x2d00000
     cmp-long v13, v11, v9
     if-gez v13, :loop
 
@@ -275,12 +240,12 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sput-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     invoke-static {v9}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v9, "NovaBufGuard"
-    const-string v10, "RESUME ahead>=5000ms"
+    const-string v10, "RESUME ahead>=45MiB"
     invoke-static {v9, v10}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 
     :not_buffering
-    const-wide/16 v9, 0xbb8
+    const-wide/32 v9, 0x1800000
     cmp-long v13, v11, v9
     if-ltz v13, :loop
 
@@ -291,7 +256,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sput-boolean v9, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     invoke-static {v9}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v9, "NovaBufGuard"
-    const-string v10, "PAUSE ahead<3000ms"
+    const-string v10, "PAUSE ahead<24MiB"
     invoke-static {v9, v10}, Lcom/archos/mediacenter/video/player/Player;->novaLog(Ljava/lang/String;Ljava/lang/String;)I
     goto :loop
 .end method
@@ -628,10 +593,10 @@ def apply(root:Path, report:Path|None=None):
     result={
       "status":"PASS","player":ps,"activity":acts,"session":ss,"stream":sts,
       "policy":{
-        "startup":"unchanged; guard activates only after IMediaPlayer.start and mCurrentState PLAYING",
+        "startup":"guard may activate from first primary WebDAV proxy bytes; pause below 24 MiB and resume at 45 MiB",
         "webdav_native_buffer_mib":128,
-        "low_ms":3000,"resume_ms":5000,"range_grace_ms":1000,
-        "measurement":"absolute bytes delivered by StreamOverHttp to AVOS localhost socket, mapped to media time using file length/duration",
+        "low_bytes":25165824,"resume_bytes":47185920,
+        "measurement":"absolute bytes delivered by StreamOverHttp to AVOS localhost socket minus estimated consumed bytes",
         "ui":"reuse PlayerActivity native progress overlay","local_log":"Android/data/<package>/files/logs/nova_debug.log; logcat mirrored; rotates above 10 MiB"
       }
     }
