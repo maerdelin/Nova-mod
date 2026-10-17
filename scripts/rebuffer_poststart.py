@@ -332,7 +332,11 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     iget-object v1, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeOut:Ljava/io/PipedOutputStream;
     invoke-virtual {v1}, Ljava/io/PipedOutputStream;->close()V
     :try_end_1
-    .catch Ljava/io/IOException; {:try_start_1 .. :try_end_1} :done
+    .catch Ljava/io/IOException; {:try_start_1 .. :try_end_1} :close_pipe_fail
+    goto :done
+
+    :close_pipe_fail
+    move-exception v2
 
     :done
     return-void
@@ -418,21 +422,33 @@ READ_AHEAD_SMALI = r'''.class public final Lcom/archos/filecorelibrary/NetworkRe
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->source:Ljava/io/InputStream;
     invoke-virtual {v0}, Ljava/io/InputStream;->close()V
     :try_end_0
-    .catch Ljava/io/IOException; {:try_start_0 .. :try_end_0} :close_in
+    .catch Ljava/io/IOException; {:try_start_0 .. :try_end_0} :source_close_fail
+    goto :close_in
+
+    :source_close_fail
+    move-exception v1
 
     :close_in
     :try_start_1
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeIn:Ljava/io/PipedInputStream;
     invoke-virtual {v0}, Ljava/io/PipedInputStream;->close()V
     :try_end_1
-    .catch Ljava/io/IOException; {:try_start_1 .. :try_end_1} :close_out
+    .catch Ljava/io/IOException; {:try_start_1 .. :try_end_1} :in_close_fail
+    goto :close_out
+
+    :in_close_fail
+    move-exception v1
 
     :close_out
     :try_start_2
     iget-object v0, p0, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->pipeOut:Ljava/io/PipedOutputStream;
     invoke-virtual {v0}, Ljava/io/PipedOutputStream;->close()V
     :try_end_2
-    .catch Ljava/io/IOException; {:try_start_2 .. :try_end_2} :done
+    .catch Ljava/io/IOException; {:try_start_2 .. :try_end_2} :out_close_fail
+    goto :done
+
+    :out_close_fail
+    move-exception v1
 
     :done
     return-void
@@ -476,8 +492,8 @@ SESSION_POLICY_SMALI = r'''.method private shouldUseNovaReadAhead()Z
     add-long/2addr v0, v2
 
     const-wide/32 v5, 0x800000
-    cmp-long v0, v0, v5
-    if-lez v0, :no
+    cmp-long v4, v0, v5
+    if-lez v4, :no
 
     :yes
     const/4 v0, 0x1
