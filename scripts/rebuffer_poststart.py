@@ -755,3 +755,142 @@ def apply(root: Path, report: Path | None = None):
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(result, indent=2) + '\n')
     return result
+
+def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
+    """Strict apktool round-trip check with semantic normalization for jumbo strings."""
+    sa = g.resource_map(expected)
+    sb = g.resource_map(actual)
+    ia = g.class_index(expected)
+    ib = g.class_index(actual)
+    bad = []
+    details = []
+
+    if ia.keys() != ib.keys():
+        bad.append('class set differs')
+
+    for name in sorted(ia.keys() & ib.keys()):
+        a = ia[name].read_text()
+        b = ib[name].read_text()
+        an = a.replace('const-string/jumbo', 'const-string')
+        bn = b.replace('const-string/jumbo', 'const-string')
+        la = g.logical_class(an, sa)
+        lb = g.logical_class(bn, sb)
+        if la != lb:
+            bad.append(name)
+            entry = {'class': name, 'header_equal': la['header'] == lb['header'], 'methods': []}
+            keys = sorted(set(la['methods']) | set(lb['methods']))
+            for mk in keys:
+                am = la['methods'].get(mk)
+                bm = lb['methods'].get(mk)
+                if am == bm:
+                    continue
+                if am is None or bm is None:
+                    entry['methods'].append({'method': mk, 'status': 'added_or_removed'})
+                    continue
+                first = next((i for i, (x, y) in enumerate(zip(am, bm)) if x != y), min(len(am), len(bm)))
+                entry['methods'].append({
+                    'method': mk,
+                    'first_diff_index': first,
+                    'expected_context': am[max(0, first-5):first+10],
+                    'roundtrip_context': bm[max(0, first-5):first+10],
+                    'expected_len': len(am),
+                    'roundtrip_len': len(bm),
+                })
+            details.append(entry)
+
+    aa = {p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
+          if p.relative_to(expected).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
+    bb = {p.relative_to(actual).as_posix() for p in actual.rglob('*.xml')
+          if p.relative_to(actual).as_posix().startswith(('res/', 'AndroidManifest.xml'))}
+    if aa != bb:
+        bad.append('XML resource set differs')
+    for path in sorted(aa & bb):
+        if (expected / path).read_bytes() != (actual / path).read_bytes():
+            if g.logical_xml(g.ET.parse(expected / path).getroot()) != g.logical_xml(g.ET.parse(actual / path).getroot()):
+                bad.append(path)
+
+    policy_bad = []
+    for root, label in ((expected, 'expected'), (actual, 'roundtrip')):
+        ra = _one(root.glob('smali*/com/archos/filecorelibrary/NetworkReadAheadInputStream.smali'), label + ' read-ahead')
+        rt = ra.read_text()
+        for forbidden in ('initialHold', 'beforeNativeStart', 'awaitBudget', 'bufferStartHeldCurrent', 'INITIAL_HOLD'):
+            if forbidden in rt:
+                policy_bad.append(label + ': legacy startup gate remains: ' + forbidden)
+        for required in (
+            '.field private static final CAPACITY:I = 0x4000000',
+            '.field private static final LOW_WATERMARK:I = 0x1800000',
+            '.field private static final RESUME_WATERMARK:I = 0x2d00000',
+            'PLAYBACK_STARTED main-start-complete protection-waiting-for-24MiB',
+            'PROTECTION_ARMED buffer>=24MiB',
+            'HARD_PAUSE before-crossing-24MiB',
+            'HARD_RESUME buffer>45MiB',
+            'Player;->bufferPauseCurrent()Z',
+            'Player;->bufferResumeCurrent()V',
+        ):
+            if required not in rt:
+                policy_bad.append(label + ': read-ahead invariant missing: ' + required)
+
+        ensure = _method(rt, ' ensureBudget(I)V').group(0)
+        if 'add-int v2, v1, p1' not in ensure:
+            policy_bad.append(label + ': read budget is not included in 24MiB floor')
+        if 'const v1, 0x2d00000' not in ensure or not re.search(r'if-le v0, v1, :\S+', ensure):
+            policy_bad.append(label + ': resume is not strictly above 45MiB')
+        bulk = _method(rt, ' read([BII)I').group(0)
+        if 'declared-synchronized read([BII)I' not in bulk.splitlines()[0]:
+            policy_bad.append(label + ': bulk read is not serialized')
+        if 'ensureBudget(I)V' not in bulk or bulk.find('ensureBudget(I)V') > bulk.find('PipedInputStream;->read([BII)I'):
+            policy_bad.append(label + ': floor check does not precede consumption')
+
+        player = _one(root.glob('smali*/com/archos/mediacenter/video/player/Player.smali'), label + ' Player')
+        pt = player.read_text()
+        start = _method(pt, ' start(I)V').group(0)
+        native_start = start.find('IMediaPlayer;->start()V')
+        state_playing = start.find('->mCurrentState:I', native_start)
+        effect = start.find('VideoEffectRenderer;->onPlay()V', state_playing)
+        activate = start.find('NetworkReadAheadInputStream;->onPlaybackStarted()V', state_playing)
+        if not (0 <= native_start < state_playing < activate):
+            policy_bad.append(label + ': protection activation is not after native start and PLAYING state')
+        if effect >= 0 and activate < effect:
+            policy_bad.append(label + ': protection activates before original VideoEffectRenderer.onPlay')
+        pre_start = start[:native_start]
+        if any(x in pre_start for x in ('0x1800000', '0x2d00000', 'ensureBudget', 'onPlaybackStarted')):
+            policy_bad.append(label + ': watermark/startup gate appears before native start')
+        if start.count('NetworkReadAheadInputStream;->onPlaybackStarted()V') != 1:
+            policy_bad.append(label + ': playback activation call count is not exactly one')
+
+        pause = _method(pt, ' pause(I)V').group(0)
+        stop = _method(pt, ' stopPlayback()V').group(0)
+        if 'onPlaybackStopped()V' not in pause or 'cancelBufferPause()V' not in pause:
+            policy_bad.append(label + ': manual pause does not disarm automatic resume')
+        if 'onPlaybackStopped()V' not in stop or 'cancelBufferPause()V' not in stop:
+            policy_bad.append(label + ': stop does not disarm automatic resume')
+
+        info = _method(pt, ' onInfo(Lcom/archos/medialib/IMediaPlayer;II)Z').group(0)
+        if 'const/16 v2, 0x2bd' not in info or 'NetworkReadAheadInputStream;->forceArm()V' not in info:
+            policy_bad.append(label + ': native BUFFERING_START does not arm byte-floor protection')
+
+        session = _one(root.glob('smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali'), label + ' HttpSession')
+        st = session.read_text()
+        policy = _method(st, ' shouldUseNovaReadAhead()Z').group(0)
+        for required in ('supersedableMediaRequest:Z', '"webdav"', '"webdavs"', 'const-wide/32 v5, 0x800000'):
+            if required not in policy:
+                policy_bad.append(label + ': WebDAV long-request policy missing ' + required)
+        publish = _method(st, ' publishInput(Ljava/io/InputStream;)V').group(0)
+        if publish.count('NetworkReadAheadInputStream;->wrap') != 1:
+            policy_bad.append(label + ': read-ahead wrapper call count is not one')
+
+    bad.extend(policy_bad)
+    g.write_json(report.parent / 'roundtrip-method-diff.json', {'differences': details})
+    result = {
+        'status': 'FAIL' if bad else 'PASS',
+        'classes_compared': len(ia),
+        'xml_files_compared': len(aa),
+        'differences': bad,
+        'normalization': 'const-string/jumbo treated as semantic const-string equivalent',
+        'policy_checks': 'clean-main post-start activation, no startup watermark gate, 24MiB floor, >45MiB resume',
+    }
+    g.write_json(report, result)
+    if bad:
+        raise RuntimeError('Post-start roundtrip verification failed: ' + str(bad[:30]))
+    return result
+
