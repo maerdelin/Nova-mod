@@ -21,6 +21,13 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
+def sub_once(text: str, pattern: str, repl: str, label: str) -> str:
+    out, count = re.subn(pattern, repl, text, count=1, flags=re.M)
+    if count != 1:
+        raise RuntimeError(f"{label}: expected one regex anchor, got {count}")
+    return out
+
+
 def check_head(root: Path) -> str:
     head = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
@@ -43,17 +50,17 @@ def patch_stream_h(path: Path) -> None:
     )
     # Append fields at the END of STREAM so all existing field offsets remain
     # byte-for-byte ABI compatible with official companion native libraries.
-    text = replace_once(
+    text = sub_once(
         text,
-        "\tint\t\tfps_start;\n\tint\t\tfps_count;\n\tvoid\t\t*surface_handle;\n\n} STREAM;",
-        "\tint\t\tfps_start;\n\tint\t\tfps_count;\n\tvoid\t\t*surface_handle;\n\n"
-        "\t// Nova native WebDAV rebuffer state. Appended for ABI safety.\n"
+        r"(\n\s*int\s+fps_start;\n\s*int\s+fps_count;\n\s*void\s+\*surface_handle;\n)(\s*\n}\s*STREAM;)",
+        r"\1"
+        "\n\t// Nova native WebDAV rebuffer state. Appended for ABI safety.\n"
         "\tpthread_t\trebuffer_thread_handle;\n"
         "\tint\t\trebuffer_thread_started;\n"
         "\tTHREAD_STATE\trebuffer_tstate;\n"
         "\tvolatile int\trebuffering;\n"
-        "\tvolatile int\trebuffer_user_paused;\n\n"
-        "} STREAM;",
+        "\tvolatile int\trebuffer_user_paused;\n"
+        r"\2",
         "STREAM tail rebuffer fields",
     )
     path.write_text(text)
@@ -185,11 +192,10 @@ def patch_stream_video(path: Path) -> None:
         "rebuffer constants",
     )
 
-    text = replace_once(
+    text = sub_once(
         text,
-        "static void\t*_parser_thread( void *data );\n",
-        "static void\t*_parser_thread( void *data );\n"
-        "static void\t*_rebuffer_thread( void *data );\n",
+        r"(static\s+void\s+\*_parser_thread\s*\(\s*void\s+\*data\s*\);\n)",
+        r"\1static void\t*_rebuffer_thread( void *data );\n",
         "rebuffer forward declaration",
     )
 
@@ -200,10 +206,10 @@ def patch_stream_video(path: Path) -> None:
         "parser continues during rebuffer",
     )
 
-    text = replace_once(
+    text = sub_once(
         text,
-        "static void *_player_thread( void *data )\n{",
-        REBUFFER_THREAD + "\nstatic void *_player_thread( void *data )\n{",
+        r"(static\s+void\s+\*_player_thread\s*\(\s*void\s+\*data\s*\)\s*\n\{)",
+        REBUFFER_THREAD + r"\n\1",
         "insert rebuffer thread",
     )
 
