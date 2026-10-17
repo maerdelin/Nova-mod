@@ -60,6 +60,8 @@ def patch_stream_h(path: Path) -> None:
         "\tTHREAD_STATE\trebuffer_tstate;\n"
         "\tvolatile int\trebuffering;\n"
         "\tvolatile int\trebuffer_user_paused;\n"
+        "\tvolatile int\trebuffer_play_requested;\n"
+        "\tvolatile int\trebuffer_frame_seen;\n"
         r"\2",
         "STREAM tail rebuffer fields",
     )
@@ -71,11 +73,9 @@ REBUFFER_THREAD = r'''
 //
 //  WebDAV native rebuffer monitor
 //
-//  WebDAV playback is marked by the 128 MiB AVOS parser buffer configured by
-//  the Java entry point. This monitor reads the real FFmpeg packet-queue byte
-//  count. It uses the normal AVOS pause/resume machinery to freeze clocks,
-//  AudioTrack and decoder output, while parser_thread is explicitly allowed to
-//  keep parsing during rebuffering.
+//  The controller is inactive during prepare/preroll. It may enter automatic
+//  rebuffering only after AVOS received a real Start command AND a video frame
+//  has subsequently been submitted to the video sink.
 //
 // *****************************************************************************
 static int _nova_rebuffer_eof( STREAM *s )
@@ -104,17 +104,26 @@ static void *_rebuffer_thread( void *data )
                 if( pst && pst->buffer_size >= NOVA_REBUFFER_ARM_BYTES ) {
                     int used = pst->buffer_used;
                     int eof = _nova_rebuffer_eof( s );
+                    int active = __atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE );
 
-                    if( !s->rebuffering ) {
-                        if( !s->paused && !s->stream_end &&
+                    if( !active ) {
+                        int play_requested = __atomic_load_n(
+                            &s->rebuffer_play_requested, __ATOMIC_ACQUIRE );
+                        int frame_seen = __atomic_load_n(
+                            &s->rebuffer_frame_seen, __ATOMIC_ACQUIRE );
+
+                        if( play_requested && frame_seen &&
+                            !s->paused && !s->stream_end &&
                             s->video_error == VE_NO_ERROR && !eof &&
                             used < NOVA_REBUFFER_LOW_BYTES ) {
-                            s->rebuffering = 1;
-                            s->rebuffer_user_paused = 0;
+                            __atomic_store_n( &s->rebuffering, 1, __ATOMIC_RELEASE );
+                            __atomic_store_n(
+                                &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
 
                             int was_paused = stream_pause( s );
                             if( was_paused ) {
-                                s->rebuffering = 0;
+                                __atomic_store_n(
+                                    &s->rebuffering, 0, __ATOMIC_RELEASE );
                             } else {
                                 last_wait_log = atime();
                                 serprintf(
@@ -126,19 +135,20 @@ static void *_rebuffer_thread( void *data )
                             }
                         }
                     } else {
+                        int user_paused = __atomic_load_n(
+                            &s->rebuffer_user_paused, __ATOMIC_ACQUIRE );
                         int now = atime();
                         if( now - last_wait_log >= 1000 ) {
                             last_wait_log = now;
                             serprintf(
                                 "NOVA_REBUFFER_WAIT: used=%d resume=%d size=%d user_paused=%d\n",
                                 used, NOVA_REBUFFER_RESUME_BYTES,
-                                pst->buffer_size, s->rebuffer_user_paused );
+                                pst->buffer_size, user_paused );
                         }
 
                         if( eof || s->stream_end ||
                             s->video_error != VE_NO_ERROR ||
                             used >= NOVA_REBUFFER_RESUME_BYTES ) {
-                            int user_paused = s->rebuffer_user_paused;
                             const char *reason =
                                 s->video_error != VE_NO_ERROR ? "error" :
                                 (eof || s->stream_end) ? "eof" : "threshold";
@@ -152,19 +162,27 @@ static void *_rebuffer_thread( void *data )
                             if( !user_paused )
                                 stream_un_pause( s, 0 );
 
-                            s->rebuffer_user_paused = 0;
-                            s->rebuffering = 0;
+                            __atomic_store_n(
+                                &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
+                            __atomic_store_n(
+                                &s->rebuffering, 0, __ATOMIC_RELEASE );
                         }
                     }
-                } else if( s->rebuffering ) {
-                    int user_paused = s->rebuffer_user_paused;
-                    serprintf("NOVA_REBUFFER_EXIT: disabled user_paused=%d\n", user_paused);
+                } else if( __atomic_load_n(
+                    &s->rebuffering, __ATOMIC_ACQUIRE ) ) {
+                    int user_paused = __atomic_load_n(
+                        &s->rebuffer_user_paused, __ATOMIC_ACQUIRE );
+                    serprintf(
+                        "NOVA_REBUFFER_EXIT: disabled user_paused=%d\n",
+                        user_paused );
                     if( s->message_cb )
                         s->message_cb( s, STREAM_BUFFERING_END );
                     if( !user_paused )
                         stream_un_pause( s, 0 );
-                    s->rebuffer_user_paused = 0;
-                    s->rebuffering = 0;
+                    __atomic_store_n(
+                        &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
+                    __atomic_store_n(
+                        &s->rebuffering, 0, __ATOMIC_RELEASE );
                 }
             }
         }
@@ -203,9 +221,28 @@ def patch_stream_video(path: Path) -> None:
         text,
         r"if\s*\(\s*!s->paused\s*\|\|\s*s->play_n_video_frames\s*\|\|\s*"
         r"s->play_n_audio_frames\s*\|\|\s*s->parser_parse_once\s*\)\s*\{",
-        "if( !s->paused || s->rebuffering || s->play_n_video_frames || "
-        "s->play_n_audio_frames || s->parser_parse_once ) {",
+        "if( !s->paused || __atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE ) || "
+        "s->play_n_video_frames || s->play_n_audio_frames || s->parser_parse_once ) {",
         "parser continues during rebuffer",
+    )
+
+    text = replace_once(
+        text,
+        "static void _seek_init( STREAM *s )\n{\n\ts->seek = 1;",
+        "static void _seek_init( STREAM *s )\n{\n"
+        "\t__atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );\n"
+        "\ts->seek = 1;",
+        "reset rebuffer first-frame proof on seek",
+    )
+
+    text = replace_once(
+        text,
+        "\ts->video_sink_count ++;\n\tpthread_mutex_unlock( &s->video_sink_mutex );",
+        "\ts->video_sink_count ++;\n"
+        "\tif( __atomic_load_n( &s->rebuffer_play_requested, __ATOMIC_ACQUIRE ) )\n"
+        "\t\t__atomic_store_n( &s->rebuffer_frame_seen, 1, __ATOMIC_RELEASE );\n"
+        "\tpthread_mutex_unlock( &s->video_sink_mutex );",
+        "prove first frame reached video sink",
     )
 
     text = sub_once(
@@ -246,8 +283,10 @@ def patch_stream_c(path: Path) -> None:
         thread_state_set( &s->rebuffer_tstate, THREAD_EXIT );
         apthread_join( s->rebuffer_thread_handle, NULL );
         s->rebuffer_thread_started = 0;
-        s->rebuffering = 0;
-        s->rebuffer_user_paused = 0;
+        __atomic_store_n( &s->rebuffering, 0, __ATOMIC_RELEASE );
+        __atomic_store_n( &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
+        __atomic_store_n( &s->rebuffer_play_requested, 0, __ATOMIC_RELEASE );
+        __atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );
         pthread_cond_destroy( &s->rebuffer_tstate._cond );
         pthread_mutex_destroy( &s->rebuffer_tstate._mutex );
 DBGS   serprintf("rebuffer_thread joined\r\n");
@@ -287,13 +326,18 @@ def patch_avos_mp_video(path: Path) -> None:
         "\t\tstream_un_pause_from_jni(video->s, 0);",
         "int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)\n"
         "{\n"
-        "\tif (video->s->rebuffering) {\n"
-        "\t\tvideo->s->rebuffer_user_paused = 0;\n"
+        "\t// A real AVOS Start is the first permission for low-water control.\n"
+        "\t__atomic_store_n(&video->s->rebuffer_play_requested, 1, __ATOMIC_RELEASE);\n"
+        "\t__atomic_store_n(&video->s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE);\n"
+        "\tif (__atomic_load_n(&video->s->rebuffering, __ATOMIC_ACQUIRE)) {\n"
+        "\t\t// This path is reachable only after prior real playback entered\n"
+        "\t\t// automatic rebuffering. Keep waiting for the resume watermark.\n"
+        "\t\t__atomic_store_n(&video->s->rebuffer_user_paused, 0, __ATOMIC_RELEASE);\n"
         "\t\treturn AVOS_ERR_OK;\n"
         "\t}\n"
         "\tif (stream_is_paused(video->s))\n"
         "\t\tstream_un_pause_from_jni(video->s, 0);",
-        "manual start during rebuffer",
+        "real play arms rebuffer lifecycle",
     )
 
     text = replace_once(
@@ -303,13 +347,15 @@ def patch_avos_mp_video(path: Path) -> None:
         "\tif (is_stream_pauseable(mp, video))",
         "int avos_mp_video_pause(avos_mp_t *mp, avos_mp_video_t *video)\n"
         "{\n"
-        "\tif (video->s->rebuffering) {\n"
-        "\t\t// manual pause issued while buffering: user pause wins.\n"
-        "\t\tvideo->s->rebuffer_user_paused = 1;\n"
+        "\t__atomic_store_n(&video->s->rebuffer_play_requested, 0, __ATOMIC_RELEASE);\n"
+        "\t__atomic_store_n(&video->s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE);\n"
+        "\tif (__atomic_load_n(&video->s->rebuffering, __ATOMIC_ACQUIRE)) {\n"
+        "\t\t// Manual pause issued while buffering: user pause wins.\n"
+        "\t\t__atomic_store_n(&video->s->rebuffer_user_paused, 1, __ATOMIC_RELEASE);\n"
         "\t\treturn AVOS_ERR_OK;\n"
         "\t}\n"
         "\tif (is_stream_pauseable(mp, video))",
-        "manual pause during rebuffer",
+        "manual pause disarms rebuffer lifecycle",
     )
 
     path.write_text(text)
@@ -328,13 +374,14 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "status": "PASS",
         "aos_avos_commit": head,
         "architecture": "native AVOS rebuffer monitor; normal pause freezes consumers while parser continues",
-        "activation": "parser buffer_size >= 128 MiB (set only for WebDAV by APK patch)",
+        "activation": "128MiB WebDAV parser buffer + real AVOS Start + first frame submitted to video sink",
         "measurement": "STREAM_PARSER_STATS.buffer_used = FFmpeg audio queue bytes + video queue bytes",
+        "startup_policy": "prepare/preroll/seek preview cannot enter automatic rebuffer",
         "low_bytes": LOW_BYTES,
         "resume_bytes": RESUME_BYTES,
         "poll_ms": POLL_MS,
         "abi_safety": "new STREAM fields appended at struct tail; existing offsets unchanged",
-        "manual_pause_policy": "user pause wins; automatic resume is suppressed until user starts again",
+        "manual_pause_policy": "manual pause disarms low-water entry; automatic resume is suppressed until user starts again",
         "events": ["MEDIA_INFO_BUFFERING_START", "MEDIA_INFO_BUFFERING_END"],
     }
     if report:
