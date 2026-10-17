@@ -573,7 +573,10 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     bad = []
     if ia.keys() != ib.keys():
         bad.append("class set differs")
+    intentional = {"Lcom/archos/filecorelibrary/NovaBufferGuard;"}
     for name in ia.keys() & ib.keys():
+        if name in intentional:
+            continue
         a = ia[name].read_text().replace("const-string/jumbo", "const-string")
         b = ib[name].read_text().replace("const-string/jumbo", "const-string")
         if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
@@ -588,6 +591,39 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         if (expected/path).read_bytes() != (actual/path).read_bytes():
             if g.logical_xml(g.ET.parse(expected/path).getroot()) != g.logical_xml(g.ET.parse(actual/path).getroot()):
                 bad.append(path)
+    for root, label in ((expected, "candidate"), (actual, "roundtrip")):
+        guard = one(root.glob("smali*/com/archos/filecorelibrary/NovaBufferGuard.smali"), label + " guard").read_text()
+        for token in (
+            "LOW_MS:J = 0xbb8L",
+            "RESUME_MS:J = 0x1388L",
+            "onBytes(IJJJI)V",
+            "PLAYBACK_ACTIVE startup=main-pass low=3000ms resume=5000ms",
+            "PAUSE ahead<3000ms",
+            "RESUME ahead>=5000ms",
+            "logState()V",
+        ):
+            if token not in guard:
+                bad.append(label + ": guard missing " + token)
+
+        player = one(root.glob("smali*/com/archos/mediacenter/video/player/Player.smali"), label + " Player").read_text()
+        start_block = method(player, " start(I)V").group(0)
+        native_start = start_block.find("IMediaPlayer;->start()V")
+        guard_start = start_block.find("NovaBufferGuard;->onPlaybackStarted()V")
+        if native_start < 0 or guard_start < 0 or guard_start < native_start:
+            bad.append(label + ": guard activation not after native start")
+        for token in ("novaPauseForBuffer()Z", "novaResumeFromBuffer()V", "novaSetBufferingUi(Z)V"):
+            if token not in player:
+                bad.append(label + ": Player missing " + token)
+
+        stream = one(root.glob("smali*/com/archos/filecorelibrary/StreamOverHttp.smali"), label + " StreamOverHttp").read_text()
+        if "HttpSession;->novaDelivered(I)V" not in stream:
+            bad.append(label + ": copyStream delivery hook missing")
+
+        session = one(root.glob("smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali"), label + " HttpSession").read_text()
+        for token in ("novaDelivered(I)V", "supersedableMediaRequest:Z", "ReadMode;->PLAYBACK", '"webdav"', '"webdavs"'):
+            if token not in session:
+                bad.append(label + ": HttpSession missing " + token)
+
     result = {
         "status": "FAIL" if bad else "PASS",
         "classes_compared": len(ia),
