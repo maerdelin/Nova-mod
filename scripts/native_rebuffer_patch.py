@@ -199,10 +199,12 @@ def patch_stream_video(path: Path) -> None:
         "rebuffer forward declaration",
     )
 
-    text = replace_once(
+    text = sub_once(
         text,
-        "if( !s->paused || s->play_n_video_frames || s->play_n_audio_frames || s->parser_parse_once ) {",
-        "if( !s->paused || s->rebuffering || s->play_n_video_frames || s->play_n_audio_frames || s->parser_parse_once ) {",
+        r"if\s*\(\s*!s->paused\s*\|\|\s*s->play_n_video_frames\s*\|\|\s*"
+        r"s->play_n_audio_frames\s*\|\|\s*s->parser_parse_once\s*\)\s*\{",
+        "if( !s->paused || s->rebuffering || s->play_n_video_frames || "
+        "s->play_n_audio_frames || s->parser_parse_once ) {",
         "parser continues during rebuffer",
     )
 
