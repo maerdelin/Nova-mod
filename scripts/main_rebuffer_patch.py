@@ -209,6 +209,31 @@ def apply(root: Path, report: Path|None=None):
 
 
 def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
+    def _smali_const_value(line: str, reg: str):
+        m=re.fullmatch(r'const(?P<kind>/4|/16|/high16)? '+re.escape(reg)+r', (?P<value>-?0x[0-9a-fA-F]+|-?\\d+)', line.strip())
+        if not m:
+            return None
+        raw=m.group('value')
+        value=int(raw,16) if raw.startswith('0x') else (-int(raw[3:],16) if raw.startswith('-0x') else int(raw))
+        if m.group('kind')=='/high16':
+            value <<= 16
+        return value
+
+    def _has_const_flow(body: str, reg: str, value: int, follow: str):
+        lines=[g.clean(x) for x in body.splitlines()]
+        lines=[x for x in lines if x]
+        for i,line in enumerate(lines):
+            if _smali_const_value(line,reg)!=value:
+                continue
+            for nxt in lines[i+1:i+6]:
+                if nxt.startswith(':'):
+                    continue
+                if follow in nxt:
+                    return True
+                if nxt.startswith('const') and (' '+reg+',') in nxt:
+                    break
+        return False
+
     sa=g.resource_map(expected); sb=g.resource_map(actual)
     ia=g.class_index(expected); ib=g.class_index(actual); bad=[]
     if ia.keys()!=ib.keys():
@@ -299,8 +324,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 if 'started:Z' not in m or 'Ljava/io/InputStream;' not in m:
                     bad.append(label+': '+sig+' lacks direct-main pre-start path')
             br=_method(rt,' beforeRead(I)V').group(0)
-            low_ok=(('const v1, 0x1800000\n    add-int v2, v1, p1' in br) or ('const/high16 v1, 0x180\n    add-int v2, v1, p1' in br))
-            resume_ok=(('const v1, 0x2d00000\n    if-le v0, v1, :' in br) or ('const/high16 v1, 0x2d0\n    if-le v0, v1, :' in br))
+            low_ok=_has_const_flow(br,'v1',0x1800000,'add-int v2, v1, p1')
+            resume_ok=_has_const_flow(br,'v1',0x2d00000,'if-le v0, v1, :')
             if not low_ok:
                 bad.append(label+': 24 MiB floor/budget check missing')
             if not resume_ok:
