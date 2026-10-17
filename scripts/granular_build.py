@@ -12,6 +12,7 @@ import sys
 import zipfile
 import granular as g
 import check_upstream as upstream
+import rebuffer_after_start as rebuffer
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -87,6 +88,7 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    rebuffer.apply(candidate, args.reports / 'rebuffer-after-start.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +101,7 @@ def main():
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
+        'rebuffer_policy': 'clean main startup; WebDAV prefetch only; protection activates after IMediaPlayer.start; pause <24MiB; resume >45MiB; cap 64MiB',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 
