@@ -222,8 +222,11 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         if name in intentional:
             continue
         a=ia[name].read_text(); b=ib[name].read_text()
-        if a!=b and g.logical_class(a,sa)!=g.logical_class(b,sb):
-            bad.append(name)
+        if a!=b:
+            an=a.replace('const-string/jumbo','const-string')
+            bn=b.replace('const-string/jumbo','const-string')
+            if g.logical_class(an,sa)!=g.logical_class(bn,sb):
+                bad.append(name)
 
     aa={p.relative_to(expected).as_posix() for p in expected.rglob('*.xml')
         if p.relative_to(expected).as_posix().startswith(('res/','AndroidManifest.xml'))}
@@ -288,16 +291,19 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
             if 'PipedInputStream' in ctor or 'Thread;->start()V' in ctor:
                 bad.append(label+': pre-start constructor starts buffering')
             act=_method(rt,' activateInstance()V').group(0)
-            if 'PipedInputStream' not in act or '0x4000000' not in act or 'Thread;->start()V' not in act:
+            cap_ok=('const v1, 0x4000000' in act or 'const/high16 v1, 0x400' in act)
+            if 'PipedInputStream' not in act or not cap_ok or 'Thread;->start()V' not in act:
                 bad.append(label+': activation does not create/start 64 MiB producer')
             for sig in (' read()I',' read([BII)I',' skip(J)J',' available()I'):
                 m=_method(rt,sig).group(0)
                 if 'started:Z' not in m or 'Ljava/io/InputStream;' not in m:
                     bad.append(label+': '+sig+' lacks direct-main pre-start path')
             br=_method(rt,' beforeRead(I)V').group(0)
-            if 'const v1, 0x1800000' not in br or 'add-int v2, v1, p1' not in br:
+            low_ok=(re.search(r'(?:const v1, 0x1800000|const/high16 v1, 0x180)\\n\\s*add-int v2, v1, p1',br) is not None)
+            resume_ok=(re.search(r'(?:const v1, 0x2d00000|const/high16 v1, 0x2d0)\\n\\s*if-le v0, v1, :\\S+',br) is not None)
+            if not low_ok:
                 bad.append(label+': 24 MiB floor/budget check missing')
-            if 'const v1, 0x2d00000' not in br or 'if-le v0, v1, :wait' not in br:
+            if not resume_ok:
                 bad.append(label+': strict >45 MiB resume check missing')
             throws=[x.strip() for x in rt.splitlines() if x.strip().startswith('throw ')]
             if throws not in (['throw v1','throw v1'],):
