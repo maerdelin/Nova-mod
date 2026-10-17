@@ -420,7 +420,24 @@ def apply(root: Path, patch: dict, report: Path | None=None):
     return result
 
 def logical_method(text: str, symbols):
-    ls=tokens(text,symbols);_,labels=shape_data(ls)
+    raw=tokens(text,symbols)
+    ls=[]; meta=[]; i=0
+    while i<len(raw):
+        x=raw[i]
+        if x.startswith('.annotation '):
+            block=[x]; i+=1
+            while i<len(raw):
+                block.append(raw[i])
+                if raw[i]=='.end annotation':
+                    break
+                i+=1
+            meta.append('\\n'.join(block))
+        elif x.startswith(('.catch ', '.catchall ')):
+            meta.append(x)
+        else:
+            ls.append(x)
+        i+=1
+    _,labels=shape_data(ls)
     mapping={k:':position_'+str(v) for k,v in labels.items()}
     result=[]; in_payload=False
     for x in ls:
@@ -432,11 +449,18 @@ def logical_method(text: str, symbols):
             x=re.sub(r'^goto(?:/16|/32) ', 'goto ', x)
             x=re.sub(r'^move(-wide|-object)?(?:/from16|/16) ', r'move\\1 ', x)
             result.append(x)
+    result.extend('@meta '+label_replace(x,mapping) for x in sorted(meta))
     return result
 
 def logical_class(text: str, symbols):
     methods,rest=split_methods(text)
-    return {'header':tokens(rest,symbols),'methods':{k:logical_method(m[0],symbols) for k,m in methods.items()}}
+    header=tokens(rest,symbols)
+    if '.end field' not in header:
+        fields=sorted(x for x in header if x.startswith('.field '))
+        header=[x for x in header if not x.startswith('.field ')]
+    else:
+        fields=[]
+    return {'header':header,'fields':fields,'methods':{k:logical_method(m[0],symbols) for k,m in methods.items()}}
 
 def logical_xml(element):
     text=node_text(element)
