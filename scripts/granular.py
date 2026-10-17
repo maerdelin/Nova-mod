@@ -68,11 +68,6 @@ def tokens(text: str, symbols: dict[str, str]) -> list[str]:
             lambda m: '${RES:' + symbols[m[0].lower()] + '}' if m[0].lower() in symbols else m[0], s))
         if re.match(r'const/high16 [vp]\d+, \$\{RES:', line):
             line = line.replace('const/high16 ', 'const ', 1)
-        # Baksmali may widen encodings after string-pool/register/branch offsets move.
-        # These opcode width variants are semantically identical.
-        line = re.sub(r'^const-string/jumbo ', 'const-string ', line)
-        line = re.sub(r'^goto(?:/16|/32) ', 'goto ', line)
-        line = re.sub(r'^move(-wide|-object)?(?:/from16|/16) ', r'move\\1 ', line)
         result.append(line)
     return result
 
@@ -431,7 +426,12 @@ def logical_method(text: str, symbols):
     for x in ls:
         if x.startswith(('.packed-switch ', '.sparse-switch', '.array-data ')):in_payload=True
         if x.startswith(('.end packed-switch', '.end sparse-switch', '.end array-data')):in_payload=False
-        if not x.startswith(':') or in_payload:result.append(label_replace(x,mapping))
+        if not x.startswith(':') or in_payload:
+            x=label_replace(x,mapping)
+            x=re.sub(r'^const-string/jumbo ', 'const-string ', x)
+            x=re.sub(r'^goto(?:/16|/32) ', 'goto ', x)
+            x=re.sub(r'^move(-wide|-object)?(?:/from16|/16) ', r'move\\1 ', x)
+            result.append(x)
     return result
 
 def logical_class(text: str, symbols):
