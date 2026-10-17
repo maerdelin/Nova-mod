@@ -289,68 +289,10 @@ UI_RUNNABLE = r'''.class final Lcom/archos/mediacenter/video/player/NovaBufferUi
 '''
 
 PLAYER_EXTRA = r'''.method public static novaLog(Ljava/lang/String;Ljava/lang/String;)I
-    .locals 9
-
+    .locals 1
     invoke-static {p0, p1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     move-result v0
-
-    :try_start
-    sget-object v1, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
-    if-eqz v1, :done
-    iget-object v1, v1, Lcom/archos/mediacenter/video/player/Player;->mContext:Landroid/content/Context;
-    if-eqz v1, :done
-
-    const-string v2, "logs"
-    invoke-virtual {v1, v2}, Landroid/content/Context;->getExternalFilesDir(Ljava/lang/String;)Ljava/io/File;
-    move-result-object v2
-    if-eqz v2, :done
-    invoke-virtual {v2}, Ljava/io/File;->mkdirs()Z
-
-    new-instance v3, Ljava/io/File;
-    const-string v4, "nova_debug.log"
-    invoke-direct {v3, v2, v4}, Ljava/io/File;-><init>(Ljava/io/File;Ljava/lang/String;)V
-
-    invoke-virtual {v3}, Ljava/io/File;->length()J
-    move-result-wide v4
-    const-wide/32 v6, 0xa00000
-    cmp-long v8, v4, v6
-    if-lez v8, :no_rotate
-    invoke-virtual {v3}, Ljava/io/File;->delete()Z
-
-    :no_rotate
-    new-instance v2, Ljava/io/FileWriter;
-    const/4 v4, 0x1
-    invoke-direct {v2, v3, v4}, Ljava/io/FileWriter;-><init>(Ljava/io/File;Z)V
-
-    new-instance v3, Ljava/lang/StringBuilder;
-    invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
-    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
-    move-result-wide v4
-    invoke-virtual {v3, v4, v5}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
-    const-string v4, " "
-    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v3, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    const-string v4, " "
-    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v3, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    const-string v4, "\n"
-    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-    move-result-object v3
-
-    invoke-virtual {v2, v3}, Ljava/io/Writer;->write(Ljava/lang/String;)V
-    invoke-virtual {v2}, Ljava/io/Writer;->flush()V
-    invoke-virtual {v2}, Ljava/io/Writer;->close()V
-    :try_end
-    goto :done
-
-    :catch
-    move-exception v1
-
-    :done
     return v0
-
-    .catch Ljava/lang/Throwable; {:try_start .. :try_end} :catch
 .end method
 
 .method public static novaPauseForBuffer()Z
@@ -597,7 +539,7 @@ def apply(root:Path, report:Path|None=None):
         "webdav_native_buffer_mib":128,
         "low_bytes":25165824,"resume_bytes":47185920,
         "measurement":"absolute bytes delivered by StreamOverHttp to AVOS localhost socket minus estimated consumed bytes",
-        "ui":"reuse PlayerActivity native progress overlay","local_log":"Android/data/<package>/files/logs/nova_debug.log; logcat mirrored; rotates above 10 MiB"
+        "ui":"reuse PlayerActivity native progress overlay","logging":"ADB logcat only; tag NovaBufGuard"
       }
     }
     if report:
