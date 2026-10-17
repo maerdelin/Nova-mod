@@ -63,13 +63,34 @@ jobs:
           git -C native/avos checkout --detach b313441df14414632781617742efb66778689b91
           cd ..
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --report reports/native-rebuffer.json
+          # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
+          # AVOS base/full differ only by which FFmpeg directory is linked; no
+          # AVOS source feature macro depends on LIBAV_CONFIG. Alias the same
+          # FFmpeg 8.0 ABI into the base path, then keep ONLY rebuilt libavos.so.
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            test -s "native-src/native/prebuilt/ffmpeg/dist-full-$abi/lib/libavcodec.so"
+            ln -s "dist-full-$abi" "native-src/native/prebuilt/ffmpeg/dist-base-$abi"
+          done
           cd native-src
           MAKE_JOBS=4 BUILD=release make native_avos_base
           cd ..
+          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          mkdir -p work/official-native
           {
             for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-              test -s "native-src/native/avos/libs/$abi/libavos.so"
-              sha256sum "native-src/native/avos/libs/$abi/libavos.so"
+              new="native-src/native/avos/libs/$abi/libavos.so"
+              old="work/official-native/libavos-$abi.so"
+              test -s "$new"
+              unzip -p inputs/official.apk "lib/$abi/libavos.so" > "$old"
+              test -s "$old"
+              new_needed="$("$READELF" -d "$new" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | sort)"
+              old_needed="$("$READELF" -d "$old" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | sort)"
+              if [[ "$new_needed" != "$old_needed" ]]; then
+                echo "::error::DT_NEEDED mismatch for $abi"
+                diff -u <(printf '%s\n' "$old_needed") <(printf '%s\n' "$new_needed") || true
+                exit 1
+              fi
+              sha256sum "$new"
             done
           } | tee reports/native-libavos-sha256.txt
 
