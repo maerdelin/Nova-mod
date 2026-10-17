@@ -26,6 +26,12 @@ class BufferGuardStaticChecks(unittest.TestCase):
         activate = PATCH.index("NovaBufferGuard;->onPlaybackStarted()V", native)
         self.assertGreater(activate, native)
 
+    def test_scheme_register_can_be_parameter(self):
+        self.assertIn("move-result-object ([vp]\\d+)", PATCH)
+
+    def test_roundtrip_normalizes_jumbo(self):
+        self.assertIn('replace("const-string/jumbo", "const-string")', PATCH)
+
     def test_state_machine_directions(self):
         for token in (
             "if-gez v2, :done",

@@ -453,7 +453,7 @@ def patch_player(text):
     b=m.group(0)
     b, newreg=bump_locals(b,1)
     reg=f"v{newreg}"
-    mm=re.search(r'invoke-virtual \{([^}]+)\}, Landroid/net/Uri;->getScheme\(\)Ljava/lang/String;\n\s*move-result-object (v\d+)', b)
+    mm=re.search(r'invoke-virtual \{([^}]+)\}, Landroid/net/Uri;->getScheme\(\)Ljava/lang/String;\n\s*move-result-object ([vp]\d+)', b)
     if not mm:
         raise RuntimeError("setVideoURI scheme anchor not found")
     scheme=mm.group(2)
@@ -562,3 +562,41 @@ if __name__=="__main__":
     p.add_argument("--report",type=Path)
     a=p.parse_args()
     print(json.dumps(apply(a.root,a.report),indent=2))
+
+
+def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
+    sa = g.resource_map(expected)
+    sb = g.resource_map(actual)
+    ia = g.class_index(expected)
+    ib = g.class_index(actual)
+    bad = []
+    if ia.keys() != ib.keys():
+        bad.append("class set differs")
+    for name in ia.keys() & ib.keys():
+        a = ia[name].read_text().replace("const-string/jumbo", "const-string")
+        b = ib[name].read_text().replace("const-string/jumbo", "const-string")
+        if a != b and g.logical_class(a, sa) != g.logical_class(b, sb):
+            bad.append(name)
+    aa = {x.relative_to(expected).as_posix() for x in expected.rglob("*.xml")
+          if x.relative_to(expected).as_posix().startswith(("res/", "AndroidManifest.xml"))}
+    bb = {x.relative_to(actual).as_posix() for x in actual.rglob("*.xml")
+          if x.relative_to(actual).as_posix().startswith(("res/", "AndroidManifest.xml"))}
+    if aa != bb:
+        bad.append("XML resource set differs")
+    for path in aa & bb:
+        if (expected/path).read_bytes() != (actual/path).read_bytes():
+            if g.logical_xml(g.ET.parse(expected/path).getroot()) != g.logical_xml(g.ET.parse(actual/path).getroot()):
+                bad.append(path)
+    result = {
+        "status": "FAIL" if bad else "PASS",
+        "classes_compared": len(ia),
+        "xml_files_compared": len(aa),
+        "differences": sorted(bad),
+        "comparison": "logical roundtrip with const-string/jumbo normalization",
+        "runtime_tested": False,
+    }
+    g.write_json(report, result)
+    if bad:
+        raise g.Conflict("Buffer-guard roundtrip failed: " + str(bad[:20]))
+    print(json.dumps(result, indent=2))
+    return result

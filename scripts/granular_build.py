@@ -95,7 +95,7 @@ def main():
     run('java', '-Xmx4g', '-jar', args.apktool, 'b', candidate, '-o', args.output)
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
-    g.verify(candidate, decoded, args.reports / 'roundtrip.json')
+    buffer_guard_patch.verify_roundtrip(candidate, decoded, args.reports / 'roundtrip.json', g)
     preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
