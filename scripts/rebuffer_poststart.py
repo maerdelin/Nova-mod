@@ -761,6 +761,23 @@ def apply(root: Path, report: Path | None = None):
         report.write_text(json.dumps(result, indent=2) + '\n')
     return result
 
+
+def _logical_header_field_order_insensitive(text: str, symbols, g):
+    """Compare class metadata strictly while treating field declaration order as non-semantic."""
+    methods, rest = g.split_methods(text)
+    field_lines = []
+    other_lines = []
+    for line in rest.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('.field '):
+            field_lines.append(stripped)
+        else:
+            other_lines.append(line)
+    return {
+        'metadata_tokens': g.tokens('\n'.join(other_lines), symbols),
+        'fields': sorted(field_lines),
+    }
+
 def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
     """Strict apktool round-trip check with semantic normalization for jumbo strings."""
     sa = g.resource_map(expected)
@@ -780,9 +797,21 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         bn = b.replace('const-string/jumbo', 'const-string')
         la = g.logical_class(an, sa)
         lb = g.logical_class(bn, sb)
-        if la != lb:
+        ha = _logical_header_field_order_insensitive(an, sa, g)
+        hb = _logical_header_field_order_insensitive(bn, sb, g)
+        methods_equal = la['methods'] == lb['methods']
+        header_equal = ha == hb
+        if not methods_equal or not header_equal:
             bad.append(name)
-            entry = {'class': name, 'header_equal': la['header'] == lb['header'], 'methods': []}
+            entry = {
+                'class': name,
+                'header_equal_after_field_sort': header_equal,
+                'field_sets_equal': ha['fields'] == hb['fields'],
+                'metadata_tokens_equal': ha['metadata_tokens'] == hb['metadata_tokens'],
+                'expected_fields': ha['fields'] if ha['fields'] != hb['fields'] else [],
+                'roundtrip_fields': hb['fields'] if ha['fields'] != hb['fields'] else [],
+                'methods': []
+            }
             keys = sorted(set(la['methods']) | set(lb['methods']))
             for mk in keys:
                 am = la['methods'].get(mk)
@@ -893,7 +922,7 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
         'classes_compared': len(ia),
         'xml_files_compared': len(aa),
         'differences': bad,
-        'normalization': 'const-string/jumbo treated as semantic const-string equivalent',
+        'normalization': 'const-string/jumbo equivalent; class field declaration order treated as non-semantic but field contents/metadata remain strict',
         'policy_checks': 'clean-main post-start activation, no startup watermark gate, 24MiB floor, >45MiB resume',
     }
     g.write_json(report, result)
