@@ -451,15 +451,34 @@ def patch_player(text):
 
     m=method(text, " setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V")
     b=m.group(0)
-    b, newreg=bump_locals(b,1)
-    reg=f"v{newreg}"
-    mm=re.search(r'invoke-virtual \{([^}]+)\}, Landroid/net/Uri;->getScheme\(\)Ljava/lang/String;\n\s*move-result-object (v\d+)', b)
-    if not mm:
-        raise RuntimeError("setVideoURI scheme anchor not found")
-    scheme=mm.group(2)
-    inject=f'''\n    const-string {reg}, "webdav"\n    invoke-virtual {{{reg}, {scheme}}}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z\n    move-result {reg}\n    if-nez {reg}, :nova_big_buffer\n    const-string {reg}, "webdavs"\n    invoke-virtual {{{reg}, {scheme}}}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z\n    move-result {reg}\n    if-eqz {reg}, :nova_default_buffer\n    :nova_big_buffer\n    const/16 {reg}, 0x80\n    invoke-static {{{reg}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V\n    goto :nova_buffer_done\n    :nova_default_buffer\n    const/16 {reg}, 0x18\n    invoke-static {{{reg}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V\n    :nova_buffer_done\n'''
-    pos=mm.end()
-    b=b[:pos]+inject+b[pos:]
+    b, newreg=bump_locals(b,2)
+    scheme=f"v{newreg}"
+    tmp=f"v{newreg+1}"
+    loc=re.search(r'(?m)^    \.locals \d+\s*$', b)
+    if not loc:
+        raise RuntimeError("setVideoURI locals anchor missing")
+    inject=f'''\n    if-eqz p1, :nova_default_buffer
+    invoke-virtual {{p1}}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    move-result-object {scheme}
+    if-eqz {scheme}, :nova_default_buffer
+    const-string {tmp}, "webdav"
+    invoke-virtual {{{tmp}, {scheme}}}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result {tmp}
+    if-nez {tmp}, :nova_big_buffer
+    const-string {tmp}, "webdavs"
+    invoke-virtual {{{tmp}, {scheme}}}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result {tmp}
+    if-eqz {tmp}, :nova_default_buffer
+    :nova_big_buffer
+    const/16 {tmp}, 0x80
+    invoke-static {{{tmp}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V
+    goto :nova_buffer_done
+    :nova_default_buffer
+    const/16 {tmp}, 0x18
+    invoke-static {{{tmp}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V
+    :nova_buffer_done
+'''
+    b=b[:loc.end()]+inject+b[loc.end():]
     text=text[:m.start()]+b+text[m.end():]
 
     m=method(text," start(I)V"); b=m.group(0)
