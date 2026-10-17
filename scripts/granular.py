@@ -449,7 +449,8 @@ def logical_method(text: str, symbols):
             x=re.sub(r'^goto(?:/16|/32) ', 'goto ', x)
             x=re.sub(r'^move(-wide|-object)?(?:/from16|/16) ', r'move\\1 ', x)
             result.append(x)
-    result.extend('@meta '+label_replace(x,mapping) for x in sorted(meta))
+    normalized_meta=sorted(label_replace(x,mapping) for x in meta)
+    result.extend('@meta '+x for x in normalized_meta)
     return result
 
 def logical_class(text: str, symbols):
