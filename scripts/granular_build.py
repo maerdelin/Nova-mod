@@ -12,6 +12,7 @@ import sys
 import zipfile
 import granular as g
 import check_upstream as upstream
+import rebuffer_poststart as rebuffer
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -87,18 +88,20 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    rebuffer.apply(candidate, args.reports / 'rebuffer-poststart.json')
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     run('java', '-Xmx4g', '-jar', args.apktool, 'b', candidate, '-o', args.output)
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
-    g.verify(candidate, decoded, args.reports / 'roundtrip.json')
+    rebuffer.verify_roundtrip(candidate, decoded, args.reports / 'roundtrip.json', g)
     preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'spec_bootstrapped': generated,
+        'rebuffer_policy': 'clean main startup unchanged; protection activates only after successful native start; 64MiB read-ahead; 24MiB floor; resume >45MiB',
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
 

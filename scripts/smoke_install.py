@@ -26,7 +26,7 @@ def main():
     args.reports.mkdir(parents=True, exist_ok=True)
     report = {'status': 'FAIL', 'device': 'GitHub Actions Android emulator',
               'package': PACKAGE, 'apk': str(args.apk), 'launches': [],
-              'scope': 'clean installation and launcher startup only; no WebDAV/playback tests'}
+              'scope': 'clean installation, forced ART whole-package verification, and launcher startup; no WebDAV playback test'}
     try:
         adb('wait-for-device')
         report['android_api'] = adb('shell', 'getprop', 'ro.build.version.sdk')
@@ -41,6 +41,18 @@ def main():
             raise RuntimeError('Package manager did not confirm successful installation: ' + installed)
         if 'package:' not in adb('shell', 'pm', 'path', PACKAGE):
             raise RuntimeError('Installed package missing')
+        # Force ART to verify/compile the whole installed package before launcher checks.
+        # This catches lazy VerifyError failures that only appear when a video-only class is first resolved.
+        adb('logcat', '-c')
+        art_verify = adb('shell', 'cmd', 'package', 'compile', '-m', 'verify', '-f', PACKAGE, timeout=180)
+        (args.reports / 'art-verify.txt').write_text(art_verify + '\n')
+        report['art_verify_output'] = art_verify
+        verify_log = adb('logcat', '-d', check=False)
+        (args.reports / 'art-verify-logcat.txt').write_text(verify_log + '\n')
+        fatal_verify = ('VerifyError' in verify_log or 'Verifier rejected class' in verify_log or
+                        'Failure' in art_verify or 'Error' in art_verify)
+        if fatal_verify:
+            raise RuntimeError('ART package verification failed:\n' + art_verify + '\n' + verify_log[-8000:])
         for category in ('android.intent.category.LAUNCHER', 'android.intent.category.LEANBACK_LAUNCHER'):
             resolved = adb('shell', 'cmd', 'package', 'resolve-activity', '--brief',
                            '-a', 'android.intent.action.MAIN', '-c', category, PACKAGE)
