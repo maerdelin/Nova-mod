@@ -56,6 +56,8 @@ class BufferGuardStaticChecks(unittest.TestCase):
 
     def test_producer_uses_explicit_generation(self):
         self.assertIn("NovaPrefetchProducer;->setGeneration(I)V", PREFETCH_PATCH)
+        self.assertIn(".field private generation:I", PREFETCH_PATCH)
+        self.assertNotIn(".field private final generation:I", PREFETCH_PATCH)
         self.assertNotIn(
             "invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->currentGeneration()I",
             PREFETCH_PATCH,
