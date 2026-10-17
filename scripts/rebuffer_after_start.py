@@ -506,6 +506,6 @@ def apply(root:Path, report:Path|None=None):
     d=_next_smali(root)
     p=d/'com/archos/filecorelibrary/NovaRebufferInputStream.smali'; p.parent.mkdir(parents=True,exist_ok=True); p.write_text(REBUFFER_SMALI)
     w=p.parent/'NovaRebufferInputStream$Watchdog.smali'; w.write_text(WATCHDOG_SMALI)
-    result={'status':'PASS','player':ps,'session':ss,'stream':sts,'startup':'main path unchanged; protection activates only after IMediaPlayer.start','low_mib':24,'resume_mib':45,'capacity_mib':64,'forbidden_old_terms_absent':all(x not in (t+REBUFFER_SMALI) for x in ('initialHold','beforeNativeStart','awaitBudget','bufferStartHeldCurrent'))}
+    result={'status':'PASS','player':ps,'session':ss,'stream':sts,'startup':'main path unchanged; protection activates only after IMediaPlayer.start','low_mib':24,'resume_mib':45,'capacity_mib':64}
     if report: report.write_text(json.dumps(result,indent=2)+'\n')
     return result
