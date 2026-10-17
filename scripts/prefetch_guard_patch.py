@@ -318,7 +318,7 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
     array-length v1, v0
     iget v2, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->offset:I
     sub-int/2addr v1, v2
-    if-gez v1, :none
+    if-lez v1, :none
     return v1
     :none
     const/4 v0, 0x0
@@ -387,7 +387,7 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
     const/4 v9, 0x0
     invoke-virtual {v8, v1, v9, v7}, Ljava/io/InputStream;->read([BII)I
     move-result v7
-    if-gez v7, :eof
+    if-ltz v7, :eof
     if-eqz v7, :loop
 
     invoke-static {v1, v7}, Ljava/util/Arrays;->copyOf([BI)[B
