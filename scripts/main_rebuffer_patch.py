@@ -299,8 +299,8 @@ def verify_roundtrip(expected: Path, actual: Path, report: Path, g):
                 if 'started:Z' not in m or 'Ljava/io/InputStream;' not in m:
                     bad.append(label+': '+sig+' lacks direct-main pre-start path')
             br=_method(rt,' beforeRead(I)V').group(0)
-            low_ok=(re.search(r'(?:const v1, 0x1800000|const/high16 v1, 0x180)\\n\\s*add-int v2, v1, p1',br) is not None)
-            resume_ok=(re.search(r'(?:const v1, 0x2d00000|const/high16 v1, 0x2d0)\\n\\s*if-le v0, v1, :\\S+',br) is not None)
+            low_ok=(('const v1, 0x1800000\n    add-int v2, v1, p1' in br) or ('const/high16 v1, 0x180\n    add-int v2, v1, p1' in br))
+            resume_ok=(('const v1, 0x2d00000\n    if-le v0, v1, :' in br) or ('const/high16 v1, 0x2d0\n    if-le v0, v1, :' in br))
             if not low_ok:
                 bad.append(label+': 24 MiB floor/budget check missing')
             if not resume_ok:
