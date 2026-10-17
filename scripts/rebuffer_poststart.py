@@ -618,20 +618,30 @@ def patch_player(text: str) -> tuple[str, str]:
         raise RuntimeError('Player.sPlayer field anchor changed')
     text = text.replace(field_anchor, field_anchor + '\n.field private static volatile sNovaBufferPaused:Z\n', 1)
 
-    # Start remains untouched until after the original native start and state assignment.
+    # Main startup remains byte-for-byte unchanged until its successful tail.
+    # Activation is the final action on the successful start path, after nativeStart,
+    # PLAYING state, stayAwake, listener onPlay, and VideoEffectRenderer.onPlay.
     m = _method(text, ' start(I)V')
     body = m.group(0)
-    start_anchor = (
-        '    invoke-interface {v3}, Lcom/archos/medialib/IMediaPlayer;->start()V\n\n'
-        '    iput v0, p0, Lcom/archos/mediacenter/video/player/Player;->mCurrentState:I'
+    tail_anchor = (
+        '    :cond_5\n'
+        '    iget-object p0, p0, Lcom/archos/mediacenter/video/player/Player;->mEffectRenderer:Lcom/archos/mediacenter/video/player/VideoEffectRenderer;\n\n'
+        '    if-eqz p0, :cond_6\n\n'
+        '    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/VideoEffectRenderer;->onPlay()V\n\n'
+        '    :cond_6'
     )
-    if body.count(start_anchor) != 1:
-        raise RuntimeError('Player.start original start/state anchor changed')
-    body = body.replace(
-        start_anchor,
-        start_anchor +
-        '\n\n    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->onPlaybackStarted()V',
-        1)
+    if body.count(tail_anchor) != 1:
+        raise RuntimeError('Player.start successful-tail anchor changed')
+    tail_replacement = (
+        '    :cond_5\n'
+        '    iget-object p0, p0, Lcom/archos/mediacenter/video/player/Player;->mEffectRenderer:Lcom/archos/mediacenter/video/player/VideoEffectRenderer;\n\n'
+        '    if-eqz p0, :nova_rebuffer_start_done\n\n'
+        '    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/VideoEffectRenderer;->onPlay()V\n\n'
+        '    :nova_rebuffer_start_done\n'
+        '    invoke-static {}, Lcom/archos/filecorelibrary/NetworkReadAheadInputStream;->onPlaybackStarted()V\n\n'
+        '    :cond_6'
+    )
+    body = body.replace(tail_anchor, tail_replacement, 1)
     text = text[:m.start()] + body + text[m.end():]
 
     # Manual pause disables automatic rebuffer resume before normal main pause logic.
