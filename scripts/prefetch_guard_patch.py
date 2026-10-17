@@ -18,6 +18,8 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 .field private static volatile produced:J
 .field private static volatile consumed:J
 .field private static volatile total:J
+.field private static volatile primed:Z
+.field private static volatile primeTarget:J
 
 .method private constructor <init>()V
     .locals 0
@@ -66,7 +68,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
 .end method
 
 .method public static onPrefetchStart(J)I
-    .locals 5
+    .locals 6
     sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
     add-int/lit8 v0, v0, 0x1
     sput v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
@@ -75,18 +77,31 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     sput-wide v1, Lcom/archos/filecorelibrary/NovaBufferGuard;->produced:J
     sput-wide v1, Lcom/archos/filecorelibrary/NovaBufferGuard;->consumed:J
     sput-wide p0, Lcom/archos/filecorelibrary/NovaBufferGuard;->total:J
+
     const/4 v3, 0x0
     sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->eof:Z
-
-    sget-boolean v4, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
-    if-eqz v4, :log
-    invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->novaResumeFromBuffer()V
+    sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
     sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
+
+    const/4 v3, 0x1
+    sput-boolean v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
+
+    const-wide/32 v4, 0x2d00000
+    cmp-long v3, p0, v1
+    if-lez v3, :prime_target_done
+    cmp-long v3, p0, v4
+    if-gez v3, :prime_target_done
+    move-wide v4, p0
+    :prime_target_done
+    sput-wide v4, Lcom/archos/filecorelibrary/NovaBufferGuard;->primeTarget:J
+
+    const/4 v3, 0x1
     invoke-static {v3}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
 
-    :log
     const-string v1, "PREFETCH_START totalBytes="
     invoke-static {v1, p0, p1}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
+    const-string v1, "PREFETCH_ACTIVE targetBytes="
+    invoke-static {v1, v4, v5}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
     return v0
 .end method
 
@@ -94,6 +109,44 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     .locals 1
     sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
     return v0
+.end method
+
+.method public static awaitPrimed(I)V
+    .locals 7
+    :wait
+    sget v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->generation:I
+    if-ne p0, v0, :done
+
+    sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    if-nez v0, :done
+
+    sget-wide v1, Lcom/archos/filecorelibrary/NovaBufferGuard;->produced:J
+    sget-wide v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->consumed:J
+    sub-long/2addr v1, v3
+
+    sget-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->eof:Z
+    if-nez v0, :prime
+
+    sget-wide v3, Lcom/archos/filecorelibrary/NovaBufferGuard;->primeTarget:J
+    cmp-long v0, v1, v3
+    if-ltz v0, :sleep
+
+    :prime
+    const/4 v0, 0x1
+    sput-boolean v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
+    const/4 v0, 0x0
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
+    const-string v0, "PREFETCH_PRIMED bytes="
+    invoke-static {v0, v1, v2}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
+    goto :done
+
+    :sleep
+    const-wide/16 v5, 0x19
+    invoke-static {v5, v6}, Landroid/os/SystemClock;->sleep(J)V
+    goto :wait
+
+    :done
+    return-void
 .end method
 
 .method public static onPrefetchProduced(II)V
@@ -135,7 +188,7 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     add-long/2addr v0, v2
     sput-wide v0, Lcom/archos/filecorelibrary/NovaBufferGuard;->consumed:J
 
-    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->active:Z
+    sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->primed:Z
     if-eqz v2, :done
     sget-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     if-nez v2, :done
@@ -148,17 +201,12 @@ GUARD = r'''.class public final Lcom/archos/filecorelibrary/NovaBufferGuard;
     cmp-long v6, v4, v2
     if-ltz v6, :done
 
-    const/4 v2, 0x1
-    sput-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     invoke-static {}, Lcom/archos/mediacenter/video/player/Player;->novaPauseForBuffer()Z
     move-result v2
-    if-nez v2, :paused
-    const/4 v2, 0x0
-    sput-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
-    goto :done
+    if-eqz v2, :done
 
-    :paused
     const/4 v2, 0x1
+    sput-boolean v2, Lcom/archos/filecorelibrary/NovaBufferGuard;->buffering:Z
     invoke-static {v2}, Lcom/archos/mediacenter/video/player/Player;->novaSetBufferingUi(Z)V
     const-string v2, "PAUSE prefetchBytes="
     invoke-static {v2, v4, v5}, Lcom/archos/filecorelibrary/NovaBufferGuard;->logValue(Ljava/lang/String;J)V
@@ -212,7 +260,7 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
 .field private final source:Ljava/io/InputStream;
 .field private current:[B
 .field private offset:I
-.field private final generation:I
+.field private generation:I
 .field private final worker:Ljava/lang/Thread;
 
 .method public constructor <init>(Ljava/io/InputStream;J)V
@@ -231,6 +279,7 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
 
     new-instance v3, Lcom/archos/filecorelibrary/NovaPrefetchProducer;
     invoke-direct {v3, p1, v0, p2, p3}, Lcom/archos/filecorelibrary/NovaPrefetchProducer;-><init>(Ljava/io/InputStream;Ljava/util/concurrent/ArrayBlockingQueue;J)V
+    invoke-virtual {v3, v2}, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->setGeneration(I)V
 
     new-instance v4, Ljava/lang/Thread;
     const-string v5, "Nova WebDAV prefetch"
@@ -260,9 +309,13 @@ PREFETCH_INPUT = r'''.class public final Lcom/archos/filecorelibrary/NovaPrefetc
 
 .method public read([BII)I
     .locals 7
-    if-nez p3, :loop
+    if-nez p3, :prime
     const/4 v0, 0x0
     return v0
+
+    :prime
+    iget v6, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->generation:I
+    invoke-static {v6}, Lcom/archos/filecorelibrary/NovaBufferGuard;->awaitPrimed(I)V
 
     :loop
     iget-object v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchInputStream;->current:[B
@@ -354,9 +407,14 @@ PREFETCH_PRODUCER = r'''.class public final Lcom/archos/filecorelibrary/NovaPref
     iput-object p1, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->source:Ljava/io/InputStream;
     iput-object p2, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->queue:Ljava/util/concurrent/ArrayBlockingQueue;
     iput-wide p3, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->remaining:J
-    invoke-static {}, Lcom/archos/filecorelibrary/NovaBufferGuard;->currentGeneration()I
-    move-result v0
+    const/4 v0, 0x0
     iput v0, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
+    return-void
+.end method
+
+.method public setGeneration(I)V
+    .locals 0
+    iput p1, p0, Lcom/archos/filecorelibrary/NovaPrefetchProducer;->generation:I
     return-void
 .end method
 
@@ -499,12 +557,14 @@ def apply(root: Path, report: Path | None = None):
 
     result = {
         "status": "PASS",
-        "strategy": "WebDAV playback prefetch decoupled from AVOS consumption",
+        "strategy": "WebDAV prebuffer 45MiB then hysteresis 24MiB/45MiB with producer independent from AVOS",
         "capacity_bytes": 67108864,
         "pause_below_bytes": 25165824,
         "resume_at_bytes": 47185920,
-        "producer": "dedicated upstream reader thread",
+        "producer": "dedicated upstream reader thread with explicit per-request generation",
         "consumer": "StreamOverHttp socket writer via 256 x 256KiB ArrayBlockingQueue chunks",
+        "startup_prebuffer_bytes": 47185920,
+        "activation": "onPrefetchStart; no Player.start dependency",
         "logging": "ADB logcat tag NovaBufGuard"
     }
     if report:
