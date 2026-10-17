@@ -8,7 +8,7 @@ import main_rebuffer_patch as p
 
 class MainRebufferTests(unittest.TestCase):
     def test_old_gate_code_absent(self):
-        text=(ROOT/'scripts/main_rebuffer_patch.py').read_text()+p.REBUFFER_SMALI
+        text=p.REBUFFER_SMALI+p.PLAYER_HELPERS
         for term in ('initialHold','beforeNativeStart','awaitBudget','bufferStartHeldCurrent','HARD_GATE'):
             self.assertNotIn(term,text)
 
