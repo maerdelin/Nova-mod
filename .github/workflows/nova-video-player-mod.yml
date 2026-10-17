@@ -106,10 +106,11 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
-            set -euo pipefail
+            set -eu
             adb logcat -c
             python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
-            adb shell cmd package compile -m verify -f org.courville.nova | tee reports/art-package-verify.txt
+            adb shell cmd package compile -m verify -f org.courville.nova > reports/art-package-verify.txt
+            cat reports/art-package-verify.txt
             sleep 2
             adb logcat -d -v threadtime > reports/art-verifier-logcat.txt
             if grep -E -i 'VerifyError|Verifier rejected class|FATAL EXCEPTION.*org\.courville\.nova' reports/art-verifier-logcat.txt; then
