@@ -17,11 +17,17 @@ class NativeRebufferStaticChecks(unittest.TestCase):
 
     def test_native_uses_real_parser_queue_bytes(self):
         for token in (
-            "NOVA_REBUFFER_LOW_BYTES    (24 * 1024 * 1024)",
-            "NOVA_REBUFFER_RESUME_BYTES (64 * 1024 * 1024)",
             "pst->buffer_used",
-            "pst->buffer_size >= NOVA_REBUFFER_ARM_BYTES",
+            "pst->buffer_size == s->rebuffer_capacity_bytes",
+            "used < s->rebuffer_low_bytes",
+            "used >= s->rebuffer_resume_bytes",
             "STREAM_PARSER_STATS",
+            "s->rebuffer_low_bytes = (int)(2 * nova_x)",
+            "s->rebuffer_resume_bytes = (int)(5 * nova_x)",
+            "s->rebuffer_capacity_bytes = (int)(10 * nova_x)",
+            "ff_p->buffer_size = s->rebuffer_capacity_bytes",
+            "NOVA_DYNAMIC_BUFFER: mode=average",
+            "NOVA_DYNAMIC_BUFFER: mode=fallback",
         ):
             self.assertIn(token, NATIVE_PATCH)
 
