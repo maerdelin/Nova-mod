@@ -21,7 +21,7 @@ class StreamThroughputStaticChecks(unittest.TestCase):
 
     def test_native_rebuffer_policy_is_not_changed(self):
         self.assertIn("NOVA_REBUFFER_LOW_BYTES    (24 * 1024 * 1024)", NATIVE)
-        self.assertIn("NOVA_REBUFFER_RESUME_BYTES (45 * 1024 * 1024)", NATIVE)
+        self.assertIn("NOVA_REBUFFER_RESUME_BYTES (64 * 1024 * 1024)", NATIVE)
         self.assertNotIn("stream_throughput_patch", NATIVE)
 
     def test_build_applies_throughput_after_webdav_marker(self):
