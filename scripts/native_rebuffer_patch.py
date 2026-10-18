@@ -484,6 +484,88 @@ DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d
 
     path.write_text(text)
 
+
+def patch_startup_trace(root: Path) -> None:
+    """Observational startup milestones only; no threshold or scheduling changes."""
+    avos = root / "Source" / "avos_mp_video.c"
+    text = avos.read_text()
+    text = replace_once(text,
+        "\tint _flags = STREAM_PAUSED;\n",
+        "\tint _flags = STREAM_PAUSED;\n"
+        "\tint nova_trace_t0 = atime();\n"
+        '\tserprintf("NOVA_STARTUP_TRACE open_begin t=%d starttime=%d\\n", nova_trace_t0, starttime);\n',
+        "trace player open entry")
+    text = replace_once(text,
+        "\tif (stream_open(video->s, src, etype, _flags)) {",
+        '\tserprintf("NOVA_STARTUP_TRACE stream_open_begin t=%d elapsed=%d\\n", atime(), atime()-nova_trace_t0);\n'
+        "\tif (stream_open(video->s, src, etype, _flags)) {",
+        "trace stream open entry")
+    text = replace_once(text,
+        "\tAV_set_state(AV_PLAYING, TYPE_VID, 0, video->s, NULL);",
+        '\tserprintf("NOVA_STARTUP_TRACE stream_open_done t=%d elapsed=%d\\n", atime(), atime()-nova_trace_t0);\n'
+        "\tAV_set_state(AV_PLAYING, TYPE_VID, 0, video->s, NULL);",
+        "trace stream open return")
+    text = replace_once(text,
+        "\tif (stream_start(video->s)) {",
+        '\tserprintf("NOVA_STARTUP_TRACE stream_start_begin t=%d elapsed=%d\\n", atime(), atime()-nova_trace_t0);\n'
+        "\tif (stream_start(video->s)) {",
+        "trace stream start entry")
+    text = replace_once(text,
+        "\tvideo->last_seekable = stream_seekable(video->s);",
+        '\tserprintf("NOVA_STARTUP_TRACE stream_start_done t=%d elapsed=%d\\n", atime(), atime()-nova_trace_t0);\n'
+        "\tvideo->last_seekable = stream_seekable(video->s);",
+        "trace stream start return")
+    avos.write_text(text)
+
+    ff = root / "Source" / "stream_parser_ffmpeg.c"
+    text = ff.read_text()
+    text = replace_once(text,
+        "\tif( !(s->parser_priv = (FF_PRIV*)amalloc( sizeof( FF_PRIV ) ) ) ) {",
+        '\tserprintf("NOVA_STARTUP_TRACE ff_open_begin t=%d\\n", atime());\n'
+        "\tif( !(s->parser_priv = (FF_PRIV*)amalloc( sizeof( FF_PRIV ) ) ) ) {",
+        "trace ffmpeg parser entry")
+    text = replace_once(text,
+        "\tif( ffmpeg_open_input(ff_p, s->src.url, &ff_p->fmt_opts) != 0) {",
+        '\tserprintf("NOVA_STARTUP_TRACE network_open_begin t=%d\\n", atime());\n'
+        "\tif( ffmpeg_open_input(ff_p, s->src.url, &ff_p->fmt_opts) != 0) {",
+        "trace network open start")
+    text = replace_once(text,
+        'DBGP serprintf("info\\r\\n");',
+        '\tserprintf("NOVA_STARTUP_TRACE network_open_done t=%d\\n", atime());\n'
+        'DBGP serprintf("info\\r\\n");',
+        "trace network open complete")
+    text = replace_once(text,
+        "\t// Retrieve stream information\n",
+        '\tserprintf("NOVA_STARTUP_TRACE probe_begin t=%d\\n", atime());\n'
+        "\t// Retrieve stream information\n",
+        "trace stream info start")
+    text = replace_once(text,
+        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;",
+        '\tserprintf("NOVA_STARTUP_TRACE probe_done t=%d streams=%d\\n", atime(), ff_p->fmt->nb_streams);\n'
+        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;",
+        "trace probe complete")
+    text = replace_once(text,
+        "\tif( s->video->valid ) {\n\t\tff_p->need_key = 1;\n\t}",
+        '\tserprintf("NOVA_STARTUP_TRACE parser_ready t=%d budget=%d\\n", atime(), ff_p->buffer_size);\n'
+        "\tif( s->video->valid ) {\n\t\tff_p->need_key = 1;\n\t}",
+        "trace parser ready")
+    ff.write_text(text)
+
+    video = root / "Source" / "stream_video.c"
+    text = video.read_text()
+    text = replace_once(text,
+        'serprintf("\\r\\nstream_start %s\\r\\n", s->src.url );',
+        'serprintf("NOVA_STARTUP_TRACE native_stream_start t=%d\\n", atime());\n'
+        'serprintf("\\r\\nstream_start %s\\r\\n", s->src.url );',
+        "trace native stream start")
+    text = replace_once(text,
+        "\t\t\ts->current_frame     = frame;",
+        '\t\t\tif( !__atomic_load_n( &s->rebuffer_frame_seen, __ATOMIC_ACQUIRE ) )\n'
+        '\t\t\t\tserprintf("NOVA_STARTUP_TRACE first_frame_sink t=%d pts=%d\\n", atime(), frame->time);\n'
+        "\t\t\ts->current_frame     = frame;",
+        "trace first sink frame")
+    video.write_text(text)
+
 def apply(root: Path, report: Path | None = None) -> dict:
     root = root.resolve()
     head = check_head(root)
@@ -493,6 +575,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
     patch_stream_c(root / "Source" / "stream.c")
     patch_avos_mp_video(root / "Source" / "avos_mp_video.c")
     patch_stream_parser_ffmpeg(root / "Source" / "stream_parser_ffmpeg.c")
+    patch_startup_trace(root)
 
     result = {
         "status": "PASS",
@@ -511,6 +594,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "normal_packet_cap": 8192,
         "manual_pause_packet_cap": 8192,
         "diagnostic": "NOVA_REBUFFER_PACKET_CAP_BYPASS",
+        "startup_diagnostic": "NOVA_STARTUP_TRACE",
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
