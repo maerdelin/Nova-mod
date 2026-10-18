@@ -62,6 +62,7 @@ def patch_stream_h(path: Path) -> None:
         "\tvolatile int\trebuffer_user_paused;\n"
         "\tvolatile int\trebuffer_play_requested;\n"
         "\tvolatile int\trebuffer_frame_seen;\n"
+        "\tvolatile int\tstartup_first_sink_logged;\n"
         r"\2",
         "STREAM tail rebuffer fields",
     )
@@ -560,7 +561,7 @@ def patch_startup_trace(root: Path) -> None:
         "trace native stream start")
     text = replace_once(text,
         "\t\t\ts->current_frame     = frame;",
-        '\t\t\tif( !__atomic_load_n( &s->rebuffer_frame_seen, __ATOMIC_ACQUIRE ) )\n'
+        '\t\t\tif( !__atomic_exchange_n( &s->startup_first_sink_logged, 1, __ATOMIC_ACQ_REL ) )\n'
         '\t\t\t\tserprintf("NOVA_STARTUP_TRACE first_frame_sink t=%d pts=%d\\n", atime(), frame->time);\n'
         "\t\t\ts->current_frame     = frame;",
         "trace first sink frame")
