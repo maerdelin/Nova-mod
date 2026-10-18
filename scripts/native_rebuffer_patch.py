@@ -361,6 +361,129 @@ def patch_avos_mp_video(path: Path) -> None:
     path.write_text(text)
 
 
+
+def patch_stream_parser_ffmpeg(path: Path) -> None:
+    text = path.read_text()
+
+    text = replace_once(
+        text,
+        """static int _add_packet( AVQueue *q, AVPacket *packet )
+{
+\tpthread_mutex_lock( &q->mutex );
+\tint64_t cost = packet_cost(packet);
+\tif (cost > INT_MAX - q->mem_used || q->packets >= FF_QUEUE_MAX_PACKETS) {
+\t\tpthread_mutex_unlock(&q->mutex);
+\t\treturn 1;
+\t}
+""",
+        """static int _add_packet_limited( AVQueue *q, AVPacket *packet, int packet_limit )
+{
+\tpthread_mutex_lock( &q->mutex );
+\tint64_t cost = packet_cost(packet);
+\tif (cost > INT_MAX - q->mem_used || q->packets >= packet_limit) {
+\t\tpthread_mutex_unlock(&q->mutex);
+\t\treturn 1;
+\t}
+""",
+        "FFmpeg packet queue admission helper",
+    )
+
+    text = replace_once(
+        text,
+        """\tpthread_mutex_unlock( &q->mutex );
+\treturn 0;
+}
+
+// ************************************************************
+//
+//\t_get_packet
+""",
+        """\tpthread_mutex_unlock( &q->mutex );
+\treturn 0;
+}
+
+static int _add_packet( AVQueue *q, AVPacket *packet )
+{
+\treturn _add_packet_limited( q, packet, FF_QUEUE_MAX_PACKETS );
+}
+
+// ************************************************************
+//
+//\t_get_packet
+""",
+        "preserve default FFmpeg packet cap wrapper",
+    )
+
+    text = replace_once(
+        text,
+        """\t// One admitted packet may cross the normal budget. Beyond that, fail
+\t// explicitly instead of silently losing audio or allocating without limit.
+\tif (used + cost > budget * 2 || _add_packet(q, packet))
+\t\treturn parser_read_error(s, AVERROR(ENOMEM));
+""",
+        """\t// One admitted packet may cross the normal budget. Beyond that, fail
+\t// explicitly instead of silently losing audio or allocating without limit.
+\t//
+\t// Nova INTERNAL rebuffer intentionally freezes consumers until the byte
+\t// resume watermark is reached. In that one state, the independent 8192
+\t// packet-count watermark must not stop the producer first (TrueHD and other
+\t// small access units can hit it well below 64 MiB). Memory is still bounded
+\t// by the existing byte budget. Manual/user pause never sets rebuffering, so
+\t// it keeps the original 8192-packet behavior.
+\tint packet_limit = __atomic_load_n(&s->rebuffering, __ATOMIC_ACQUIRE)
+\t\t? INT_MAX : FF_QUEUE_MAX_PACKETS;
+\tif (used + cost > budget * 2 ||
+\t    _add_packet_limited(q, packet, packet_limit))
+\t\treturn parser_read_error(s, AVERROR(ENOMEM));
+""",
+        "rebuffer FFmpeg packet admission",
+    )
+
+    text = replace_once(
+        text,
+        """\t// Preserve the bounded audio-gap scan and seek-preroll policies below.
+\tif (!ff_p->seeking && !audio_starved &&
+\t    (audio_packets >= FF_QUEUE_MAX_PACKETS ||
+\t     queue_packets(&ff_p->vq) >= FF_QUEUE_MAX_PACKETS ||
+\t     queue_packets(&ff_p->sq) >= FF_QUEUE_MAX_PACKETS)) {
+DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d)\\n", audio_packets);
+\t\treturn FF_PARSE_WAIT;
+\t}
+""",
+        """\t// Preserve the bounded audio-gap scan and seek-preroll policies below.
+\t// During Nova INTERNAL rebuffer, consumers are deliberately frozen until a
+\t// BYTE watermark is reached. Do not let the unrelated packet-count watermark
+\t// block this producer first; the byte budget below remains the hard memory
+\t// bound. Outside internal rebuffer, behavior is byte-for-byte equivalent.
+\tint nova_rebuffering = __atomic_load_n(&s->rebuffering, __ATOMIC_ACQUIRE);
+\tint video_packets = queue_packets(&ff_p->vq);
+\tint sub_packets = queue_packets(&ff_p->sq);
+\tif (!nova_rebuffering && !ff_p->seeking && !audio_starved &&
+\t    (audio_packets >= FF_QUEUE_MAX_PACKETS ||
+\t     video_packets >= FF_QUEUE_MAX_PACKETS ||
+\t     sub_packets >= FF_QUEUE_MAX_PACKETS)) {
+DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d)\\n", audio_packets);
+\t\treturn FF_PARSE_WAIT;
+\t}
+\tif (nova_rebuffering &&
+\t    (audio_packets == FF_QUEUE_MAX_PACKETS ||
+\t     video_packets == FF_QUEUE_MAX_PACKETS ||
+\t     sub_packets == FF_QUEUE_MAX_PACKETS)) {
+\t\tserprintf("NOVA_REBUFFER_PACKET_CAP_BYPASS: aq=%d vq=%d sq=%d used=%lld budget=%d\\n",
+\t\t\taudio_packets, video_packets, sub_packets,
+\t\t\t(long long)mem_used, ff_p->buffer_size);
+\t}
+""",
+        "pre-read FFmpeg packet backpressure",
+    )
+
+    if text.count("_add_packet_limited") != 3:
+        raise RuntimeError("FFmpeg root-fix postcondition failed: _add_packet_limited count")
+    if text.count("NOVA_REBUFFER_PACKET_CAP_BYPASS") != 1:
+        raise RuntimeError("FFmpeg root-fix postcondition failed: diagnostic count")
+
+    path.write_text(text)
+
 def apply(root: Path, report: Path | None = None) -> dict:
     root = root.resolve()
     head = check_head(root)
@@ -369,6 +492,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
     patch_stream_video(root / "Source" / "stream_video.c")
     patch_stream_c(root / "Source" / "stream.c")
     patch_avos_mp_video(root / "Source" / "avos_mp_video.c")
+    patch_stream_parser_ffmpeg(root / "Source" / "stream_parser_ffmpeg.c")
 
     result = {
         "status": "PASS",
@@ -383,6 +507,10 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "abi_safety": "new STREAM fields appended at struct tail; existing offsets unchanged",
         "manual_pause_policy": "manual pause disarms low-water entry; automatic resume is suppressed until user starts again",
         "events": ["MEDIA_INFO_BUFFERING_START", "MEDIA_INFO_BUFFERING_END"],
+        "queue_root_fix": "internal rebuffer bypasses FF_QUEUE_MAX_PACKETS while 128MiB byte budget remains authoritative",
+        "normal_packet_cap": 8192,
+        "manual_pause_packet_cap": 8192,
+        "diagnostic": "NOVA_REBUFFER_PACKET_CAP_BYPASS",
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
