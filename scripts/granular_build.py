@@ -13,6 +13,7 @@ import zipfile
 import granular as g
 import check_upstream as upstream
 import buffer_guard_patch
+import stream_throughput_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -130,6 +131,7 @@ def main():
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
     buffer_guard_patch.apply(candidate, args.reports / 'buffer-guard.json')
+    stream_throughput_patch.apply(candidate, args.reports / 'stream-throughput.json')
     overlay_native(candidate, args.native_lib_root, args.reports)
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
@@ -144,6 +146,7 @@ def main():
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'native_replacements': ['libavos.so'],
         'native_rebuffer_control': '24MiB low / 45MiB resume using AVOS parser queue bytes',
+        'webdav_throughput': {'upstream_bytes': 1048576, 'localhost_copy_bytes': 131072},
         'spec_bootstrapped': generated,
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
