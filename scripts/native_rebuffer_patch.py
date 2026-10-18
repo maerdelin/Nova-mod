@@ -539,7 +539,7 @@ def patch_dynamic_bitrate(root: Path) -> None:
                   s->rebuffer_capacity_bytes);
     }
 '''
-    text = replace_once(text, needle, dynamic, "install exact dynamic FFmpeg queue budget")
+    text = replace_once(text, needle, dynamic.replace(r"\t", "\t"), "install exact dynamic FFmpeg queue budget")
     ff.write_text(text)
 
 
