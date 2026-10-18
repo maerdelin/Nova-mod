@@ -63,6 +63,9 @@ def patch_stream_h(path: Path) -> None:
         "\tvolatile int\trebuffer_play_requested;\n"
         "\tvolatile int\trebuffer_frame_seen;\n"
         "\tvolatile int\tstartup_first_sink_logged;\n"
+        "\tint\t\trebuffer_low_bytes;\n"
+        "\tint\t\trebuffer_resume_bytes;\n"
+        "\tint\t\trebuffer_capacity_bytes;\n"
         r"\2",
         "STREAM tail rebuffer fields",
     )
@@ -102,7 +105,8 @@ static void *_rebuffer_thread( void *data )
                 STREAM_PARSER_STATS stats;
                 STREAM_PARSER_STATS *pst = s->parser->get_stats( s, &stats );
 
-                if( pst && pst->buffer_size >= NOVA_REBUFFER_ARM_BYTES ) {
+                if( pst && pst->buffer_size == s->rebuffer_capacity_bytes &&
+                    s->rebuffer_low_bytes > 0 && s->rebuffer_resume_bytes > 0 ) {
                     int used = pst->buffer_used;
                     int eof = _nova_rebuffer_eof( s );
                     int active = __atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE );
@@ -116,7 +120,7 @@ static void *_rebuffer_thread( void *data )
                         if( play_requested && frame_seen &&
                             !s->paused && !s->stream_end &&
                             s->video_error == VE_NO_ERROR && !eof &&
-                            used < NOVA_REBUFFER_LOW_BYTES ) {
+                            used < s->rebuffer_low_bytes ) {
                             __atomic_store_n( &s->rebuffering, 1, __ATOMIC_RELEASE );
                             __atomic_store_n(
                                 &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
@@ -129,8 +133,8 @@ static void *_rebuffer_thread( void *data )
                                 last_wait_log = atime();
                                 serprintf(
                                     "NOVA_REBUFFER_ENTER: used=%d low=%d resume=%d size=%d\n",
-                                    used, NOVA_REBUFFER_LOW_BYTES,
-                                    NOVA_REBUFFER_RESUME_BYTES, pst->buffer_size );
+                                    used, s->rebuffer_low_bytes,
+                                    s->rebuffer_resume_bytes, pst->buffer_size );
                                 if( s->message_cb )
                                     s->message_cb( s, STREAM_BUFFERING_START );
                             }
@@ -143,13 +147,13 @@ static void *_rebuffer_thread( void *data )
                             last_wait_log = now;
                             serprintf(
                                 "NOVA_REBUFFER_WAIT: used=%d resume=%d size=%d user_paused=%d\n",
-                                used, NOVA_REBUFFER_RESUME_BYTES,
+                                used, s->rebuffer_resume_bytes,
                                 pst->buffer_size, user_paused );
                         }
 
                         if( eof || s->stream_end ||
                             s->video_error != VE_NO_ERROR ||
-                            used >= NOVA_REBUFFER_RESUME_BYTES ) {
+                            used >= s->rebuffer_resume_bytes ) {
                             const char *reason =
                                 s->video_error != VE_NO_ERROR ? "error" :
                                 (eof || s->stream_end) ? "eof" : "threshold";
@@ -486,6 +490,59 @@ DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d
     path.write_text(text)
 
 
+def patch_dynamic_bitrate(root: Path) -> None:
+    """Per-title 2/5/10 seconds of average bytes; FFmpeg demux queue budget authoritative."""
+    ff = root / "Source" / "stream_parser_ffmpeg.c"
+    text = ff.read_text()
+    needle = """\ts->duration = ff_p->duration;
+\ts->size     = ff_p->size;
+"""
+    dynamic = r'''\ts->duration = ff_p->duration;
+\ts->size     = ff_p->size;
+
+    // X = file bytes / duration seconds. Compute without multiplying a
+    // multi-gigabyte file length by 1000 (overflow); clamp BEFORE narrowing.
+    // Packet queue counters use signed int, so cap total at INT_MAX/2.
+    uint64_t nova_x = 0;
+    const uint64_t nova_max_x = (uint64_t)(INT_MAX / 2) / 10;
+    if (ff_p->size_known && s->size > 0 && s->duration > 0) {
+        uint64_t duration_ms = (uint64_t)s->duration;
+        uint64_t whole = (uint64_t)s->size / duration_ms;
+        uint64_t remain = (uint64_t)s->size % duration_ms;
+        if (whole > nova_max_x / 1000)
+            nova_x = nova_max_x;
+        else
+            nova_x = whole * 1000 + (remain * 1000) / duration_ms;
+        if (nova_x > nova_max_x) nova_x = nova_max_x;
+    }
+    if (nova_x > 0) {
+        s->rebuffer_low_bytes = (int)(2 * nova_x);
+        s->rebuffer_resume_bytes = (int)(5 * nova_x);
+        s->rebuffer_capacity_bytes = (int)(10 * nova_x);
+        ff_p->buffer_size = s->rebuffer_capacity_bytes;
+        // STREAM retains legacy MiB unit. The FFmpeg budget above is exact.
+        s->buffer_size = (s->rebuffer_capacity_bytes + 1048575) / 1048576;
+        serprintf("NOVA_DYNAMIC_BUFFER: mode=average size=%llu duration_ms=%d x_bytes_per_sec=%llu low=%d resume=%d capacity=%d\n",
+                  (unsigned long long)s->size, s->duration,
+                  (unsigned long long)nova_x,
+                  s->rebuffer_low_bytes, s->rebuffer_resume_bytes,
+                  s->rebuffer_capacity_bytes);
+    } else {
+        // Metadata absent or invalid: preserve playable known-good defaults.
+        s->rebuffer_low_bytes = 24 * 1024 * 1024;
+        s->rebuffer_resume_bytes = 64 * 1024 * 1024;
+        s->rebuffer_capacity_bytes = 128 * 1024 * 1024;
+        ff_p->buffer_size = s->rebuffer_capacity_bytes;
+        serprintf("NOVA_DYNAMIC_BUFFER: mode=fallback size=%llu duration_ms=%d low=%d resume=%d capacity=%d\n",
+                  (unsigned long long)s->size, s->duration,
+                  s->rebuffer_low_bytes, s->rebuffer_resume_bytes,
+                  s->rebuffer_capacity_bytes);
+    }
+'''
+    text = replace_once(text, needle, dynamic, "install exact dynamic FFmpeg queue budget")
+    ff.write_text(text)
+
+
 def patch_startup_trace(root: Path) -> None:
     """Observational startup milestones only; no threshold or scheduling changes."""
     avos = root / "Source" / "avos_mp_video.c"
@@ -577,6 +634,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
     patch_avos_mp_video(root / "Source" / "avos_mp_video.c")
     patch_stream_parser_ffmpeg(root / "Source" / "stream_parser_ffmpeg.c")
     patch_startup_trace(root)
+    patch_dynamic_bitrate(root)
 
     result = {
         "status": "PASS",
@@ -596,6 +654,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "manual_pause_packet_cap": 8192,
         "diagnostic": "NOVA_REBUFFER_PACKET_CAP_BYPASS",
         "startup_diagnostic": "NOVA_STARTUP_TRACE",
+        "dynamic_buffer": "2X low / 5X resume / 10X FFmpeg demux capacity, X=file size bytes / duration seconds",
     }
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)
