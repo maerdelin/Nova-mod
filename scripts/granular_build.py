@@ -145,7 +145,7 @@ def main():
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'native_replacements': ['libavos.so'],
-        'native_rebuffer_control': '24MiB low / 45MiB resume using AVOS parser queue bytes',
+        'native_rebuffer_control': '24MiB low / 64MiB resume using AVOS parser queue bytes',
         'webdav_throughput': {'upstream_bytes': 1048576, 'localhost_copy_bytes': 131072},
         'spec_bootstrapped': generated,
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})

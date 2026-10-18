@@ -9,7 +9,7 @@ from pathlib import Path
 
 EXPECTED_AVOS_COMMIT = "b313441df14414632781617742efb66778689b91"
 LOW_BYTES = 24 * 1024 * 1024
-RESUME_BYTES = 45 * 1024 * 1024
+RESUME_BYTES = 64 * 1024 * 1024
 ARM_BUFFER_BYTES = 128 * 1024 * 1024
 POLL_MS = 50
 
@@ -205,7 +205,7 @@ def patch_stream_video(path: Path) -> None:
         "#define THREAD_PRIO_SUBTITLE\t0\n\n"
         "#define NOVA_REBUFFER_ARM_BYTES    (128 * 1024 * 1024)\n"
         "#define NOVA_REBUFFER_LOW_BYTES    (24 * 1024 * 1024)\n"
-        "#define NOVA_REBUFFER_RESUME_BYTES (45 * 1024 * 1024)\n"
+        "#define NOVA_REBUFFER_RESUME_BYTES (64 * 1024 * 1024)\n"
         "#define NOVA_REBUFFER_POLL_MS      50\n",
         "rebuffer constants",
     )

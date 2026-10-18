@@ -18,7 +18,7 @@ class NativeRebufferStaticChecks(unittest.TestCase):
     def test_native_uses_real_parser_queue_bytes(self):
         for token in (
             "NOVA_REBUFFER_LOW_BYTES    (24 * 1024 * 1024)",
-            "NOVA_REBUFFER_RESUME_BYTES (45 * 1024 * 1024)",
+            "NOVA_REBUFFER_RESUME_BYTES (64 * 1024 * 1024)",
             "pst->buffer_used",
             "pst->buffer_size >= NOVA_REBUFFER_ARM_BYTES",
             "STREAM_PARSER_STATS",
