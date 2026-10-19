@@ -1,0 +1,100 @@
+import tempfile
+import unittest
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+import iso_patch
+
+class IsoPatchTests(unittest.TestCase):
+    def test_player_injection(self):
+        text = """.class public Lcom/archos/mediacenter/video/player/Player;
+.super Ljava/lang/Object;
+.method private synthetic lambda$openVideo$9(Landroid/net/Uri;Landroid/content/Context;)V
+    .locals 2
+    invoke-static {p1, p2}, Lcom/archos/filecorelibrary/NetworkInitialization;->awaitReadyForSmb(Landroid/net/Uri;Landroid/content/Context;)V
+    invoke-interface {v0, p2, p1}, Lcom/archos/medialib/IMediaPlayer;->setDataSource(Landroid/content/Context;Landroid/net/Uri;)V
+    return-void
+.end method
+"""
+        out, status = iso_patch.patch_player_text(text)
+        self.assertIn('BlurayIsoProxy;->resolve', out)
+        self.assertIn('move-result-object p1', out)
+        self.assertTrue(status.startswith('.method '))
+
+    def test_iso_only_player_factory_patch(self):
+        text = """.class public Lcom/archos/mediacenter/video/player/Player;
+.super Ljava/lang/Object;
+.method public setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V
+    .locals 1
+    return-void
+.end method
+.method public openVideo()V
+    .locals 3
+    invoke-static {v0, v1}, Lcom/archos/medialib/MediaFactory;->createPlayer(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    move-result-object v2
+    return-void
+.end method
+"""
+        out, status = iso_patch.patch_force_avos_player_text(text)
+        self.assertIn('BlurayIsoProxy;->armForUri', out)
+        self.assertIn('IsoPlayerFactory;->create', out)
+        self.assertNotIn('MediaFactory;->createPlayer(Landroid/content/Context;Z)', out)
+        self.assertEqual(status, 'applied')
+
+    def test_initial_zero_seek_is_skipped_only_through_player_service_wrapper(self):
+        text = """.class public Lcom/archos/mediacenter/video/player/PlayerService;
+.super Ljava/lang/Object;
+.method private postPreparedAndVideoDb()V
+    .locals 2
+    sget-object v0, Lcom/archos/mediacenter/video/player/Player;->sPlayer:Lcom/archos/mediacenter/video/player/Player;
+    const/4 v1, 0x0
+    invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V
+    return-void
+.end method
+"""
+        out, status = iso_patch.patch_initial_zero_seek_player_service_text(text)
+        self.assertIn('invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/IsoPlayerFactory;->seekTo', out)
+        self.assertNotIn('invoke-virtual {v0, v1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V', out)
+        self.assertEqual(status, 'applied')
+
+    def test_iso_initial_zero_seek_guard_is_one_shot(self):
+        self.assertIn('.field private static sSkipInitialZeroSeek:Z', iso_patch.PROXY_SMALI)
+        self.assertIn('shouldSkipInitialZeroSeek(I)Z', iso_patch.PROXY_SMALI)
+        self.assertIn('SEEK_ZERO_SKIP iso=1', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('Player;->seekTo(I)V', iso_patch.ISO_FACTORY_SMALI)
+
+    def test_iso_player_factory_forces_avos_then_restores_any_decoder(self):
+        self.assertIn('const/4 v0, 0x1', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('AvosMediaPlayer;', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('LibAvos;->setDecoder(I)V', iso_patch.ISO_FACTORY_SMALI)
+        self.assertIn('PLAYER_FACTORY avos=1 forced=1', iso_patch.ISO_FACTORY_SMALI)
+
+    def test_native_source_uses_real_crlf_escapes(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn("header[i] == '\\r'", source)
+        self.assertIn('"\\r\\n"', source)
+        self.assertNotIn("header[i] == '\\\\\\\\r'", source)
+
+    def test_native_url_marks_iso_proxy(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn('main.m2ts?mpegts&nova_iso=1', source)
+
+    def test_stock_avos_is_preserved(self):
+        source = (Path(__file__).resolve().parents[1] / 'scripts' / 'iso_patch.py').read_text()
+        self.assertNotIn("shutil.copyfile(avos_src", source)
+        self.assertNotIn("avos_dir / abi / 'libavos.so'", source)
+
+    def test_proxy_smali_has_native_bridge(self):
+        self.assertIn('System;->loadLibrary', iso_patch.PROXY_SMALI)
+        self.assertIn('StreamOverHttp;-><init>', iso_patch.PROXY_SMALI)
+        self.assertIn('nativeOpen', iso_patch.PROXY_SMALI)
+
+    def test_native_preempt_does_not_reuse_stale_client_fd(self):
+        source = (Path(__file__).resolve().parents[1] / 'iso' / 'nova_iso.c').read_text()
+        self.assertIn('pthread_mutex_t client_lock;', source)
+        self.assertIn('if (s->client_fd == fd) s->client_fd = -1;', source)
+        self.assertIn('pthread_mutex_lock(&s->client_lock);', source)
+
+if __name__ == '__main__':
+    unittest.main()

@@ -17,6 +17,7 @@ import stream_throughput_patch
 import audio_route_no_rebuild_patch
 import webdav_connect_retry_patch
 import webdav_midstream_resume_patch
+import iso_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -89,24 +90,38 @@ def overlay_native(candidate: Path, native_root: Path, reports: Path):
 
 
 def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
+    abis = ('armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64')
+    expected_iso = {f'lib/{abi}/libnova_iso.so' for abi in abis}
     with zipfile.ZipFile(selected) as a, zipfile.ZipFile(rebuilt) as b:
         if b.testzip() is not None or len(b.namelist()) != len(set(b.namelist())):
             raise g.Conflict('Rebuilt APK has invalid/duplicate entries')
-        keep = [n for n in a.namelist() if n.startswith(('lib/', 'assets/')) and not n.endswith('/')]
-        allowed = {n for n in keep if n.startswith('lib/') and n.endswith('/libavos.so')}
-        changed = {n for n in keep if n not in b.namelist() or a.read(n) != b.read(n)}
-        unexpected = sorted(changed - allowed)
-        missing = sorted(allowed - changed)
+        original = set(a.namelist())
+        output = set(b.namelist())
+        keep = [n for n in original if n.startswith(('lib/', 'assets/')) and not n.endswith('/')]
+        allowed_avos = {n for n in keep if n.startswith('lib/') and n.endswith('/libavos.so')}
+        changed = {n for n in keep if n not in output or a.read(n) != b.read(n)}
+        unexpected = sorted(changed - allowed_avos)
+        missing = sorted(allowed_avos - changed)
         if unexpected:
             raise g.Conflict('Unexpected native/asset payload changes: ' + str(unexpected[:10]))
         if missing:
             raise g.Conflict('Expected rebuilt libavos.so did not change: ' + str(missing))
+        if original & expected_iso:
+            raise g.Conflict('Official APK already contains libnova_iso.so; refusing overwrite')
+        new_payload = {n for n in output - original if n.startswith(('lib/', 'assets/'))}
+        if new_payload != expected_iso:
+            raise g.Conflict('Unexpected new native/asset entries: ' + str(sorted(new_payload ^ expected_iso)))
+        for name in expected_iso:
+            data = b.read(name)
+            if len(data) < 10000 or not data.startswith(b'\x7fELF'):
+                raise g.Conflict('Missing/invalid ISO ELF bridge: ' + name)
         if b.getinfo('resources.arsc').compress_type != zipfile.ZIP_STORED:
             raise g.Conflict('resources.arsc must be stored uncompressed')
     g.write_json(reports / 'upstream-payload.json', {
         'status': 'PASS',
-        'preserved_native_and_asset_entries': len(keep) - len(allowed),
-        'replaced_libavos_entries': sorted(allowed),
+        'preserved_native_and_asset_entries': len(keep) - len(allowed_avos),
+        'replaced_libavos_entries': sorted(allowed_avos),
+        'added_iso_bridge_entries': sorted(expected_iso),
         'unexpected_changes': [],
     })
 
@@ -120,6 +135,8 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--native-lib-root', type=Path, required=True,
                    help='Directory containing <abi>/libavos.so rebuilt from patched aos-avos')
+    p.add_argument('--iso-native-root', type=Path, required=True,
+                   help='Directory containing new <abi>/libnova_iso.so from pinned libbluray')
     args = p.parse_args()
     selected = upstream.load_selection(args.metadata, args.apk)
     args.work.mkdir(parents=True, exist_ok=True)
@@ -138,6 +155,7 @@ def main():
     audio_route_no_rebuild_patch.apply(candidate, args.reports / 'audio-route-no-rebuild.json')
     webdav_connect_retry_patch.apply(candidate, args.reports / 'webdav-connect-retry.json')
     webdav_midstream_resume_patch.apply(candidate, args.reports / 'webdav-midstream-resume.json')
+    iso_patch.apply(candidate, args.iso_native_root, args.reports / 'bluray-iso.json')
     overlay_native(candidate, args.native_lib_root, args.reports)
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
@@ -150,7 +168,7 @@ def main():
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
-        'whole_module_replacements': 0, 'native_replacements': ['libavos.so'],
+        'whole_module_replacements': 0, 'native_replacements': ['libavos.so', 'libnova_iso.so (new)'],
         'native_rebuffer_control': '24MiB low / 64MiB resume using AVOS parser queue bytes',
         'webdav_throughput': {'upstream_bytes': 1048576, 'localhost_copy_bytes': 131072},
         'spec_bootstrapped': generated,
