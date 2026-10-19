@@ -109,13 +109,19 @@ jobs:
       - name: Apply instruction and XML-property patches to latest APK
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --native-lib-root native-src/native/avos/libs --iso-native-root work/iso-native --output work/granular-UNSIGNED.apk
+        run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --native-lib-root native-src/native/avos/libs --output work/granular-UNSIGNED.apk
 
       - name: Restore saved WebDAV credentials on cold startup
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/webdav_credential_coldboot_patch.py work/granular-UNSIGNED.apk work/credential-UNSIGNED.apk --report reports/webdav-credential-coldboot.json
+
+      - name: Add Blu-ray ISO on top of verified Run377 credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/iso_finalize.py --source work/credential-UNSIGNED.apk --output work/iso-UNSIGNED.apk --apktool tools/apktool.jar --iso-native-root work/iso-native --work work --reports reports
 
       - name: Align sign and verify the final APK
         id: signing
@@ -144,7 +150,7 @@ jobs:
           else
             echo '::error::Incomplete signing secrets' && exit 1
           fi
-          "$ALIGN" -f -p 4 work/credential-UNSIGNED.apk work/aligned-UNSIGNED.apk
+          "$ALIGN" -f -p 4 work/iso-UNSIGNED.apk work/aligned-UNSIGNED.apk
           export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
           "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/Nova_Video_Player_mod_SIGNED.apk work/aligned-UNSIGNED.apk
           "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Video_Player_mod_SIGNED.apk | tee reports/final-signature.txt
