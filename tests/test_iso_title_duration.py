@@ -93,7 +93,7 @@ int main(void) {
         {"?mpegts&nova_iso=1&nova_iso_duration_us=86400000000", 1, 86400000000LL},
         {"?mpegts&nova_iso=1", 0, -1LL},
         {"?mpegts", 0, -1LL},
-        {NULL, 0, -1LL},
+        {"", 0, -1LL},  // src_query is an always-present fixed array in real AVOS
         {"?mpegts&nova_iso=11&nova_iso_duration_us=7023000000", 0, -1LL},
         {"?mpegts&not_nova_iso=1&nova_iso_duration_us=7023000000", 0, -1LL},
         {"?mpegts&nova_iso=1&nova_iso_duration_us=0", 0, -1LL},
