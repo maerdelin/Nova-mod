@@ -16,6 +16,7 @@ import buffer_guard_patch
 import stream_throughput_patch
 import audio_route_no_rebuild_patch
 import webdav_connect_retry_patch
+import webdav_midstream_resume_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -136,6 +137,7 @@ def main():
     stream_throughput_patch.apply(candidate, args.reports / 'stream-throughput.json')
     audio_route_no_rebuild_patch.apply(candidate, args.reports / 'audio-route-no-rebuild.json')
     webdav_connect_retry_patch.apply(candidate, args.reports / 'webdav-connect-retry.json')
+    webdav_midstream_resume_patch.apply(candidate, args.reports / 'webdav-midstream-resume.json')
     overlay_native(candidate, args.native_lib_root, args.reports)
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
