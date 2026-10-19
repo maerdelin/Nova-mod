@@ -30,6 +30,31 @@ TS_CODE = r'''
         int64_t nova_ts_demux_bps = nova_ts_fmt ? nova_ts_fmt->bit_rate : 0;
         const uint64_t nova_ts_min_x = 8192;               // 64 kbit/s
         const uint64_t nova_ts_max_x = 25 * 1024 * 1024;   // 200+ Mbit/s
+
+        // Only the locally generated Blu-ray ISO proxy can provide this
+        // duration. Leave FFmpeg's presentation timebase and seek semantics
+        // untouched. Invalid/missing metadata retains the original TS path.
+        int nova_iso_metadata_valid = 0;
+        const char *nova_iso_duration_arg = NULL;
+        if (s->src_query &&
+            strstr(s->src_query, "&nova_iso=1&") != NULL)
+            nova_iso_duration_arg = strstr(
+                s->src_query, "&nova_iso_duration_us=");
+        if (nova_iso_duration_arg) {
+            const char *digits = nova_iso_duration_arg +
+                sizeof("&nova_iso_duration_us=") - 1;
+            if (*digits >= '0' && *digits <= '9') {
+                char *end = NULL;
+                unsigned long long us = strtoull(digits, &end, 10);
+                if (end != digits && (*end == '\0' || *end == '&') &&
+                    us >= 10ULL * AV_TIME_BASE &&
+                    us <= 24ULL * 3600 * AV_TIME_BASE) {
+                    nova_ts_duration_us = (int64_t)us;
+                    nova_iso_metadata_valid = 1;
+                }
+            }
+        }
+
         if (ff_p->size_known && s->size > 0 && nova_ts_fmt) {
             // If the container duration is unknown, try timestamp duration
             // of a video stream, then audio. Do not sample or seek playback.
@@ -71,7 +96,8 @@ TS_CODE = r'''
                     (part * AV_TIME_BASE) / us;
                 if (x >= nova_ts_min_x && x <= nova_ts_max_x) {
                     nova_x = x;
-                    nova_ts_source = "duration-derived";
+                    nova_ts_source = nova_iso_metadata_valid ?
+                        "iso-title-metadata" : "duration-derived";
                 }
             }
 

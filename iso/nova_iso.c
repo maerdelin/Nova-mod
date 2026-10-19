@@ -56,6 +56,7 @@ typedef struct {
     iso_input input;
     BLURAY *bd;
     uint64_t title_size;
+    uint64_t title_duration_us;  // metadata only; never touches Blu-ray seek timeline
     int listen_fd;
     int client_fd;
     int port;
@@ -775,6 +776,11 @@ static iso_session *session_create(const char *url) {
     s->title_size = bd_get_title_size(s->bd);
     BLURAY_TITLE_INFO *ti = bd_get_title_info(s->bd, (uint32_t)main_title, 0);
     if (ti) {
+        // Blu-ray title durations are 90 kHz ticks. Only valid movie lengths
+        // are exported to the AVOS buffering calculation (not playback seek).
+        if (ti->duration >= 10ULL * 90000 &&
+            ti->duration <= 24ULL * 3600 * 90000)
+            s->title_duration_us = (ti->duration * 100) / 9;
         LOGI("MAIN_TITLE title=%d playlist=%05u duration=%" PRIu64 "s clips=%u size=%" PRIu64,
              main_title, ti->playlist, ti->duration / 90000, ti->clip_count, s->title_size);
         bd_free_title_info(ti);
@@ -832,8 +838,17 @@ Java_com_archos_mediacenter_video_player_BlurayIsoProxy_nativeOpen(
 
     jstring result = NULL;
     if (g_session) {
-        char out[128];
-        snprintf(out, sizeof(out), "http://127.0.0.1:%d/main.m2ts?mpegts&nova_iso=1", g_session->port);
+        char out[160];
+        if (g_session->title_duration_us) {
+            snprintf(out, sizeof(out),
+                     "http://127.0.0.1:%d/main.m2ts?mpegts&nova_iso=1&nova_iso_duration_us=%" PRIu64,
+                     g_session->port, g_session->title_duration_us);
+        } else {
+            // Preserve the last working URL and fallback behavior if no valid
+            // title duration is available from libbluray.
+            snprintf(out, sizeof(out),
+                     "http://127.0.0.1:%d/main.m2ts?mpegts&nova_iso=1", g_session->port);
+        }
         result = (*env)->NewStringUTF(env, out);
     }
     pthread_mutex_unlock(&g_lock);
