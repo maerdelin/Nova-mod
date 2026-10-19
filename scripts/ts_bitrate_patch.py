@@ -36,8 +36,7 @@ TS_CODE = r'''
         // untouched. Invalid/missing metadata retains the original TS path.
         int nova_iso_metadata_valid = 0;
         const char *nova_iso_duration_arg = NULL;
-        if (s->src_query &&
-            strstr(s->src_query, "&nova_iso=1&") != NULL)
+        if (strstr(s->src_query, "&nova_iso=1&") != NULL)
             nova_iso_duration_arg = strstr(
                 s->src_query, "&nova_iso_duration_us=");
         if (nova_iso_duration_arg) {

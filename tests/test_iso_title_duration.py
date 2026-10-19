@@ -39,6 +39,7 @@ class TestIsoTitleDuration(unittest.TestCase):
         )
         updated = ts_bitrate_patch.transform(sample)
         self.assertIn('strstr(s->src_query, "&nova_iso=1&")', updated)
+        self.assertNotIn("s->src_query &&", updated)
         self.assertIn('"iso-title-metadata" : "duration-derived"', updated)
         self.assertIn("nova_ts_source = nova_iso_metadata_valid ?", updated)
         self.assertIn("whole * AV_TIME_BASE +", updated)
