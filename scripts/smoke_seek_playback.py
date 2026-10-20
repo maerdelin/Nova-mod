@@ -78,9 +78,21 @@ def main():
                     time.sleep(0.5)
                 raise RuntimeError('Missing '+label)
             wait_for(lambda t:'NOVA_ISO_TIMELINE_READY' in t and 'first_frame_sink' in t,35,'native timeline and first frame')
+            # A fresh phone emulator starts in touch mode. Establish DPAD focus
+            # and dismiss the one-time help overlay with a non-seek direction.
+            # This does not move playback; the measured seek still uses real keys.
+            (a.reports/'seek-playback-start-logcat.txt').write_text(logs())
+            adb('shell','input keyevent 20');time.sleep(0.5)
+            adb('shell','input keyevent 20');time.sleep(0.5)
+            try:
+                adb('shell','uiautomator dump /data/local/tmp/nova-seek-before.xml',timeout=15)
+                (a.reports/'seek-playback-before.xml').write_text(adb('shell','cat /data/local/tmp/nova-seek-before.xml'))
+            except Exception as diag:
+                report['ui_diagnostic_warning']=str(diag)
+            report['input_setup']='DPAD_DOWN establishes focus; no pause/play or seek issued'
             # Keep the fixture far from either endpoint. Real input down/up is
             # handled by the shipped PlayerController, not a test seek call.
-            time.sleep(2);adb('logcat','-c');adb('shell','input keyevent 22')
+            adb('logcat','-c');adb('shell','input keyevent 22')
             text=wait_for(lambda t:'NOVA_ISO_TIME_SEEK' in t and 'HIDE_DONE' in t,20,'5s seek and automatic control hide')
             matches=re.findall(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',text)
             forward=[(int(x),int(y))for x,y in matches if int(y)>int(x)]
@@ -97,7 +109,13 @@ def main():
                 raise RuntimeError('Short DPAD seek was not approximately -5000ms: '+repr(matches))
             (a.reports/'seek-playback-backward.txt').write_text(text);report['backward_ms']=backward[0]
             report['status']='PASS';print('SEEK_PLAYBACK_SMOKE=PASS '+json.dumps(report))
-    except Exception as error:report['error']=str(error);raise
+    except Exception as error:
+        report['error']=str(error)
+        try:
+            adb('shell','uiautomator dump /data/local/tmp/nova-seek-failure.xml',timeout=15)
+            (a.reports/'seek-playback-failure.xml').write_text(adb('shell','cat /data/local/tmp/nova-seek-failure.xml'))
+        except Exception:pass
+        raise
     finally:
         try:(a.reports/'seek-playback-last-logcat.txt').write_text(adb('logcat','-d','-v','threadtime'))
         except Exception:pass
