@@ -40,6 +40,8 @@ public final class AheadApkProbe {
         set(inner,"this$0",outer);set(inner,"requestedStart",offset);set(inner,"requestedEnd",START+SIZE-1);
         set(inner,"length",length);set(inner,"requestId",1);set(inner,"supersedableMediaRequest",media);
         set(inner,"worker",new Thread());set(inner,"cleanupTasks",1);set(inner,"upstreamBufferSize",131072);
+        // Unsafe test allocation bypasses the constructor; reproduce its owned socket.
+        set(inner,"socket",new Socket());
         return new Object[]{outer,inner};
     }
     static InputStream publish(Object s,InputStream input)throws Exception{
@@ -101,6 +103,7 @@ public final class AheadApkProbe {
                 if(mode.equals("cancel")){
                     call(pair[1],"cancel",new Class<?>[0]);waitDone(in);
                     check(field(pair[1],"is")==null,"cancel did not take owned stream");
+                    check(((Socket)field(pair[1],"socket")).isClosed(),"cancel did not close downstream socket");
                     try{in.read();throw new AssertionError("closed input readable");}catch(IOException expected){}
                 }else{
                     AtomicLong bytes=new AtomicLong();
@@ -114,6 +117,7 @@ public final class AheadApkProbe {
             long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);while(server.active.get()!=0&&System.nanoTime()<until)Thread.sleep(5);
             check(server.gets.get()==1&&server.max.get()==1,"extra/split upstream request");
             check(server.offsets.get(0)==offset,"offset mismatch");check(server.error==null,"server error "+server.error);
+            ((Socket)field(pair[1],"socket")).close();
             System.out.println("AHEAD_APK_PASS mode="+mode+" GETs=1 maxUpstream=1 sessionPublication=1");
         }
         System.out.println("AHEAD_FINAL_APK_PROBE=PASS");
