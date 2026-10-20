@@ -538,6 +538,26 @@ def patch_dynamic_bitrate(root: Path) -> None:
                   s->rebuffer_low_bytes, s->rebuffer_resume_bytes,
                   s->rebuffer_capacity_bytes);
     }
+    // Share the authoritative native 10X packet-queue capacity with the Java
+    // producer. Atomic rename prevents Java from parsing a partial record.
+    // The value is advisory until Java can associate it with this media.
+    {
+        const char *dst = "/data/user/0/org.courville.nova/cache/nova_range4_capacity";
+        const char *tmp = "/data/user/0/org.courville.nova/cache/nova_range4_capacity.tmp";
+        FILE *fp = fopen(tmp, "w");
+        if (fp) {
+            fprintf(fp, "%llu %d\\n", (unsigned long long)s->size,
+                    s->rebuffer_capacity_bytes);
+            if (fclose(fp) == 0 && rename(tmp, dst) == 0) {
+                serprintf("NOVA_RANGE4_CAP_PUBLISH: size=%llu capacity=%d\\n",
+                    (unsigned long long)s->size, s->rebuffer_capacity_bytes);
+            } else {
+                serprintf("NOVA_RANGE4_CAP_PUBLISH_FAILED: rename\\n");
+            }
+        } else {
+            serprintf("NOVA_RANGE4_CAP_PUBLISH_FAILED: open\\n");
+        }
+    }
 '''
     text = replace_once(text, needle, dynamic.replace(r"\t", "\t"), "install exact dynamic FFmpeg queue budget")
     ff.write_text(text)
