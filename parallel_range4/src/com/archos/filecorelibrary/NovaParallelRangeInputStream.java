@@ -28,7 +28,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private static final String TAG = "NOVA_RANGE4";
     private static final int CHUNK = 1024 * 1024;
     private static final int CONCURRENCY = 4;
-    private static final long MIN_LENGTH = 4L * CHUNK;
+    private static final long MIN_LENGTH = 16L * 1024 * 1024;
     // Independent network staging limit. AVOS separately enforces its 10X decoded
     // packet-queue budget; the two budgets must not be represented as identical.
     // Startup allowance before native parser publishes per-title 10X.
@@ -39,6 +39,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private volatile long maxPrefetchBytes = INITIAL_PREFETCH_BYTES;
     private volatile boolean nativeBudgetReceived;
     private long lastCapacityCheckNs;
+    private final long sessionStartMs = System.currentTimeMillis();
     private final Object lock = new Object();
     private final Source source;
     private final long start;
@@ -123,7 +124,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
         if (nativeBudgetReceived || now - lastCapacityCheckNs < 200000000L) return;
         lastCapacityCheckNs = now;
         File file = new File(CAP_PATH);
-        if (!file.isFile()) return;
+        if (!file.isFile() || file.lastModified() < sessionStartMs) return;
         BufferedReader reader = null;
         try {
             reader = new BufferedReader(new FileReader(file));
