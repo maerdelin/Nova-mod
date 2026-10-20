@@ -17,6 +17,7 @@ from pathlib import Path
 
 import granular as g
 import iso_patch
+import webdav_parallel4_patch
 
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 WEBDAV_UTILS = "Lcom/archos/filecorelibrary/webdav/WebdavUtils;"
@@ -79,6 +80,7 @@ def main() -> None:
                     "-f", str(args.source), "-o", str(decoded)], check=True)
     verify_credential(decoded)
     result = iso_patch.apply(decoded, args.iso_native_root, args.reports / "blu-ray-iso.json")
+    range4 = webdav_parallel4_patch.apply(decoded, args.reports / "webdav-parallel4.json")
     verify_credential(decoded)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["java", "-Xmx4g", "-jar", str(args.apktool), "b", str(decoded),
@@ -86,11 +88,13 @@ def main() -> None:
     subprocess.run(["java", "-Xmx4g", "-jar", str(args.apktool), "d", "--no-debug-info",
                     "-f", str(args.output), "-o", str(assembled)], check=True)
     verify_credential(assembled)
+    assert "novaWrapRange4(" in next(assembled.glob("smali*/com/archos/filecorelibrary/StreamOverHttp.smali")).read_text()
     g.verify(decoded, assembled, args.reports / "iso-roundtrip.json")
     verify_native_delta(args.source, args.output)
     report = {
         "status": "PASS",
         "ISO": result,
+        "webdav_range4": range4,
         "coldboot_webdav_credential_instructions": "present before and after ISO assembly",
         "existing_native_and_asset_payload": "byte-for-byte preserved, including patched AVOS",
         "new_native_payload": sorted(EXPECTED_ISO),
