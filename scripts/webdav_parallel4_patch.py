@@ -80,9 +80,65 @@ def patch_session(src: str) -> str:
                   'getInputStream(JLcom/archos/filecorelibrary/ReadOptions;)']:
         if token not in src:
             raise RuntimeError('Range4 prerequisite missing: ' + token)
-    match = re.search(r'(?m)^\.super [^\n]+$', src)
+    match = re.search(r'(?m)^\.source [^\n]+
+    src = src[:match.end()] + '\n.implements ' + SOURCE + src[match.end():]
+    return src.rstrip() + '\n' + SESSION_METHODS
+
+def apply(root: Path, report: Path | None = None) -> dict:
+    outer = exactly_one(root, 'StreamOverHttp.smali')
+    inner = exactly_one(root, 'StreamOverHttp$HttpSession.smali')
+    updates = [(outer, patch_outer(outer.read_text(encoding='utf-8'))),
+               (inner, patch_session(inner.read_text(encoding='utf-8')))]
+    for path, changed in updates:
+        path.write_text(changed, encoding='utf-8')
+    result = {'status': 'PASS', 'workers': 4, 'chunk_bytes': 4194304,
+              'scope': 'WebDAV media shared StreamOverHttp input (ISO and regular videos)',
+              'on_failure': 'existing WebDAV single-stream recovery',
+              'log_tag': 'NOVA_RANGE4'}
+    if report:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
+if __name__ == '__main__':
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument('root', type=Path)
+    p.add_argument('--report', type=Path)
+    args = p.parse_args()
+    print(json.dumps(apply(args.root, args.report), indent=2))
+, src)
     if match is None:
-        raise RuntimeError('HttpSession super class not found')
+        match = re.search(r'(?m)^\.super [^\n]+
+    src = src[:match.end()] + '\n.implements ' + SOURCE + src[match.end():]
+    return src.rstrip() + '\n' + SESSION_METHODS
+
+def apply(root: Path, report: Path | None = None) -> dict:
+    outer = exactly_one(root, 'StreamOverHttp.smali')
+    inner = exactly_one(root, 'StreamOverHttp$HttpSession.smali')
+    updates = [(outer, patch_outer(outer.read_text(encoding='utf-8'))),
+               (inner, patch_session(inner.read_text(encoding='utf-8')))]
+    for path, changed in updates:
+        path.write_text(changed, encoding='utf-8')
+    result = {'status': 'PASS', 'workers': 4, 'chunk_bytes': 4194304,
+              'scope': 'WebDAV media shared StreamOverHttp input (ISO and regular videos)',
+              'on_failure': 'existing WebDAV single-stream recovery',
+              'log_tag': 'NOVA_RANGE4'}
+    if report:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
+if __name__ == '__main__':
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument('root', type=Path)
+    p.add_argument('--report', type=Path)
+    args = p.parse_args()
+    print(json.dumps(apply(args.root, args.report), indent=2))
+, src)
+    if match is None:
+        raise RuntimeError('HttpSession source/super header not found')
     src = src[:match.end()] + '\n.implements ' + SOURCE + src[match.end():]
     return src.rstrip() + '\n' + SESSION_METHODS
 
