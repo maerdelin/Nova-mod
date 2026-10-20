@@ -10,7 +10,8 @@ import zipfile
 from pathlib import Path
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / 'parallel_range4/src'
-REQUIRED = {'NovaParallelRangeInputStream.java', 'NovaWebdavSidecarPolicy.java'}
+REQUIRED = {'NovaParallelRangeInputStream.java', 'NovaWebdavSidecarPolicy.java',
+            'NovaWebdavOpenPolicy.java', 'NovaIsoSessionGuard.java'}
 
 def latest(folder, glob):
     paths = list(folder.glob(glob))
@@ -57,7 +58,8 @@ def build(source, target, report=None):
                         '-d', str(classes)] + [str(p) for p in sources], check=True)
         files = sorted(str(p) for p in classes.rglob('*.class'))
         for name in ('NovaParallelRangeInputStream.class', 'NovaWebdavSidecarPolicy.class',
-                     'NovaParallelRangeInputStream$ManagedSource.class'):
+                     'NovaParallelRangeInputStream$ManagedSource.class',
+                     'NovaWebdavOpenPolicy.class', 'NovaIsoSessionGuard.class'):
             if not (classes / 'com/archos/filecorelibrary' / name).is_file():
                 raise RuntimeError('Compiled helper class missing: ' + name)
         subprocess.run([str(d8), '--min-api', '23', '--lib', str(jar),
