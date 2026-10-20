@@ -4,6 +4,9 @@ import android.util.Log;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,12 +26,19 @@ public final class NovaParallelRangeInputStream extends InputStream {
     }
 
     private static final String TAG = "NOVA_RANGE4";
-    private static final int CHUNK = 4 * 1024 * 1024;
+    private static final int CHUNK = 1024 * 1024;
     private static final int CONCURRENCY = 4;
     private static final long MIN_LENGTH = 4L * CHUNK;
     // Independent network staging limit. AVOS separately enforces its 10X decoded
     // packet-queue budget; the two budgets must not be represented as identical.
-    private static final long MAX_PREFETCH_BYTES = 128L * 1024 * 1024;
+    // Startup allowance before native parser publishes per-title 10X.
+    // One MiB per worker avoids the previous 16MiB minimum reservation.
+    private static final long INITIAL_PREFETCH_BYTES = 4L * CHUNK;
+    private static final String CAP_PATH =
+            "/data/user/0/org.courville.nova/cache/nova_range4_capacity";
+    private volatile long maxPrefetchBytes = INITIAL_PREFETCH_BYTES;
+    private volatile boolean nativeBudgetReceived;
+    private long lastCapacityCheckNs;
     private final Object lock = new Object();
     private final Source source;
     private final long start;
@@ -88,12 +98,13 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 return t;
             }
         });
+        updateCapacityLocked();
         // All four segments are produced on background workers. The first
         // worker reuses Nova's original connection and publishes its bytes as
         // they arrive, so the player never waits for a full 4 MiB block.
         refill();
         Log.i(TAG, "START start=" + start + " length=" + length + " lanes=4 chunk=" + CHUNK
-                + " first=background-progressive independent=1 windowBytes=" + MAX_PREFETCH_BYTES);
+                + " first=background-progressive independent=1 windowBytes=" + maxPrefetchBytes);
     }
 
     private int segmentSize(long index) {
@@ -107,7 +118,38 @@ public final class NovaParallelRangeInputStream extends InputStream {
         synchronized (lock) { refillLocked(); }
     }
 
+    private void updateCapacityLocked() {
+        long now = System.nanoTime();
+        if (nativeBudgetReceived || now - lastCapacityCheckNs < 200000000L) return;
+        lastCapacityCheckNs = now;
+        File file = new File(CAP_PATH);
+        if (!file.isFile()) return;
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new FileReader(file));
+            String line = reader.readLine();
+            if (line == null) return;
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length != 2) return;
+            long mediaSize = Long.parseLong(parts[0]);
+            long capacity = Long.parseLong(parts[1]);
+            // A seeked stream has length=full file size minus start.
+            if (mediaSize != start + length || capacity <= 0) return;
+            maxPrefetchBytes = Math.max(CHUNK, capacity);
+            nativeBudgetReceived = true;
+            fullWindowReported = false;
+            Log.i(TAG, "CAP_NATIVE_10X size=" + mediaSize + " capacity=" + capacity
+                    + " start=" + start + " alreadyReserved="
+                    + (Math.min(length, nextSubmit * (long) CHUNK) - delivered));
+        } catch (Exception problem) {
+            Log.w(TAG, "CAP_NATIVE_READ_FAILED", problem);
+        } finally {
+            if (reader != null) try { reader.close(); } catch (IOException ignored) { }
+        }
+    }
+
     private void refillLocked() {
+        updateCapacityLocked();
         // Four independent producers at all times (including the initial
         // connection); slow or paused playback never holds an HTTP worker.
         while (!closed && !prefetchFailed && activeBackground < CONCURRENCY
@@ -115,10 +157,10 @@ public final class NovaParallelRangeInputStream extends InputStream {
             final long segment = nextSubmit;
             final long reservedEnd = Math.min(length, (segment + 1) * (long) CHUNK);
             final long unreadReserved = reservedEnd - delivered;
-            if (unreadReserved > MAX_PREFETCH_BYTES) {
+            if (unreadReserved > maxPrefetchBytes) {
                 if (!fullWindowReported) {
                     fullWindowReported = true;
-                    Log.i(TAG, "CAP reached=1 limitBytes=" + MAX_PREFETCH_BYTES
+                    Log.i(TAG, "CAP reached=1 limitBytes=" + maxPrefetchBytes
                             + " reservedAhead=" + (reservedEnd - CHUNK - delivered)
                             + " active=" + activeBackground
                             + " networkBytes=" + networkReceived.get());
@@ -162,7 +204,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 });
                 pending.put(segment, job);
                 Log.i(TAG, "PUMP segment=" + segment + " running=" + activeBackground
-                        + " reservedAhead=" + unreadReserved + " limit=" + MAX_PREFETCH_BYTES);
+                        + " reservedAhead=" + unreadReserved + " limit=" + maxPrefetchBytes);
             } catch (java.util.concurrent.RejectedExecutionException problem) {
                 --activeBackground;
                 prefetchFailed = true;
@@ -258,7 +300,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 + " active=" + active + " connectionsMax=4"
                 + " receivedBytes=" + total + " deliveredBytes=" + delivered
                 + " reservedAhead=" + reservedAhead
-                + " stageCapBytes=" + MAX_PREFETCH_BYTES);
+                + " stageCapBytes=" + maxPrefetchBytes);
     }
 
     private void checkActive() throws IOException {
