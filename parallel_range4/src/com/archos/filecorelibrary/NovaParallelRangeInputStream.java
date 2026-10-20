@@ -25,6 +25,9 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private static final int CHUNK = 4 * 1024 * 1024;
     private static final int CONCURRENCY = 4;
     private static final long MIN_LENGTH = 4L * CHUNK;
+    // Independent network staging limit. AVOS separately enforces its 10X decoded
+    // packet-queue budget; the two budgets must not be represented as identical.
+    private static final long MAX_PREFETCH_BYTES = 128L * 1024 * 1024;
     private final Object lock = new Object();
     private final Source source;
     private final long start;
@@ -33,13 +36,15 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private final ExecutorService executor;
     private final Map<Long, Future<byte[]>> pending = new HashMap<Long, Future<byte[]>>();
     private final ArrayList<InputStream> opened = new ArrayList<InputStream>();
-    private InputStream primary;
-    private long delivered;
+    private volatile InputStream primary;
+    private volatile long delivered;
     private long nextSubmit;
     private long currentSegment;
     private byte[] block;
     private int blockPosition;
-    private boolean closed;
+    private volatile boolean closed;
+    private int activeBackground;
+    private boolean prefetchFailed;
     private long lastStatsTime;
     private long lastStatsBytes;
     private long lastScheduledCount;
@@ -75,8 +80,9 @@ public final class NovaParallelRangeInputStream extends InputStream {
         });
         // Segment 0 is read directly from Nova's existing input connection so playback
         // can start immediately. Segments 1..3 are fetched on separate connections.
-        schedule(0);
-        Log.i(TAG, "START start=" + start + " length=" + length + " lanes=4 chunk=" + CHUNK + " first=direct");
+        refill();
+        Log.i(TAG, "START start=" + start + " length=" + length + " lanes=4 chunk=" + CHUNK
+                + " first=direct independent=1 windowBytes=" + MAX_PREFETCH_BYTES);
     }
 
     private int segmentSize(long index) {
@@ -84,20 +90,51 @@ public final class NovaParallelRangeInputStream extends InputStream {
         return (int) Math.min(CHUNK, remaining);
     }
 
-    private void schedule(long readerSegment) {
-        synchronized (lock) {
-            if (closed) return;
-            // Until the direct first segment is consumed, permit only 3
-            // background connections; afterwards permit 4 background requests.
-            long exclusive = readerSegment + CONCURRENCY;
-            if (exclusive > segments) exclusive = segments;
-            while (nextSubmit < exclusive) {
-                final long segment = nextSubmit++;
+    // Fetches continue without waiting for playback. Each completed request
+    // immediately frees a slot for the next segment until the unread window is full.
+    private void refill() {
+        synchronized (lock) { refillLocked(); }
+    }
+
+    private void refillLocked() {
+        // Until the original first segment is finished: 1 original + 3 new GETs.
+        // After that, run 4 independent background GETs concurrently.
+        int maxBackground = primary != null ? CONCURRENCY - 1 : CONCURRENCY;
+        while (!closed && !prefetchFailed && activeBackground < maxBackground
+                && nextSubmit < segments) {
+            final long segment = nextSubmit;
+            final long reservedEnd = Math.min(length, (segment + 1) * (long) CHUNK);
+            final long unreadReserved = reservedEnd - delivered;
+            if (unreadReserved > MAX_PREFETCH_BYTES) return;
+            ++nextSubmit;
+            ++activeBackground;
+            ++lastScheduledCount;
+            try {
                 Future<byte[]> job = executor.submit(new Callable<byte[]>() {
-                    @Override public byte[] call() throws Exception { return download(segment); }
+                    @Override public byte[] call() throws Exception {
+                        boolean succeeded = false;
+                        try {
+                            byte[] bytes = download(segment);
+                            succeeded = true;
+                            return bytes;
+                        } finally {
+                            synchronized (lock) {
+                                --activeBackground;
+                                if (!succeeded) prefetchFailed = true;
+                                // Producer refill is independent of the reader.
+                                refillLocked();
+                            }
+                        }
+                    }
                 });
                 pending.put(segment, job);
-                lastScheduledCount++;
+                Log.i(TAG, "PUMP segment=" + segment + " running=" + activeBackground
+                        + " reservedAhead=" + unreadReserved + " limit=" + MAX_PREFETCH_BYTES);
+            } catch (java.util.concurrent.RejectedExecutionException problem) {
+                --activeBackground;
+                prefetchFailed = true;
+                Log.e(TAG, "SCHEDULER_FAILED segment=" + segment, problem);
+                return;
             }
         }
     }
@@ -190,7 +227,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 try { primary.close(); } catch (IOException ignored) { }
                 primary = null;
                 currentSegment = 1;
-                schedule(currentSegment);
+                refill();
             }
         } else {
             if (block == null || blockPosition >= block.length) {
@@ -211,7 +248,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 }
                 blockPosition = 0;
                 if (block.length != segmentSize(segment)) throw new IOException("Range4 corrupt segment size");
-                schedule(segment);
+                refill();
             }
             n = Math.min(count, block.length - blockPosition);
             System.arraycopy(block, blockPosition, target, offset, n);
@@ -221,9 +258,11 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 block = null;
                 blockPosition = 0;
                 currentSegment = delivered / CHUNK;
-                schedule(currentSegment);
+                refill();
             }
         }
+        // Reader progress releases prefetch capacity; it does not gate producers.
+        refill();
         if (delivered - lastStatsBytes >= 8L * 1024 * 1024) {
             long now = System.nanoTime();
             long dt = Math.max(1L, (now - lastStatsTime) / 1000000L);
