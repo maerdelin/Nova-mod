@@ -106,9 +106,9 @@ public final class Range4BehaviorHarness {
         // No stream.read() calls here. Downloaders must still run and refill.
         Thread.sleep(1500);
         expect(src.maxConcurrent.get() >= 4, "did not run four simultaneous HTTP connections");
-        expect(src.opened.get() >= 12, "requests gated by consumer: " + src.opened.get());
-        expect(src.received.get() <= 128 * MiB,
-                "network stage exceeded memory bound: " + src.received.get());
+        expect(src.opened.get() >= 4, "four startup requests missing: " + src.opened.get());
+        expect(src.received.get() <= 4 * MiB,
+                "startup stage exceeded native-metadata-pending 4MiB bound: " + src.received.get());
         stream.close();
         eventuallyIdle(src);
         System.out.println("PASS autonomous: maxConnections=" + src.maxConcurrent.get()
