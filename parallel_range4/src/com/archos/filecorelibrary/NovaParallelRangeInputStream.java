@@ -104,6 +104,25 @@ public final class NovaParallelRangeInputStream extends InputStream {
         // worker reuses Nova's original connection and publishes its bytes as
         // they arrive, so the player never waits for a full 4 MiB block.
         refill();
+        // The native parser calculates X only after media probing. Four initial
+        // chunks may finish before it publishes 10X, so wake the producer
+        // independently of playback/reader progress when metadata arrives.
+        Thread budgetWatcher = new Thread(new Runnable() {
+            @Override public void run() {
+                long deadline = System.nanoTime() + 30000000000L;
+                while (!closed && !nativeBudgetReceived && !source.cancelled()
+                        && System.nanoTime() < deadline) {
+                    try { Thread.sleep(200L); }
+                    catch (InterruptedException stop) { return; }
+                    synchronized (lock) { refillLocked(); }
+                }
+                if (!nativeBudgetReceived && !closed)
+                    Log.w(TAG, "CAP_METADATA_TIMEOUT continuing with provisional "
+                            + maxPrefetchBytes + " bytes");
+            }
+        }, "NovaRange4-CapWatch");
+        budgetWatcher.setDaemon(true);
+        budgetWatcher.start();
         Log.i(TAG, "START start=" + start + " length=" + length + " lanes=4 chunk=" + CHUNK
                 + " first=background-progressive independent=1 windowBytes=" + maxPrefetchBytes);
     }
