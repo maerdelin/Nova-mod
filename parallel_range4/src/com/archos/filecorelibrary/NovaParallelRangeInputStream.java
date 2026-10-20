@@ -124,7 +124,8 @@ public final class NovaParallelRangeInputStream extends InputStream {
         if (nativeBudgetReceived || now - lastCapacityCheckNs < 200000000L) return;
         lastCapacityCheckNs = now;
         File file = new File(CAP_PATH);
-        if (!file.isFile() || file.lastModified() < sessionStartMs) return;
+        // Seek can reuse a recent media budget; reject stale records by TTL and file length.
+        if (!file.isFile() || Math.abs(sessionStartMs - file.lastModified()) > 600000L) return;
         BufferedReader reader = null;
         try {
             reader = new BufferedReader(new FileReader(file));
@@ -254,6 +255,13 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 }
             } catch (IOException error) {
                 if (closed || source.cancelled()) throw error;
+                // Upstream 403 is an access refusal, not a transient byte-level EOF.
+                // Do not hammer the same rejected offset multiple times.
+                if (error.getMessage() != null && error.getMessage().contains("HTTP 403")) {
+                    Log.e(TAG, "RANGE_DENIED_HTTP403 segment=" + segment
+                            + " offset=" + (absolute + position), error);
+                    throw error;
+                }
                 if (++attempts > 2) {
                     Log.e(TAG, "FAIL segment=" + segment + " offset=" + (absolute + position), error);
                     throw error;
