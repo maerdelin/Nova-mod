@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** A byte-exact, bounded, four-connection prefetcher for StreamOverHttp WebDAV media only. */
 public final class NovaParallelRangeInputStream extends InputStream {
@@ -51,6 +52,11 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private long lastStatsTime;
     private long lastStatsBytes;
     private long lastScheduledCount;
+    private boolean fullWindowReported;
+    private final AtomicLong networkReceived = new AtomicLong();
+    private final AtomicLong lastNetworkLogNs = new AtomicLong();
+    private final AtomicLong lastNetworkLogBytes = new AtomicLong();
+    private final long networkStartNs = System.nanoTime();
 
     public static InputStream maybeWrap(Source source, InputStream primary, long start, long length) {
         if (source == null || primary == null || start < 0 || length < MIN_LENGTH || source.cancelled()) {
@@ -109,7 +115,20 @@ public final class NovaParallelRangeInputStream extends InputStream {
             final long segment = nextSubmit;
             final long reservedEnd = Math.min(length, (segment + 1) * (long) CHUNK);
             final long unreadReserved = reservedEnd - delivered;
-            if (unreadReserved > MAX_PREFETCH_BYTES) return;
+            if (unreadReserved > MAX_PREFETCH_BYTES) {
+                if (!fullWindowReported) {
+                    fullWindowReported = true;
+                    Log.i(TAG, "CAP reached=1 limitBytes=" + MAX_PREFETCH_BYTES
+                            + " reservedAhead=" + (reservedEnd - CHUNK - delivered)
+                            + " active=" + activeBackground
+                            + " networkBytes=" + networkReceived.get());
+                }
+                return;
+            }
+            if (fullWindowReported) {
+                fullWindowReported = false;
+                Log.i(TAG, "CAP reached=0 resumed=1 pending=" + pending.size());
+            }
             ++nextSubmit;
             ++activeBackground;
             ++lastScheduledCount;
@@ -182,6 +201,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
                     if (amount < 0) throw new EOFException("early end at byte " + (absolute + position));
                     if (amount == 0) continue;
                     position += amount;
+                    recordNetworkBytes(amount);
                     if (segment == 0) {
                         synchronized (lock) {
                             firstReady = position;
@@ -209,6 +229,36 @@ public final class NovaParallelRangeInputStream extends InputStream {
         Log.i(TAG, "DONE segment=" + segment + " offset=" + absolute + " bytes=" + expected
                 + " ms=" + elapsedMs + " speedKBps=" + ((long) expected * 1000 / elapsedMs / 1024));
         return data;
+    }
+
+    // Count bytes received from actual upstream InputStream reads, not bytes
+    // consumed by the player. NET4 reports simultaneous fetchers and aggregate
+    // receive throughput; DELIVER is only localhost/player throughput.
+    private void recordNetworkBytes(int amount) {
+        long total = networkReceived.addAndGet(amount);
+        long now = System.nanoTime();
+        long last = lastNetworkLogNs.get();
+        if (last == 0L) {
+            lastNetworkLogNs.compareAndSet(0L, networkStartNs);
+            return;
+        }
+        if (now - last < 1000000000L ||
+                !lastNetworkLogNs.compareAndSet(last, now)) return;
+        long previous = lastNetworkLogBytes.getAndSet(total);
+        long delta = Math.max(0L, total - previous);
+        long elapsed = Math.max(1L, (now - last) / 1000000L);
+        int active;
+        long reservedAhead;
+        synchronized (lock) {
+            active = activeBackground;
+            reservedAhead = Math.max(0L,
+                    Math.min(length, nextSubmit * (long) CHUNK) - delivered);
+        }
+        Log.i(TAG, "NET4 totalKBps=" + (delta * 1000 / elapsed / 1024)
+                + " active=" + active + " connectionsMax=4"
+                + " receivedBytes=" + total + " deliveredBytes=" + delivered
+                + " reservedAhead=" + reservedAhead
+                + " stageCapBytes=" + MAX_PREFETCH_BYTES);
     }
 
     private void checkActive() throws IOException {
@@ -328,6 +378,11 @@ public final class NovaParallelRangeInputStream extends InputStream {
         for (InputStream input : closing) {
             try { input.close(); } catch (IOException ignored) { }
         }
+        long dt = Math.max(1L, (System.nanoTime() - networkStartNs) / 1000000L);
+        long net = networkReceived.get();
+        Log.i(TAG, "NET4_FINAL receivedBytes=" + net + " totalKBps="
+                + (net * 1000 / dt / 1024) + " deliveredBytes=" + delivered
+                + " elapsedMs=" + dt);
         Log.i(TAG, "CLOSE delivered=" + delivered + " length=" + length);
     }
 }
