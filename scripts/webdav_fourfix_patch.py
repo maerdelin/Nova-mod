@@ -33,6 +33,18 @@ def rename_declaration(body: str, old: str, new: str, label: str) -> str:
         raise RuntimeError(label + ": unexpected method declaration")
     return header[:-len(old)] + new + sep + rest
 
+def add_interface(text: str, interface: str) -> str:
+    if ('.implements ' + interface) in text:
+        raise RuntimeError('Interface already installed: ' + interface)
+    # Baksmali emits .source before .implements. Preserve that canonical ordering
+    # so the strict APK roundtrip compares identical class headers.
+    anchor = re.search(r'(?m)^\.source [^\n]+$', text)
+    if anchor is None:
+        anchor = re.search(r'(?m)^\.super [^\n]+$', text)
+    if anchor is None:
+        raise RuntimeError('Class source/super header missing')
+    return text[:anchor.end()] + '\n.implements ' + interface + text[anchor.end():]
+
 def replace_method(text: str, name: str, transform) -> str:
     found = [m for m in METHOD.finditer(text) if re.search(r'\s'+re.escape(name)+r'(?:\s|$)', m.group().splitlines()[0])]
     if len(found) != 1: raise RuntimeError(f'{name}: expected one method, got {len(found)}')
@@ -120,7 +132,7 @@ def editor_text(text: str) -> str:
         body = once(body, anchor, '    move-result-object v10\n\n    invoke-static {v10}, '+EDITOR+'->novaTraceResponse(Ll31;)V\n\n    iget-object v11, v10, Ll31;->f:Lf90;', 'actual response trace')
         return body
     text = replace_method(text, 'getInputStream(J)Ljava/io/InputStream;', change)
-    text = once(text, '.super Lcom/archos/filecorelibrary/FileEditor;', '.super Lcom/archos/filecorelibrary/FileEditor;\n.implements '+SOURCE, 'backend interface')
+    text = add_interface(text, SOURCE)
     return text.rstrip()+'\n'+EDITOR_WRAPPER
 
 
