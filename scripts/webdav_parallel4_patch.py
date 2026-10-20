@@ -80,7 +80,11 @@ def patch_session(src: str) -> str:
                   'getInputStream(JLcom/archos/filecorelibrary/ReadOptions;)']:
         if token not in src:
             raise RuntimeError('Range4 prerequisite missing: ' + token)
-    match = re.search(r'(?m)^\.source [^\n]+
+    match = re.search(r'(?m)^\.source [^\n]+$', src)
+    if match is None:
+        match = re.search(r'(?m)^\.super [^\n]+$', src)
+    if match is None:
+        raise RuntimeError('HttpSession source/super header not found')
     src = src[:match.end()] + '\n.implements ' + SOURCE + src[match.end():]
     return src.rstrip() + '\n' + SESSION_METHODS
 
