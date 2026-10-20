@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 SRC_ROOT=ROOT/'webdav_fixes/src'
 UI_SRC_ROOT=ROOT/'playback_ui/src'
-REQUIRED={'NovaWebdavErrors.java','NovaWebdavOpenPolicy.java','NovaWebdavSidecarPolicy.java','NovaIsoSessionGuard.java'}
+REQUIRED={'NovaWebdavErrors.java','NovaWebdavOpenPolicy.java','NovaWebdavSidecarPolicy.java','NovaIsoSessionGuard.java','NovaAheadInputStream.java'}
 UI_REQUIRED={'NovaControlbarAutoHide.java'}
 PRODUCTION_REQUIRED=REQUIRED
 def latest(folder, glob):
@@ -55,9 +55,9 @@ def build(source, target, report=None):
         dex = (dexdir / 'classes.dex').read_bytes(); name = append(source, target, dex)
     from main_transport_audit import verify_apk_absence
     verify_apk_absence(target, require_helpers=True)
-    result = {'status': 'PASS', 'mode': 'main-original-copy', 'additional_dex': name,
+    result = {'status': 'PASS', 'mode': 'main-copy-session-owned-read-ahead', 'additional_dex': name,
               'byte_count': len(dex), 'compiled_classes': len(files),
-              'sources': sorted(PRODUCTION_REQUIRED | UI_REQUIRED), 'download_helper_shipped': False,
+              'sources': sorted(PRODUCTION_REQUIRED | UI_REQUIRED), 'read_ahead_helper_shipped': True,
               'existing_entries_untouched': True}
     if report:
         report.parent.mkdir(parents=True, exist_ok=True)

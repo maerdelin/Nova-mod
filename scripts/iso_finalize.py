@@ -20,6 +20,7 @@ import iso_patch
 import webdav_safety_patch
 import iso_seek_ui_patch
 import main_transport_audit
+import readahead_patch
 
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 WEBDAV_UTILS = "Lcom/archos/filecorelibrary/webdav/WebdavUtils;"
@@ -86,6 +87,7 @@ def main() -> None:
     result = iso_patch.apply(decoded, args.iso_native_root, args.reports / "blu-ray-iso.json")
     safety = webdav_safety_patch.apply(decoded, args.reports / "webdav-safety.json")
     ui = iso_seek_ui_patch.apply(decoded, args.reports / "iso-seek-ui.json")
+    ahead = readahead_patch.apply(decoded)
     main_transport_audit.verify(decoded, transport, args.reports / "main-transport.json")
     verify_credential(decoded)
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -103,6 +105,7 @@ def main() -> None:
         "main_transport": "main copy methods retained without replacement",
         "preserved_safety": safety,
         "preserved_ui": ui,
+        "read_ahead": ahead,
         "coldboot_webdav_credential_instructions": "present before and after ISO assembly",
         "existing_native_and_asset_payload": "byte-for-byte preserved, including patched AVOS",
         "new_native_payload": sorted(EXPECTED_ISO),
