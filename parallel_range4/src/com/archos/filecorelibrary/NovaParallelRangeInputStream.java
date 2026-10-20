@@ -37,6 +37,9 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private final Map<Long, Future<byte[]>> pending = new HashMap<Long, Future<byte[]>>();
     private final ArrayList<InputStream> opened = new ArrayList<InputStream>();
     private volatile InputStream primary;
+    private final byte[] firstBlock;
+    private int firstReady;
+    private IOException firstFailure;
     private volatile long delivered;
     private long nextSubmit;
     private long currentSegment;
@@ -68,7 +71,8 @@ public final class NovaParallelRangeInputStream extends InputStream {
         this.start = start;
         this.length = length;
         this.segments = length / CHUNK + (length % CHUNK == 0 ? 0 : 1);
-        this.nextSubmit = 1;
+        this.firstBlock = new byte[segmentSize(0)];
+        this.nextSubmit = 0;
         this.lastStatsTime = System.nanoTime();
         this.executor = Executors.newFixedThreadPool(CONCURRENCY, new ThreadFactory() {
             private int number;
@@ -78,11 +82,12 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 return t;
             }
         });
-        // Segment 0 is read directly from Nova's existing input connection so playback
-        // can start immediately. Segments 1..3 are fetched on separate connections.
+        // All four segments are produced on background workers. The first
+        // worker reuses Nova's original connection and publishes its bytes as
+        // they arrive, so the player never waits for a full 4 MiB block.
         refill();
         Log.i(TAG, "START start=" + start + " length=" + length + " lanes=4 chunk=" + CHUNK
-                + " first=direct independent=1 windowBytes=" + MAX_PREFETCH_BYTES);
+                + " first=background-progressive independent=1 windowBytes=" + MAX_PREFETCH_BYTES);
     }
 
     private int segmentSize(long index) {
@@ -97,10 +102,9 @@ public final class NovaParallelRangeInputStream extends InputStream {
     }
 
     private void refillLocked() {
-        // Until the original first segment is finished: 1 original + 3 new GETs.
-        // After that, run 4 independent background GETs concurrently.
-        int maxBackground = primary != null ? CONCURRENCY - 1 : CONCURRENCY;
-        while (!closed && !prefetchFailed && activeBackground < maxBackground
+        // Four independent producers at all times (including the initial
+        // connection); slow or paused playback never holds an HTTP worker.
+        while (!closed && !prefetchFailed && activeBackground < CONCURRENCY
                 && nextSubmit < segments) {
             final long segment = nextSubmit;
             final long reservedEnd = Math.min(length, (segment + 1) * (long) CHUNK);
@@ -117,11 +121,21 @@ public final class NovaParallelRangeInputStream extends InputStream {
                             byte[] bytes = download(segment);
                             succeeded = true;
                             return bytes;
+                        } catch (Exception problem) {
+                            synchronized (lock) {
+                                if (segment == 0) {
+                                    firstFailure = problem instanceof IOException
+                                            ? (IOException) problem
+                                            : new IOException("First Range4 segment failed", problem);
+                                    lock.notifyAll();
+                                }
+                            }
+                            throw problem;
                         } finally {
                             synchronized (lock) {
                                 --activeBackground;
                                 if (!succeeded) prefetchFailed = true;
-                                // Producer refill is independent of the reader.
+                                // Every completed GET replenishes the pool immediately.
                                 refillLocked();
                             }
                         }
@@ -142,7 +156,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
     private byte[] download(long segment) throws IOException {
         final long absolute = start + segment * CHUNK;
         final int expected = segmentSize(segment);
-        final byte[] data = new byte[expected];
+        final byte[] data = segment == 0 ? firstBlock : new byte[expected];
         final long started = System.nanoTime();
         int position = 0;
         int attempts = 0;
@@ -150,7 +164,11 @@ public final class NovaParallelRangeInputStream extends InputStream {
             checkActive();
             InputStream input = null;
             try {
-                input = source.openRange(absolute + position);
+                if (segment == 0 && position == 0 && attempts == 0) {
+                    input = primary;  // already-open original WebDAV GET
+                } else {
+                    input = source.openRange(absolute + position);
+                }
                 if (input == null) throw new IOException("null WebDAV input");
                 synchronized (lock) {
                     if (closed) { input.close(); throw new IOException("prefetch closed"); }
@@ -164,6 +182,12 @@ public final class NovaParallelRangeInputStream extends InputStream {
                     if (amount < 0) throw new EOFException("early end at byte " + (absolute + position));
                     if (amount == 0) continue;
                     position += amount;
+                    if (segment == 0) {
+                        synchronized (lock) {
+                            firstReady = position;
+                            lock.notifyAll();
+                        }
+                    }
                 }
             } catch (IOException error) {
                 if (closed || source.cancelled()) throw error;
@@ -177,6 +201,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
                 if (input != null) {
                     synchronized (lock) { opened.remove(input); }
                     try { input.close(); } catch (IOException ignored) { }
+                    if (segment == 0 && input == primary) primary = null;
                 }
             }
         }
@@ -217,17 +242,26 @@ public final class NovaParallelRangeInputStream extends InputStream {
         if (delivered >= length) return -1;
         checkActive();
         int n;
-        if (delivered < Math.min(CHUNK, length)) {
-            int allowed = (int) Math.min(count, Math.min(CHUNK, length) - delivered);
-            n = primary.read(target, offset, allowed);
-            if (n < 0) throw new EOFException("first WebDAV segment ended early");
-            if (n == 0) return 0;
-            delivered += n;
-            if (delivered >= Math.min(CHUNK, length)) {
-                try { primary.close(); } catch (IOException ignored) { }
-                primary = null;
-                currentSegment = 1;
-                refill();
+        if (delivered < firstBlock.length) {
+            // Reader only consumes already-produced bytes. Producer runs even
+            // when this method is never called.
+            synchronized (lock) {
+                while (firstReady <= delivered && firstFailure == null && !closed) {
+                    try {
+                        lock.wait();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Interrupted waiting for first Range4 bytes", interrupted);
+                    }
+                }
+                if (firstReady <= delivered) {
+                    if (firstFailure != null) throw firstFailure;
+                    throw new IOException("Range4 first segment closed before data available");
+                }
+                n = Math.min(count, firstReady - (int) delivered);
+                System.arraycopy(firstBlock, (int) delivered, target, offset, n);
+                delivered += n;
+                if (delivered == firstBlock.length) pending.remove(0);
             }
         } else {
             if (block == null || blockPosition >= block.length) {
@@ -285,6 +319,7 @@ public final class NovaParallelRangeInputStream extends InputStream {
             pending.clear();
             closing = new ArrayList<InputStream>(opened);
             opened.clear();
+            lock.notifyAll();
         }
         executor.shutdownNow();
         InputStream first = primary;
