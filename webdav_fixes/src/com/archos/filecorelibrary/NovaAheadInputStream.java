@@ -74,15 +74,18 @@ public final class NovaAheadInputStream extends InputStream {
     private void pump() {
         IOException error = null;
         long previous = 0, sampled = System.nanoTime();
+        long lastCapacityLog = sampled - 1000000000L;
         try {
             for (;;) {
                 final int tail, wanted;
                 final byte[] target;
                 synchronized (lock) {
                     if (!closed && count == capacity && received < length) {
-                        Log.i(TAG, stats("FULL"));
+                        long now = System.nanoTime();
+                        boolean report = now - lastCapacityLog >= 1000000000L;
+                        if (report) { lastCapacityLog = now; Log.i(TAG, stats("FULL")); }
                         while (!closed && count == capacity) lock.wait();
-                        if (!closed) Log.i(TAG, stats("RESUME"));
+                        if (report && !closed) Log.i(TAG, stats("RESUME"));
                     }
                     if (closed || received == length) break;
                     tail = (head + count) % capacity;
