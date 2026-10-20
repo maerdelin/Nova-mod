@@ -19,6 +19,7 @@ import granular as g
 import iso_patch
 import webdav_parallel4_patch
 import webdav_fourfix_patch
+import iso_seek_ui_patch
 
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 WEBDAV_UTILS = "Lcom/archos/filecorelibrary/webdav/WebdavUtils;"
@@ -83,6 +84,7 @@ def main() -> None:
     result = iso_patch.apply(decoded, args.iso_native_root, args.reports / "blu-ray-iso.json")
     range4 = webdav_parallel4_patch.apply(decoded, args.reports / "webdav-parallel4.json")
     fourfix = webdav_fourfix_patch.apply(decoded, args.reports / "webdav-fourfix.json")
+    seek_ui = iso_seek_ui_patch.apply(decoded, args.reports / "iso-seek-ui.json")
     verify_credential(decoded)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["java", "-Xmx4g", "-jar", str(args.apktool), "b", str(decoded),
@@ -98,6 +100,7 @@ def main() -> None:
         "ISO": result,
         "webdav_range4": range4,
         "webdav_fourfix": fourfix,
+        "iso_seek_ui": seek_ui,
         "coldboot_webdav_credential_instructions": "present before and after ISO assembly",
         "existing_native_and_asset_payload": "byte-for-byte preserved, including patched AVOS",
         "new_native_payload": sorted(EXPECTED_ISO),

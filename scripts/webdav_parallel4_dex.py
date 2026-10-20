@@ -10,6 +10,8 @@ import zipfile
 from pathlib import Path
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / 'parallel_range4/src'
+UI_SRC_ROOT = Path(__file__).resolve().parents[1] / 'playback_ui/src'
+UI_REQUIRED = {'NovaControlbarAutoHide.java'}
 REQUIRED = {'NovaParallelRangeInputStream.java', 'NovaWebdavSidecarPolicy.java',
             'NovaWebdavOpenPolicy.java', 'NovaIsoSessionGuard.java'}
 
@@ -49,8 +51,10 @@ def build(source, target, report=None):
     jar = latest(sdk / 'platforms', 'android-*') / 'android.jar'
     d8 = latest(sdk / 'build-tools', '*') / 'd8'
     sources = sorted(SRC_ROOT.rglob('*.java'))
-    if {p.name for p in sources} != REQUIRED or not jar.is_file() or not d8.is_file():
+    ui_sources = sorted(UI_SRC_ROOT.rglob('*.java'))
+    if {p.name for p in sources} != REQUIRED or {p.name for p in ui_sources} != UI_REQUIRED or not jar.is_file() or not d8.is_file():
         raise RuntimeError('Missing or unexpected helper source/android.jar/d8')
+    sources += ui_sources
     with tempfile.TemporaryDirectory(prefix='nova4-') as tmp:
         td = Path(tmp); classes = td / 'classes'; classes.mkdir()
         dexdir = td / 'dex'; dexdir.mkdir()
@@ -59,7 +63,8 @@ def build(source, target, report=None):
         files = sorted(str(p) for p in classes.rglob('*.class'))
         for name in ('NovaParallelRangeInputStream.class', 'NovaWebdavSidecarPolicy.class',
                      'NovaParallelRangeInputStream$ManagedSource.class',
-                     'NovaWebdavOpenPolicy.class', 'NovaIsoSessionGuard.class'):
+                     'NovaWebdavOpenPolicy.class', 'NovaIsoSessionGuard.class',
+                     'NovaControlbarAutoHide.class', 'NovaControlbarAutoHide$Host.class'):
             if not (classes / 'com/archos/filecorelibrary' / name).is_file():
                 raise RuntimeError('Compiled helper class missing: ' + name)
         subprocess.run([str(d8), '--min-api', '23', '--lib', str(jar),

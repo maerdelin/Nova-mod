@@ -1,0 +1,1 @@
+package android.os; public class Handler { public Handler(Looper l) {} public boolean postDelayed(Runnable r,long ms) { throw new UnsupportedOperationException(); } public void removeCallbacks(Runnable r) { throw new UnsupportedOperationException(); } }
