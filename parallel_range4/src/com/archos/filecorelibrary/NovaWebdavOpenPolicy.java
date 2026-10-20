@@ -15,7 +15,12 @@ public final class NovaWebdavOpenPolicy {
     private static final String TAG = "NOVA_WEBDAV_OPEN";
     private static final AtomicLong IDS = new AtomicLong();
     private static final ThreadLocal<Trace> CURRENT = new ThreadLocal<Trace>();
-    private static final Map<String, Long> REFRESHED = new LinkedHashMap<String, Long>();
+    private static final class RefreshBudget {
+        final long began;
+        final Set<Long> offsets = new HashSet<Long>();
+        RefreshBudget(long now) { began = now; }
+    }
+    private static final Map<String, RefreshBudget> REFRESHED = new LinkedHashMap<String, RefreshBudget>();
     private static final long REFRESH_COOLDOWN_NS = 30_000_000_000L;
     private static final class Trace {
         final long id, offset;
@@ -59,13 +64,21 @@ public final class NovaWebdavOpenPolicy {
         }
         return false;
     }
-    private static synchronized boolean reserveRefresh(String origin, long now) {
+    private static synchronized boolean reserveRefresh(String origin, long offset, long now) {
         if (origin == null || origin.length() > 16384) return false;
-        Long last = REFRESHED.get(origin);
-        if (last != null && now - last >= 0 && now - last < REFRESH_COOLDOWN_NS) return false;
-        if (REFRESHED.size() >= 128 && !REFRESHED.containsKey(origin))
-            REFRESHED.remove(REFRESHED.keySet().iterator().next());
-        REFRESHED.put(origin, now);
+        RefreshBudget budget = REFRESHED.get(origin);
+        if (budget == null || now - budget.began < 0 || now - budget.began >= REFRESH_COOLDOWN_NS) {
+            if (REFRESHED.size() >= 128 && !REFRESHED.containsKey(origin))
+                REFRESHED.remove(REFRESHED.keySet().iterator().next());
+            budget = new RefreshBudget(now);
+            REFRESHED.put(origin, budget);
+        }
+        // Four lanes require four distinct Range offsets. A global one-request
+        // allowance would repair one lane while the other three still fail.
+        // Each offset can revalidate once; the entire origin gets at most four
+        // admissions per 30 seconds, including concurrent sessions/seeks.
+        if (budget.offsets.size() >= 4 || budget.offsets.contains(offset)) return false;
+        budget.offsets.add(offset);
         return true;
     }
     public static InputStream open(Source source, long offset) throws Exception {
@@ -94,7 +107,7 @@ public final class NovaWebdavOpenPolicy {
                 // have expired: revalidate ORIGINAL origin once, without changing credentials,
                 // URL query parameters, TLS checks or the Range offset. Still-denied means fail.
                 boolean refresh = attempt < 3 && !fresh && offset >= 0 && t.status == 403
-                        && t.redirects > 0 && reserveRefresh(origin, System.nanoTime());
+                        && t.redirects > 0 && reserveRefresh(origin, offset, System.nanoTime());
                 if (refresh) {
                     fresh = true;
                     Log.w(TAG, "REFRESH_ORIGIN_ONCE id=" + t.id + " offset=" + offset

@@ -127,7 +127,7 @@ public final class FourFixHarness {
         final AtomicInteger forced = new AtomicInteger(), total = new AtomicInteger();
         final AtomicReference<Throwable> failed=new AtomicReference<Throwable>();
         List<Thread> all=new ArrayList<Thread>();
-        for(int i=0;i<4;i++) { Thread t=new Thread(() -> {
+        for(int i=0;i<4;i++) { final long offset=100L+i*1048576L; Thread t=new Thread(() -> {
             NovaWebdavOpenPolicy.Source s=new NovaWebdavOpenPolicy.Source() {
                 public String novaOrigin() { return origin; }
                 public InputStream novaOpenOnce(long o,boolean f) throws Exception {
@@ -136,13 +136,40 @@ public final class FourFixHarness {
                     throw new IOException("HTTP 403");
                 }
             };
-            try { NovaWebdavOpenPolicy.open(s,100); failed.set(new AssertionError("denial accepted")); }
+            try { NovaWebdavOpenPolicy.open(s,offset); failed.set(new AssertionError("denial accepted")); }
             catch(IOException expected) { } catch(Throwable e) {failed.set(e);}
         }); all.add(t);t.start(); }
         for(Thread t:all)t.join(4000);
         expect(failed.get()==null,"worker failure "+failed.get());
-        expect(total.get()==5&&forced.get()==1,"refresh storm: "+total+" forced="+forced);
-        System.out.println("PASS four denied lanes share a single bounded origin-refresh admission");
+        expect(total.get()==8&&forced.get()==4,"refresh storm: "+total+" forced="+forced);
+        System.out.println("PASS four denied lanes: at most one revalidation per offset and four per origin cooldown");
+    }
+    static void allLanesRecover() throws Exception {
+        final String origin=root()+"recovery.mkv";
+        final CountDownLatch failedTogether=new CountDownLatch(4);
+        final AtomicInteger successes=new AtomicInteger(), refreshed=new AtomicInteger();
+        final AtomicReference<Throwable> error=new AtomicReference<Throwable>();
+        List<Thread> all=new ArrayList<Thread>();
+        for(int i=0;i<4;i++) { final long offset=61_210_871_773L+i*1048576;
+            Thread t=new Thread(() -> {
+                NovaWebdavOpenPolicy.Source src=new NovaWebdavOpenPolicy.Source() {
+                    public String novaOrigin(){return origin;}
+                    public InputStream novaOpenOnce(long actual,boolean fresh)throws Exception {
+                        expect(actual==offset,"refresh changed 64-bit offset");
+                        if(!fresh){failedTogether.countDown();expect(failedTogether.await(2,TimeUnit.SECONDS),"lanes not concurrent");
+                            NovaWebdavOpenPolicy.response(403,"https://cdn.example/expired",1,null);throw new IOException("HTTP 403");}
+                        refreshed.incrementAndGet();
+                        NovaWebdavOpenPolicy.response(206,"https://cdn.example/current",1,null);
+                        return new ByteArrayInputStream(new byte[]{(byte)(offset%251)});
+                    }
+                };
+                try(InputStream in=NovaWebdavOpenPolicy.open(src,offset)){expect(in.read()==offset%251,"wrong refreshed data");successes.incrementAndGet();}
+                catch(Throwable bad){error.set(bad);}
+            });all.add(t);t.start();
+        }
+        for(Thread t:all)t.join(4000);
+        expect(error.get()==null&&successes.get()==4&&refreshed.get()==4,"one repaired lane stranded the others: "+error.get());
+        System.out.println("PASS all four simultaneously expired lanes recover at unchanged 64-bit offsets");
     }
     static void guard() throws Exception {
         for(int repeat=0;repeat<120;repeat++) {
@@ -183,6 +210,7 @@ public final class FourFixHarness {
             case "retry":retry();break;
             case "denied":denied();break;
             case "refresh":refreshConcurrent();break;
+            case "alllanes":allLanesRecover();break;
             case "guard":guard();break;
             case "nonblocking":noBlockingJoin();break;
             default:throw new IllegalArgumentException(args[0]);

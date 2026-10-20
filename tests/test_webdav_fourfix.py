@@ -30,7 +30,8 @@ class FourFixTests(unittest.TestCase):
     def test_concurrent_sidecar_admission_and_cooldown(self):self.java('concurrent')
     def test_backend_open_same_offset_bounded_retry(self):self.java('retry')
     def test_direct_and_redirected_denial_boundaries(self):self.java('denied')
-    def test_four_lanes_share_one_refresh(self):self.java('refresh')
+    def test_four_lanes_obey_bounded_refresh_budget(self):self.java('refresh')
+    def test_all_four_expired_lanes_recover_with_64bit_offsets(self):self.java('alllanes')
     def test_iso_lifecycle_120_races(self):self.java('guard')
     def test_native_join_is_not_on_releasing_thread(self):self.java('nonblocking')
     def test_old_wrapper_becomes_single_invocation(self):
@@ -49,6 +50,18 @@ class FourFixTests(unittest.TestCase):
         self.assertIn('nativeCloseGeneration(J)V',changed)
         self.assertIn('getEncodedUri(',changed)
         with self.assertRaises(RuntimeError):patch.proxy_text(changed)
+    def test_method_declaration_rename_ignores_metadata_occurrences(self):
+        name = 'resolve(Landroid/net/Uri;)Landroid/net/Uri;'
+        comment = '    # method metadata: ' + name + '\n'
+        source = iso_patch.PROXY_SMALI.replace('    if-eqz p0, :return_original',
+                  comment + '    if-eqz p0, :return_original', 1)
+        changed = patch.proxy_text(source)
+        self.assertIn(comment, changed)
+        self.assertIn('.method public static declared-synchronized resolveOwned(', changed)
+        self.assertNotIn('.method public static declared-synchronized ' + name, changed)
+        with self.assertRaises(RuntimeError):
+            patch.rename_declaration('.method public wrong()V\n.end method', name, 'new()V', 'guard')
+
     def test_full_c_generation_patch_preserves_read_and_title_logic(self):
         before=p012.iso_text((ROOT/'iso/nova_iso.c').read_text())
         after=patch.iso_text(before)

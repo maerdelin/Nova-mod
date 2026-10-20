@@ -25,6 +25,14 @@ def once(text: str, old: str, new: str, label: str) -> str:
         raise RuntimeError(f'{label}: expected one anchor, got {text.count(old)}')
     return text.replace(old, new, 1)
 
+def rename_declaration(body: str, old: str, new: str, label: str) -> str:
+    # Only the declaration owns the method name. Debug metadata/comments may
+    # repeat it; replacing/counting the whole body conflates data with code.
+    header, sep, rest = body.partition("\n")
+    if not sep or not header.startswith(".method ") or not header.endswith(" " + old):
+        raise RuntimeError(label + ": unexpected method declaration")
+    return header[:-len(old)] + new + sep + rest
+
 def replace_method(text: str, name: str, transform) -> str:
     found = [m for m in METHOD.finditer(text) if re.search(r'\s'+re.escape(name)+r'(?:\s|$)', m.group().splitlines()[0])]
     if len(found) != 1: raise RuntimeError(f'{name}: expected one method, got {len(found)}')
@@ -92,7 +100,7 @@ EDITOR_WRAPPER = f'''
 def editor_text(text: str) -> str:
     if 'novaOpenOnce(JZ)' in text: raise RuntimeError('Fourfix editor already installed')
     def change(body):
-        body = once(body, 'getInputStream(J)Ljava/io/InputStream;', 'novaOpenOnce(JZ)Ljava/io/InputStream;', 'backend rename')
+        body = rename_declaration(body, 'getInputStream(J)Ljava/io/InputStream;', 'novaOpenOnce(JZ)Ljava/io/InputStream;', 'backend rename')
         # Retain the exact original validation/body/cancellation ownership logic.
         for anchor in ('    .locals 18', 'invoke-virtual {v12}, Ltz0;->c()Ll31;',
                        'validateExactContentRangeStart(Ljava/lang/String;J)Z',
@@ -169,7 +177,7 @@ NATIVE_TASK = f'''.class public final {TASK_NATIVE}
 def proxy_text(text: str) -> str:
     if 'resolveOwned(' in text: raise RuntimeError('Fourfix proxy already installed')
     def change(body):
-        body = once(body, 'resolve(Landroid/net/Uri;)Landroid/net/Uri;', 'resolveOwned(Landroid/net/Uri;Ljava/lang/Object;)Landroid/net/Uri;', 'ISO owner resolve')
+        body = rename_declaration(body, 'resolve(Landroid/net/Uri;)Landroid/net/Uri;', 'resolveOwned(Landroid/net/Uri;Ljava/lang/Object;)Landroid/net/Uri;', 'ISO owner resolve')
         body = once(body, '    .locals 5', f'''    .locals 5
     invoke-static {{p1}}, {GUARD}->begin(Ljava/lang/Object;)Z
     move-result v0
@@ -307,6 +315,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
     result = {'status':'PASS','scope':'WebDAV backend open, response diagnosis, ISO owner close, optional sidecar PUT',
               'localhost_request_parsed_once': True, 'range_validation_unchanged':True,
               'transient_open_max_attempts':3,'redirected403_refresh_per_origin_cooldown_seconds':30,
+              'redirected403_max_distinct_offsets_per_cooldown':4,
               'credential_tls_and_url_query_unchanged':True,'native_10x_math_unchanged':True,
               'device_webdav_playback_verified':False}
     if report: report.write_text(json.dumps(result,indent=2)+'\n')
