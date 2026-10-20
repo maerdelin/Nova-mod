@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 
 PACKAGE='org.courville.nova'
 
@@ -24,6 +25,22 @@ def run(args, timeout=30):
     return r.stdout
 
 def adb(*args,timeout=30):return run(['adb',*args],timeout)
+
+def action_result(text, marker, direction):
+    """Require this action's real seek and later ready/hide, never an old log line."""
+    at = text.rfind(marker)
+    if at < 0: return None
+    phase = text[at + len(marker):]
+    events = list(re.finditer(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)', phase))
+    relevant = [m for m in events if (int(m[2])-int(m[1]))*direction > 0]
+    if not relevant: return None
+    seek = relevant[-1]
+    tail = phase[seek.end():]
+    if 'NOVA_ISO_TIME_SEEK' not in tail or 'byteMode=0' not in tail: return None
+    ready = tail.rfind('HIDE_READY')
+    hide = tail.rfind('HIDE_DONE')
+    if ready < 0 or hide < ready: return None
+    return (int(seek[1]), int(seek[2]), phase)
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
@@ -90,24 +107,32 @@ def main():
             except Exception as diag:
                 report['ui_diagnostic_warning']=str(diag)
             report['input_setup']='DPAD_DOWN establishes focus; no pause/play or seek issued'
-            # Keep the fixture far from either endpoint. Real input down/up is
-            # handled by the shipped PlayerController, not a test seek call.
-            adb('logcat','-c');adb('shell','input keyevent 22')
-            text=wait_for(lambda t:'NOVA_ISO_TIME_SEEK' in t and 'HIDE_DONE' in t,20,'5s seek and automatic control hide')
-            matches=re.findall(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',text)
-            forward=[(int(x),int(y))for x,y in matches if int(y)>int(x)]
-            if not forward or not 4500<=forward[0][1]-forward[0][0]<=5500:
-                raise RuntimeError('Short DPAD seek was not approximately +5000ms: '+repr(matches))
-            if 'byteMode=0'not in text:raise RuntimeError('Timestamp seek diagnostic absent')
-            (a.reports/'seek-playback-forward.txt').write_text(text)
-            report['forward_ms']=forward[0];report['hide_after_release']='HIDE_DONE without pause/play input'
-            adb('logcat','-c');adb('shell','input keyevent 21')
-            text=wait_for(lambda t:'NOVA_ISO_TIME_SEEK' in t and 'HIDE_DONE' in t,20,'backward seek and auto hide')
-            matches=re.findall(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',text)
-            backward=[(int(x),int(y))for x,y in matches if int(y)<int(x)]
-            if not backward or not 4500<=backward[0][0]-backward[0][1]<=5500:
-                raise RuntimeError('Short DPAD seek was not approximately -5000ms: '+repr(matches))
-            (a.reports/'seek-playback-backward.txt').write_text(text);report['backward_ms']=backward[0]
+            # logcat -c does not necessarily clear every buffer. Isolate each
+            # action with a unique marker and require HIDE_DONE AFTER its seek.
+            # No startup/other-process/previous-action hide can satisfy the gate.
+            results = {}
+            for label, key, direction in [('forward',22,1),('backward',21,-1)]:
+                marker = 'NOVA_ACTION_' + label.upper() + '_' + str(time.monotonic_ns())
+                adb('shell', 'log -p i -t NOVA_SEEK_TEST ' + marker)
+                adb('shell', 'input keyevent ' + str(key))
+                text=wait_for(lambda t:action_result(t,marker,direction) is not None,20,label+' 5s seek and same-action auto hide')
+                before,after,phase=action_result(text,marker,direction)
+                if not 4500 <= (after-before)*direction <= 5500:
+                    raise RuntimeError('Short '+label+' seek not approximately 5000ms: '+repr((before,after)))
+                (a.reports/('seek-playback-'+label+'.txt')).write_text(phase)
+                results[label+'_ms']=[before,after]
+                # Verify actual view disappearance, not only that the timer fired.
+                target='/data/local/tmp/nova-seek-'+label+'-hidden.xml'
+                adb('shell','uiautomator dump '+target,timeout=15)
+                xml=adb('shell','cat '+target)
+                (a.reports/('seek-playback-'+label+'-hidden.xml')).write_text(xml)
+                hierarchy=ET.fromstring(xml[xml.index('<?xml'):])
+                visible_ids={n.attrib.get('resource-id','') for n in hierarchy.iter('node')}
+                if PACKAGE+':id/control_bar' in visible_ids or PACKAGE+':id/seek_progress' in visible_ids:
+                    raise RuntimeError('Controller remains visible after '+label+' HIDE_DONE')
+                results[label+'_controls_hidden']=True
+            report.update(results)
+            report['hide_after_release']='same-action HIDE_DONE plus actual controller absent from UI hierarchy; no pause/play input'
             report['status']='PASS';print('SEEK_PLAYBACK_SMOKE=PASS '+json.dumps(report))
     except Exception as error:
         report['error']=str(error)
