@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
-"""Append ISO-only patches *after* Run377 hash-locked WebDAV DEX patch.
+"""Apply verified ISO/transport/UI patches, then remove the parallel media bridge.
 
-Input is the verified Run377 credential-UNSIGNED.apk. The older ISO smali
-feature changes classes.dex, so the WebDAV in-place DEX fix MUST happen before
-ISO smali assembly. Verify coldboot fix before and after, APK roundtrip, and
-exact scope for native payloads. Never replace old classes/modules.
+The historical Range4 transformation is retained only as a build prerequisite
+for the existing follow-up patches. The shipped APK uses a single continuous
+upstream body and contains no reference to its parallel helper class.
 """
 from __future__ import annotations
-
 import argparse
 import json
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
-
 import granular as g
 import iso_patch
 import webdav_parallel4_patch
 import webdav_fourfix_patch
 import iso_seek_ui_patch
+import webdav_single_stream
 
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 WEBDAV_UTILS = "Lcom/archos/filecorelibrary/webdav/WebdavUtils;"
 EXPECTED_ISO = {f"lib/{abi}/libnova_iso.so" for abi in ABIS}
 
-
 def verify_credential(root: Path) -> None:
-    """Ensure patched WebdavUtils.getSardine still reloads saved DB credentials."""
     classes = g.class_index(root)
     if WEBDAV_UTILS not in classes:
         raise g.Conflict("Missing WebdavUtils in decoded candidate")
@@ -42,13 +38,11 @@ def verify_credential(root: Path) -> None:
     if missing:
         raise g.Conflict("WebDAV coldboot credential instructions missing: " + repr(missing))
 
-
 def verify_native_delta(before: Path, after: Path) -> None:
     with zipfile.ZipFile(before) as a, zipfile.ZipFile(after) as b:
         if b.testzip() is not None or len(b.namelist()) != len(set(b.namelist())):
             raise g.Conflict("Invalid ISO APK ZIP")
-        prior = set(a.namelist())
-        result = set(b.namelist())
+        prior = set(a.namelist()); result = set(b.namelist())
         untouched = {n for n in prior if n.startswith(("lib/", "assets/")) and not n.endswith("/")}
         altered = {n for n in untouched if n not in result or a.read(n) != b.read(n)}
         if altered:
@@ -63,7 +57,6 @@ def verify_native_delta(before: Path, after: Path) -> None:
         if b.getinfo("resources.arsc").compress_type != zipfile.ZIP_STORED:
             raise g.Conflict("ISO APK resources.arsc is not stored uncompressed")
 
-
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--source", type=Path, required=True)
@@ -73,18 +66,17 @@ def main() -> None:
     p.add_argument("--work", type=Path, required=True)
     p.add_argument("--reports", type=Path, required=True)
     args = p.parse_args()
-
-    args.work.mkdir(parents=True, exist_ok=True)
-    args.reports.mkdir(parents=True, exist_ok=True)
-    decoded = args.work / "iso-candidate"
-    assembled = args.work / "iso-roundtrip"
+    args.work.mkdir(parents=True, exist_ok=True); args.reports.mkdir(parents=True, exist_ok=True)
+    decoded = args.work / "iso-candidate"; assembled = args.work / "iso-roundtrip"
     subprocess.run(["java", "-Xmx4g", "-jar", str(args.apktool), "d", "--no-debug-info",
                     "-f", str(args.source), "-o", str(decoded)], check=True)
     verify_credential(decoded)
     result = iso_patch.apply(decoded, args.iso_native_root, args.reports / "blu-ray-iso.json")
-    range4 = webdav_parallel4_patch.apply(decoded, args.reports / "webdav-parallel4.json")
+    # Intermediate historical patch, removed before APK assembly below.
+    webdav_parallel4_patch.apply(decoded)
     fourfix = webdav_fourfix_patch.apply(decoded, args.reports / "webdav-fourfix.json")
     seek_ui = iso_seek_ui_patch.apply(decoded, args.reports / "iso-seek-ui.json")
+    single = webdav_single_stream.apply(decoded, args.reports / "webdav-single-stream.json")
     verify_credential(decoded)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["java", "-Xmx4g", "-jar", str(args.apktool), "b", str(decoded),
@@ -92,24 +84,17 @@ def main() -> None:
     subprocess.run(["java", "-Xmx4g", "-jar", str(args.apktool), "d", "--no-debug-info",
                     "-f", str(args.output), "-o", str(assembled)], check=True)
     verify_credential(assembled)
-    assert "novaWrapRange4(" in next(assembled.glob("smali*/com/archos/filecorelibrary/StreamOverHttp.smali")).read_text()
+    webdav_single_stream.verify(assembled)
     g.verify(decoded, assembled, args.reports / "iso-roundtrip.json")
     verify_native_delta(args.source, args.output)
-    report = {
-        "status": "PASS",
-        "ISO": result,
-        "webdav_range4": range4,
-        "webdav_fourfix": fourfix,
-        "iso_seek_ui": seek_ui,
-        "coldboot_webdav_credential_instructions": "present before and after ISO assembly",
-        "existing_native_and_asset_payload": "byte-for-byte preserved, including patched AVOS",
-        "new_native_payload": sorted(EXPECTED_ISO),
-        "whole_old_dex_replacements": 0,
-        "android_device_iso_tested": False,
-    }
-    (args.reports / "iso-integration.json").write_text(json.dumps(report, indent=2) + "\n")
+    report = {'status': 'PASS', 'ISO': result, 'webdav_single_stream': single,
+              'webdav_range4': 'REMOVED from final APK', 'webdav_fourfix': fourfix,
+              'iso_seek_ui': seek_ui,
+              'coldboot_webdav_credential_instructions': 'present before and after ISO assembly',
+              'existing_native_and_asset_payload': 'byte-for-byte preserved, including patched AVOS',
+              'new_native_payload': sorted(EXPECTED_ISO), 'whole_old_dex_replacements': 0,
+              'android_device_iso_tested': False}
+    (args.reports / 'iso-integration.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))
 
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__': main()

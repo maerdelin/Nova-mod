@@ -36,4 +36,6 @@ def main():
         report['status']='PASS'
     except Exception as e:report['error']=str(e);raise
     finally:(a.reports/'fourfix-apk-probe.json').write_text(json.dumps(report,indent=2)+'\n')
+    from smoke_single_stream import check
+    check(a.apk,a.reports)
 if __name__=='__main__':main()
