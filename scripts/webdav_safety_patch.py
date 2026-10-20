@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Four targeted Run400 follow-up repairs. Fail closed when APK anchors change.
+"""Independent HTTP, sidecar and ISO lifecycle repairs. Fail closed when APK anchors change.
 
 Does not change native 2X/5X/10X arithmetic, decoder selection, credentials,
-TLS verification or exact Content-Range validation. Apply smali after P012.
+TLS verification or exact Content-Range validation. Apply smali directly to the main single-stream baseline.
 """
 from __future__ import annotations
 import argparse
@@ -110,7 +110,7 @@ EDITOR_WRAPPER = f'''
 '''
 
 def editor_text(text: str) -> str:
-    if 'novaOpenOnce(JZ)' in text: raise RuntimeError('Fourfix editor already installed')
+    if 'novaOpenOnce(JZ)' in text: raise RuntimeError('Safety editor already installed')
     def change(body):
         body = rename_declaration(body, 'getInputStream(J)Ljava/io/InputStream;', 'novaOpenOnce(JZ)Ljava/io/InputStream;', 'backend rename')
         # Retain the exact original validation/body/cancellation ownership logic.
@@ -137,7 +137,7 @@ def editor_text(text: str) -> str:
 
 
 def session_text(text: str) -> str:
-    if 'requestReparse=0' in text: raise RuntimeError('Fourfix session already installed')
+    if 'requestReparse=0' in text: raise RuntimeError('Safety session already installed')
     def change(body):
         if ('novaOpenInputStreamOnce()V' not in body or 'novaTransientConnectionFailure' not in body
                 or 'Transient upstream connection failed; retry ' not in body):
@@ -187,7 +187,7 @@ NATIVE_TASK = f'''.class public final {TASK_NATIVE}
 '''
 
 def proxy_text(text: str) -> str:
-    if 'resolveOwned(' in text: raise RuntimeError('Fourfix proxy already installed')
+    if 'resolveOwned(' in text: raise RuntimeError('Safety proxy already installed')
     def change(body):
         body = rename_declaration(body, 'resolve(Landroid/net/Uri;)Landroid/net/Uri;', 'resolveOwned(Landroid/net/Uri;Ljava/lang/Object;)Landroid/net/Uri;', 'ISO owner resolve')
         body = once(body, '    .locals 5', f'''    .locals 5
@@ -271,10 +271,10 @@ Java_com_archos_mediacenter_video_player_BlurayIsoProxy_nativeCloseGeneration(
 '''
 
 def iso_text(text: str) -> str:
-    if 'nativeCloseGeneration' in text: raise RuntimeError('Fourfix ISO already installed')
+    if 'nativeCloseGeneration' in text: raise RuntimeError('Safety ISO already installed')
     text = once(text, '    uint64_t title_size;\n', '    uint64_t title_size;\n    uint64_t generation;\n', 'native owner generation')
     text = once(text, 'static iso_session *g_session = NULL;', 'static iso_session *g_session = NULL;\nstatic uint64_t g_generation = 0;', 'native generation counter')
-    text = once(text, '        char out[256];', '        char out[320];\n        g_session->generation = ++g_generation;', 'native generation assignment')
+    text = once(text, '        char out[160];', '        char out[320];\n        g_session->generation = ++g_generation;', 'native generation assignment')
     add = r'''        {
             size_t used = strlen(out);
             int added = snprintf(out + used, sizeof(out) - used,
@@ -288,6 +288,38 @@ def iso_text(text: str) -> str:
     text = once(text, '        result = (*env)->NewStringUTF(env, out);', add+'        result = (*env)->NewStringUTF(env, out);', 'generation export')
     text = once(text, 'JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {', NATIVE_CLOSE+'\nJNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {', 'generation-checked shutdown')
     return text
+
+
+SARDINE = 'Lcom/thegrizzlylabs/sardineandroid/impl/OkHttpSardine;'
+SIDECAR_POLICY = 'Lcom/archos/filecorelibrary/NovaWebdavSidecarPolicy;'
+PUT_PROTO = '(Ljava/lang/String;Ljava/io/File;Ljava/lang/String;)V'
+PUT_WRAPPER = f'''
+.method public put{PUT_PROTO}
+    .locals 1
+    invoke-static {{p0, p1}}, {SIDECAR_POLICY}->beforePut(Ljava/lang/Object;Ljava/lang/String;)V
+    :nova_sidecar_put_start
+    invoke-virtual {{p0, p1, p2, p3}}, {SARDINE}->novaPutOriginalFile{PUT_PROTO}
+    :nova_sidecar_put_end
+    .catch Ljava/io/IOException; {{:nova_sidecar_put_start .. :nova_sidecar_put_end}} :nova_sidecar_put_failed
+    invoke-static {{p0, p1}}, {SIDECAR_POLICY}->recordSuccess(Ljava/lang/Object;Ljava/lang/String;)V
+    return-void
+    :nova_sidecar_put_failed
+    move-exception v0
+    invoke-static {{p0, p1, v0}}, {SIDECAR_POLICY}->recordFailure(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Throwable;)V
+    throw v0
+.end method
+'''
+
+
+def sidecar_text(text: str) -> str:
+    if 'novaPutOriginalFile' in text or SIDECAR_POLICY in text:
+        raise RuntimeError('Sidecar policy already installed')
+    pattern = r'(?m)^(\.method public )put' + re.escape(PUT_PROTO) + r'$'
+    if len(re.findall(pattern, text)) != 1:
+        raise RuntimeError('Expected exactly one public OkHttpSardine file PUT')
+    return re.sub(pattern, lambda m: m.group(1) + 'novaPutOriginalFile' + PUT_PROTO,
+                  text, count=1).rstrip() + '\n' + PUT_WRAPPER
+
 
 
 def one(root: Path, path: str) -> Path:
@@ -317,7 +349,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
     sardine = one(root, 'com/thegrizzlylabs/sardineandroid/impl/OkHttpSardine.smali')
     def release_put(body):
         return once(body, '.catch Ljava/io/IOException;', '.catch Ljava/lang/Throwable;', 'release sidecar in-flight on every failure')
-    changes.append((sardine, replace_method(sardine.read_text(), 'put(Ljava/lang/String;Ljava/io/File;Ljava/lang/String;)V', release_put)))
+    changes.append((sardine, replace_method(sidecar_text(sardine.read_text()), 'put(Ljava/lang/String;Ljava/io/File;Ljava/lang/String;)V', release_put)))
     folder = one(root, 'com/archos/mediacenter/video/player/BlurayIsoProxy.smali').parent
     for name, text in [('NovaIsoSourceClose.smali', SOURCE_TASK), ('NovaIsoNativeClose.smali', NATIVE_TASK)]:
         p = folder/name

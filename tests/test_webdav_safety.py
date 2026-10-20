@@ -9,8 +9,7 @@ import unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
-import webdav_fourfix_patch as patch
-import webdav_p012_patch as p012
+import webdav_safety_patch as patch
 import webdav_connect_retry_patch as legacy
 import iso_patch
 
@@ -19,7 +18,7 @@ class FourFixTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory(prefix='nova-fourfix-')
         cls.work=Path(cls.temp.name);cls.classes=cls.work/'classes';cls.classes.mkdir()
-        sources=list((ROOT/'parallel_range4/src').rglob('*.java'))+[ROOT/'tests/java/android/util/Log.java',ROOT/'tests/java/com/archos/filecorelibrary/FourFixHarness.java']
+        sources=list((ROOT/'webdav_fixes/src').rglob('*.java'))+[ROOT/'tests/java/android/util/Log.java',ROOT/'tests/java/com/archos/filecorelibrary/FourFixHarness.java']
         subprocess.run(['javac','-source','8','-target','8','-d',str(cls.classes)]+list(map(str,sources)),check=True,timeout=30)
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
@@ -30,8 +29,8 @@ class FourFixTests(unittest.TestCase):
     def test_concurrent_sidecar_admission_and_cooldown(self):self.java('concurrent')
     def test_backend_open_same_offset_bounded_retry(self):self.java('retry')
     def test_direct_and_redirected_denial_boundaries(self):self.java('denied')
-    def test_four_lanes_obey_bounded_refresh_budget(self):self.java('refresh')
-    def test_all_four_expired_lanes_recover_with_64bit_offsets(self):self.java('alllanes')
+    def test_concurrent_requests_obey_refresh_budget(self):self.java('refresh')
+    def test_concurrent_refresh_preserves_64bit_offsets(self):self.java('concurrentRefresh')
     def test_iso_lifecycle_120_races(self):self.java('guard')
     def test_native_join_is_not_on_releasing_thread(self):self.java('nonblocking')
     def test_old_wrapper_becomes_single_invocation(self):
@@ -63,9 +62,9 @@ class FourFixTests(unittest.TestCase):
             patch.rename_declaration('.method public wrong()V\n.end method', name, 'new()V', 'guard')
 
     def test_full_c_generation_patch_preserves_read_and_title_logic(self):
-        before=p012.iso_text((ROOT/'iso/nova_iso.c').read_text())
+        before=(ROOT/'iso/nova_iso.c').read_text()
         after=patch.iso_text(before)
-        for op in ('bd_seek(', 'bd_select_title(', 'fetch_range_playback(', 'CACHE_BYTES', 'nova_iso_source_size='):
+        for op in ('bd_seek(', 'bd_select_title(', 'fetch_range_playback(', 'CACHE_BYTES'):
             self.assertEqual(before.count(op),after.count(op),op)
         self.assertIn('nativeCloseGeneration',after)
         self.assertIn('&nova_iso_generation=',after)
@@ -104,8 +103,8 @@ int main(void) {
         subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-pthread',str(f),'-o',str(exe)],check=True,timeout=20)
         subprocess.run([str(exe)],check=True,timeout=10)
     def test_all_helpers_required_in_dex_gate(self):
-        import webdav_parallel4_dex as dex
-        self.assertEqual(dex.REQUIRED,{p.name for p in (ROOT/'parallel_range4/src').rglob('*.java')})
+        import webdav_fixes_dex as dex
+        self.assertEqual(dex.REQUIRED,{p.name for p in (ROOT/'webdav_fixes/src').rglob('*.java')})
         self.assertIn('NovaWebdavOpenPolicy.java',dex.REQUIRED)
         self.assertIn('NovaIsoSessionGuard.java',dex.REQUIRED)
 

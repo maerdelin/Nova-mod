@@ -111,7 +111,7 @@ public final class NovaWebdavSidecarPolicy {
         Entry entry = map.get(key);
         boolean forbidden = false;
         for (int i = 0; failure != null && i < 16; i++, failure = failure.getCause()) {
-            forbidden |= NovaParallelRangeInputStream.accessStatus(failure) == 403;
+            forbidden |= NovaWebdavErrors.accessStatus(failure) == 403;
             if (failure.getCause() == failure) break;
         }
         if (entry != null) entry.inFlight = false;

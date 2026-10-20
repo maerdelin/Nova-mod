@@ -54,7 +54,7 @@ public final class NovaWebdavOpenPolicy {
     }
     private static void checkInterrupted() throws IOException {
         if (Thread.currentThread().isInterrupted())
-            throw new NovaParallelRangeInputStream.RequestCancelledException("WebDAV open cancelled", null);
+            throw new NovaWebdavErrors.RequestCancelledException("WebDAV open cancelled", null);
     }
     private static boolean transientFailure(Throwable error) {
         for (int n = 0; error != null && n < 16; n++, error = error.getCause()) {
@@ -73,10 +73,8 @@ public final class NovaWebdavOpenPolicy {
             budget = new RefreshBudget(now);
             REFRESHED.put(origin, budget);
         }
-        // Four lanes require four distinct Range offsets. A global one-request
-        // allowance would repair one lane while the other three still fail.
-        // Each offset can revalidate once; the entire origin gets at most four
-        // admissions per 30 seconds, including concurrent sessions/seeks.
+        // Bound origin revalidation across successive seeks and sessions.
+        // This admission budget creates no additional download connections.
         if (budget.offsets.size() >= 4 || budget.offsets.contains(offset)) return false;
         budget.offsets.add(offset);
         return true;
@@ -101,7 +99,7 @@ public final class NovaWebdavOpenPolicy {
                 return result; // Existing 206/exact Content-Range validation has already passed.
             } catch (Exception error) {
                 checkInterrupted();
-                int disposition = NovaParallelRangeInputStream.failureDisposition(error);
+                int disposition = NovaWebdavErrors.failureDisposition(error);
                 if (disposition == 1) throw error;
                 // Do not repeat a direct permission refusal. A redirected resource may
                 // have expired: revalidate ORIGINAL origin once, without changing credentials,
@@ -121,7 +119,7 @@ public final class NovaWebdavOpenPolicy {
             try { Thread.sleep(200L * attempt); }
             catch (InterruptedException cancelled) {
                 Thread.currentThread().interrupt();
-                throw new NovaParallelRangeInputStream.RequestCancelledException("WebDAV retry cancelled", cancelled);
+                throw new NovaWebdavErrors.RequestCancelledException("WebDAV retry cancelled", cancelled);
             }
         }
         throw new IOException("WebDAV retry exhausted");

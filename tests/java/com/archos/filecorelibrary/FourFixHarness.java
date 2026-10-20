@@ -142,9 +142,9 @@ public final class FourFixHarness {
         for(Thread t:all)t.join(4000);
         expect(failed.get()==null,"worker failure "+failed.get());
         expect(total.get()==8&&forced.get()==4,"refresh storm: "+total+" forced="+forced);
-        System.out.println("PASS four denied lanes: at most one revalidation per offset and four per origin cooldown");
+        System.out.println("PASS concurrent denied calls: at most one revalidation per offset and four per origin cooldown");
     }
-    static void allLanesRecover() throws Exception {
+    static void concurrentRefreshRecover() throws Exception {
         final String origin=root()+"recovery.mkv";
         final CountDownLatch failedTogether=new CountDownLatch(4);
         final AtomicInteger successes=new AtomicInteger(), refreshed=new AtomicInteger();
@@ -156,7 +156,7 @@ public final class FourFixHarness {
                     public String novaOrigin(){return origin;}
                     public InputStream novaOpenOnce(long actual,boolean fresh)throws Exception {
                         expect(actual==offset,"refresh changed 64-bit offset");
-                        if(!fresh){failedTogether.countDown();expect(failedTogether.await(2,TimeUnit.SECONDS),"lanes not concurrent");
+                        if(!fresh){failedTogether.countDown();expect(failedTogether.await(2,TimeUnit.SECONDS),"requests not concurrent");
                             NovaWebdavOpenPolicy.response(403,"https://cdn.example/expired",1,null);throw new IOException("HTTP 403");}
                         refreshed.incrementAndGet();
                         NovaWebdavOpenPolicy.response(206,"https://cdn.example/current",1,null);
@@ -168,8 +168,8 @@ public final class FourFixHarness {
             });all.add(t);t.start();
         }
         for(Thread t:all)t.join(4000);
-        expect(error.get()==null&&successes.get()==4&&refreshed.get()==4,"one repaired lane stranded the others: "+error.get());
-        System.out.println("PASS all four simultaneously expired lanes recover at unchanged 64-bit offsets");
+        expect(error.get()==null&&successes.get()==4&&refreshed.get()==4,"one refreshed request stranded the others: "+error.get());
+        System.out.println("PASS concurrent expired requests recover at unchanged 64-bit offsets");
     }
     static void guard() throws Exception {
         for(int repeat=0;repeat<120;repeat++) {
@@ -210,7 +210,7 @@ public final class FourFixHarness {
             case "retry":retry();break;
             case "denied":denied();break;
             case "refresh":refreshConcurrent();break;
-            case "alllanes":allLanesRecover();break;
+            case "concurrentRefresh":concurrentRefreshRecover();break;
             case "guard":guard();break;
             case "nonblocking":noBlockingJoin();break;
             default:throw new IllegalArgumentException(args[0]);

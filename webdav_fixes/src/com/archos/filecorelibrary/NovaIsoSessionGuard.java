@@ -45,7 +45,7 @@ public final class NovaIsoSessionGuard {
             source = state.source; nativeClose = state.nativeClose;
             state.source = state.nativeClose = null;
         }
-        // Source.close() cancels the HTTP session and all Range4 lanes immediately;
+        // Source.close() cancels the HTTP session and its current upstream body;
         // potentially blocking libbluray joins run off the UI thread, generation checked.
         run(source);
         async(nativeClose);

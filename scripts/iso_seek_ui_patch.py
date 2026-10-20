@@ -207,7 +207,7 @@ def entry(body: str, instructions: str) -> str:
 
 def native_text(text: str) -> str:
     if 'nova_iso_time_mode' in text: raise RuntimeError('ISO timeline already installed')
-    if 'NOVA_RANGE4_CAP_PUBLISH:' not in text: raise RuntimeError('Expected complete P012 native base')
+    if 'NOVA_DYNAMIC_BUFFER:' not in text: raise RuntimeError('Expected main dynamic buffer base')
     text = once(text, '\tint\t\tstart_time;\n', '\tint\t\tstart_time;\n\tint nova_iso_time_mode;\n','private parser time mode')
     text = once(text, 'static int _open( STREAM *s, int buffer_size, int flags )', C_HELPERS+'\nstatic int _open( STREAM *s, int buffer_size, int flags )','ISO helpers')
     text = once(text, '\ts->parser_open = 1;', C_ACTIVATE+'\n\ts->parser_open = 1;','activate consistent timeline')
@@ -220,7 +220,7 @@ def native_text(text: str) -> str:
 
 def iso_text(text: str) -> str:
     if 'nova_iso_clip_count' in text: raise RuntimeError('ISO timeline metadata already installed')
-    if 'nativeCloseGeneration' not in text: raise RuntimeError('Expected Fourfix ISO owner base')
+    if 'nativeCloseGeneration' not in text: raise RuntimeError('Expected verified ISO owner base')
     text = once(text, '    uint64_t title_size;\n', '    uint64_t title_size;\n    uint32_t timeline_clip_count;\n','clip metadata')
     text = once(text, '    if (ti) {\n        // Blu-ray title durations', '    if (ti) {\n        s->timeline_clip_count = ti->clip_count;\n        // Blu-ray title durations','record clip count')
     anchor = '        result = (*env)->NewStringUTF(env, out);'

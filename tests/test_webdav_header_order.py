@@ -2,7 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-import webdav_fourfix_patch as patch
+import webdav_safety_patch as patch
 
 class HeaderOrderTests(unittest.TestCase):
     def test_interface_header_uses_roundtrip_canonical_order(self):

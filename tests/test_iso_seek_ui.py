@@ -4,8 +4,7 @@ import re, subprocess, sys, tempfile, unittest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import iso_seek_ui_patch as patch
-import webdav_p012_patch as p012
-import webdav_fourfix_patch as four
+import webdav_safety_patch as four
 
 class SeekUiTests(unittest.TestCase):
     @classmethod
@@ -92,14 +91,14 @@ int main(void) {
         subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',str(c),'-o',str(exe)],check=True,timeout=20)
         r=subprocess.run([str(exe)],capture_output=True,text=True,timeout=10);self.assertEqual(r.returncode,0,r.stdout+r.stderr);print(r.stdout)
     def test_iso_metadata_preserves_payload_and_lifecycle(self):
-        before=four.iso_text(p012.iso_text((ROOT/'iso/nova_iso.c').read_text()))
+        before=four.iso_text((ROOT/'iso/nova_iso.c').read_text())
         after=patch.iso_text(before)
         for token in ('bd_seek(', 'bd_read(', 'nativeCloseGeneration','fetch_range_playback(', 'CACHE_BYTES'):
             self.assertEqual(before.count(token),after.count(token))
         self.assertIn('nova_iso_clip_count',after);self.assertIn('nova_iso_title_size',after)
         with self.assertRaises(RuntimeError):patch.iso_text(after)
     def test_native_transform_guards_and_preserves_buffer_block(self):
-        before='NOVA_RANGE4_CAP_PUBLISH:\n\tint\t\tstart_time;\nstatic int _open( STREAM *s, int buffer_size, int flags )\n{\n KEEP_BUFFER_ARITHMETIC\n\ts->parser_open = 1;\n}\n\t\tnew_pos = ((INT64)time + ff_p->start_time) * AV_TIME_BASE / 1000;'
+        before='NOVA_DYNAMIC_BUFFER:\n\tint\t\tstart_time;\nstatic int _open( STREAM *s, int buffer_size, int flags )\n{\n KEEP_BUFFER_ARITHMETIC\n\ts->parser_open = 1;\n}\n\t\tnew_pos = ((INT64)time + ff_p->start_time) * AV_TIME_BASE / 1000;'
         after=patch.native_text(before)
         self.assertEqual(after.count('KEEP_BUFFER_ARITHMETIC'),1)
         self.assertLess(after.index('KEEP_BUFFER_ARITHMETIC'),after.index('NOVA_ISO_TIMELINE_READY'))
