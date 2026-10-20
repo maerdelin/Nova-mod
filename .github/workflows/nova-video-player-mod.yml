@@ -30,6 +30,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq zstd git make maven build-essential wget curl unzip pkg-config meson ninja-build ffmpeg
           mkdir -p inputs dist tools work reports
+          python3 scripts/main_transport_audit.py --source-check
           python3 -m py_compile scripts/*.py tests/*.py
           python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee reports/regression-tests.txt
           curl -fL --retry 4 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
@@ -66,7 +67,6 @@ jobs:
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
           python3 scripts/ts_resume_fallback_patch.py native-src/native/avos --report reports/ts-resume-fallback.json
           python3 scripts/iso_fast_probe_patch.py native-src/native/avos --report reports/iso-fast-probe.json
-          python3 scripts/webdav_p012_patch.py --native native-src/native/avos --report reports/p012-native-capacity.json
           python3 scripts/iso_seek_ui_patch.py --native native-src/native/avos --report reports/iso-timeline.json
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
           # AVOS base/full differ only by which FFmpeg directory is linked; no
@@ -106,10 +106,11 @@ jobs:
           set -euo pipefail
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:?ANDROID_NDK_LATEST_HOME is not set}"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-          python3 scripts/webdav_p012_patch.py --iso iso/nova_iso.c --report reports/p012-iso-source.json
-          python3 scripts/webdav_fourfix_patch.py --iso iso/nova_iso.c --report reports/fourfix-iso-source.json
+          cp iso/nova_iso.c work/iso-original.c
+          python3 scripts/webdav_safety_patch.py --iso iso/nova_iso.c --report reports/safety-iso-source.json
           python3 scripts/iso_seek_ui_patch.py --iso iso/nova_iso.c --report reports/iso-timeline-source.json
           bash scripts/build_iso_native.sh work/iso-native
+          cp work/iso-original.c iso/nova_iso.c
 
       - name: Apply instruction and XML-property patches to latest APK
         env:
@@ -128,11 +129,11 @@ jobs:
           set -euo pipefail
           python3 scripts/iso_finalize.py --source work/credential-UNSIGNED.apk --output work/iso-UNSIGNED.apk --apktool tools/apktool.jar --iso-native-root work/iso-native --work work --reports reports
 
-      - name: Append verified WebDAV Range4 implementation DEX
+      - name: Append only independent HTTP safety, ISO and UI helpers
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/webdav_parallel4_dex.py --source work/iso-UNSIGNED.apk --output work/range4-UNSIGNED.apk --report reports/webdav-parallel4-dex.json
+          python3 scripts/webdav_fixes_dex.py --source work/iso-UNSIGNED.apk --output work/helpers-UNSIGNED.apk --report reports/webdav-fixes-dex.json
 
       - name: Align sign and verify the final APK
         id: signing
@@ -161,7 +162,7 @@ jobs:
           else
             echo '::error::Incomplete signing secrets' && exit 1
           fi
-          "$ALIGN" -f -p 4 work/range4-UNSIGNED.apk work/aligned-UNSIGNED.apk
+          "$ALIGN" -f -p 4 work/helpers-UNSIGNED.apk work/aligned-UNSIGNED.apk
           export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
           "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/Nova_Video_Player_mod_SIGNED.apk work/aligned-UNSIGNED.apk
           "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Video_Player_mod_SIGNED.apk | tee reports/final-signature.txt
@@ -186,7 +187,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
             python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
-            python3 scripts/smoke_fourfix.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+            python3 scripts/smoke_webdav_safety.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+            python3 scripts/smoke_main_transport.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_seek_ui.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_seek_playback.py --reports reports
 
