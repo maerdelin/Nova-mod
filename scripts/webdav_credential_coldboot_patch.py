@@ -86,7 +86,9 @@ def main() -> None:
     with zipfile.ZipFile(args.source) as src:
         if src.testzip() is not None or src.namelist().count("classes.dex") != 1:
             raise RuntimeError("Invalid original unsigned APK")
-        patched_dex = patch_dex(src.read("classes.dex"))
+        original_dex = src.read("classes.dex")
+        input_dex_sha256 = sha256(original_dex)
+        patched_dex = patch_dex(original_dex)
         original_names = src.namelist()
         with zipfile.ZipFile(args.destination, "w", allowZip64=True) as dst:
             dst.comment = src.comment
@@ -105,7 +107,7 @@ def main() -> None:
         "baseline": "Run370 target method layout/instructions; unrelated DEX bytes may differ",
         "changes": ["classes.dex: WebdavUtils.getSardine credentials DB cold load"],
         "preserved": "native libraries, AVOS, raw buffering and WebDAV midstream reconnect",
-        "input_classes_dex_sha256": sha256(src.read("classes.dex")),
+        "input_classes_dex_sha256": input_dex_sha256,
         "patched_classes_dex_sha256": sha256(patched_dex),
         "sqlite_write_logic_changed": False,
         "device_cold_boot_tested": False,
