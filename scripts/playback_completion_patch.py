@@ -105,7 +105,7 @@ DBGCV3 CLOG("sfdec_read <- size %dx%d (%d)", read_out.size.width, read_out.size.
         "\tp->reorder_pts = video->reorder_pts;\n\tp->input_eos = 0;\n\tp->output_eos = 0;\n\tp->presentation_end_ms = 0;\n",
         "reset EOS on decoder open")
 
-    const drain = """static int videodec_drain(STREAM_DEC_VIDEO *dec, VIDEO_FRAME **in,
+    drain = """static int videodec_drain(STREAM_DEC_VIDEO *dec, VIDEO_FRAME **in,
 \tVIDEO_FRAME **out, int *done)
 {
 \tpriv_t *p = (priv_t *)dec->priv;
@@ -189,7 +189,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "uses_existing_stream_stop":True,
         "sfdec_decoder_eos":True,
         "sfdec_sink_drain":True,
-        "raw_prefetch_changed":False,
+        "download_pipeline_changed":False,
         "webdav_transport_changed":False,
         "rebuffer_thresholds_changed":False,
         "device_playback_verified":False
