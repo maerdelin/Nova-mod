@@ -17,7 +17,6 @@ import time
 
 PACKAGE='org.courville.nova'
 PLAYER=PACKAGE+'/com.archos.mediacenter.video.player.PlayerActivity'
-BROWSER=PACKAGE+'/com.archos.mediacenter.video.browser.MainActivity'
 
 def run(args,timeout=30):
     r=subprocess.run(list(map(str,args)),capture_output=True,text=True,timeout=timeout)
@@ -30,6 +29,13 @@ def resumed():
     text=adb('shell','dumpsys activity activities',timeout=20)
     m=re.search(r'mResumedActivity:.*? ([^ ]+/[^ }]+)',text)
     return m.group(1) if m else ''
+
+def launcher():
+    for category in ('android.intent.category.LEANBACK_LAUNCHER','android.intent.category.LAUNCHER'):
+        out=adb('shell','cmd package resolve-activity --brief -a android.intent.action.MAIN -c '+category+' '+PACKAGE)
+        matches=[x.strip() for x in out.splitlines() if x.strip().startswith(PACKAGE+'/')]
+        if len(matches)==1:return matches[0]
+    raise RuntimeError('No exported launcher activity resolved')
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
@@ -73,7 +79,9 @@ def main():
             threading.Thread(target=server.serve_forever,daemon=True).start()
             adb('reverse',f'tcp:{port}',f'tcp:{port}')
             adb('shell','am force-stop '+PACKAGE)
-            adb('shell','am start -W -n '+BROWSER,timeout=30)
+            home=launcher()
+            launch=adb('shell','am start -W -n '+home,timeout=30)
+            if 'Status: ok' not in launch: raise RuntimeError('Launcher start failed: '+launch)
             adb('logcat','-c')
             url=f'http://127.0.0.1:{port}/end.m2ts'
             adb('shell',f'am start -W -n {PLAYER} -a android.intent.action.VIEW -d {shlex.quote(url)} -t video/mp2t',timeout=30)
@@ -85,14 +93,14 @@ def main():
                 first=first or 'first_frame_sink' in last
                 complete=complete or 'NOVA_PLAYBACK_COMPLETE' in last
                 top=resumed()
-                if first and complete and 'video.browser.MainActivity' in top:
+                if first and complete and (top==home or top.endswith(home.split('/',1)[1])):
                     returned=True;break
                 time.sleep(0.5)
             (a.reports/'playback-completion-logcat.txt').write_text(last)
             if not first: raise RuntimeError('No first frame before EOF')
             if not complete: raise RuntimeError('Native player completion was not emitted')
             if not returned: raise RuntimeError('PlayerActivity did not finish back to MainActivity')
-            report.update(status='PASS',first_frame=True,native_completion=True,returned_to_browser=True)
+            report.update(status='PASS',first_frame=True,native_completion=True,returned_to_browser=True,launcher_component=home)
             print('PLAYBACK_COMPLETION_SMOKE=PASS '+json.dumps(report))
     except Exception as e:
         report['error']=str(e);raise
