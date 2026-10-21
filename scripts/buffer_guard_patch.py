@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
+PACKET_HANDOFF_MIB = 24
 
 
 def one(paths, label):
@@ -17,9 +18,7 @@ def one(paths, label):
 def method(text, sig):
     xs = [m for m in METHOD_RE.finditer(text) if sig in m.group(0).splitlines()[0]]
     if len(xs) != 1:
-        headers = [m.group(0).splitlines()[0] for m in METHOD_RE.finditer(text)
-                   if "setVideoURI" in m.group(0).splitlines()[0]]
-        raise RuntimeError(f"{sig}: expected 1, got {len(xs)}; candidates={headers}")
+        raise RuntimeError(f"{sig}: expected 1, got {len(xs)}")
     return xs[0]
 
 
@@ -34,62 +33,39 @@ def bump_locals(block, extra=1):
 
 def patch_player(text):
     m = method(text, " setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V")
-    b = m.group(0)
-    if ":nova_native_buffer_done" in b:
+    block = m.group(0)
+    if ":nova_packet_handoff_done" in block:
         return text, "already"
 
-    b, newreg = bump_locals(b, 2)
-    scheme = f"v{newreg}"
-    tmp = f"v{newreg + 1}"
-    loc = re.search(r'(?m)^    \.locals \d+\s*$', b)
+    block, reg = bump_locals(block, 1)
+    tmp = f"v{reg}"
+    loc = re.search(r'(?m)^    \.locals \d+\s*$', block)
     if not loc:
         raise RuntimeError("setVideoURI locals anchor missing")
-
     inject = f"""
-    if-eqz p1, :nova_native_buffer_default
-    invoke-virtual {{p1}}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
-    move-result-object {scheme}
-    if-eqz {scheme}, :nova_native_buffer_default
-    const-string {tmp}, "webdav"
-    invoke-virtual {{{tmp}, {scheme}}}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
-    move-result {tmp}
-    if-nez {tmp}, :nova_native_buffer_webdav
-    const-string {tmp}, "webdavs"
-    invoke-virtual {{{tmp}, {scheme}}}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
-    move-result {tmp}
-    if-eqz {tmp}, :nova_native_buffer_default
-
-    :nova_native_buffer_webdav
-    const/16 {tmp}, 0x80
-    invoke-static {{{tmp}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V
-    goto :nova_native_buffer_done
-
-    :nova_native_buffer_default
+    # Packet queue is only a bounded demux->decoder handoff/safety queue.
+    # All remote download buffering policy lives in the native raw 2X/5X/10X layer.
     const/16 {tmp}, 0x18
     invoke-static {{{tmp}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V
-
-    :nova_native_buffer_done
+    :nova_packet_handoff_done
 """
-    b = b[:loc.end()] + inject + b[loc.end():]
-    return text[:m.start()] + b + text[m.end():], "applied"
+    block = block[:loc.end()] + inject + block[loc.end():]
+    return text[:m.start()] + block + text[m.end():], "applied"
 
 
 def apply(root: Path, report: Path | None = None):
     player = one(root.glob("smali*/com/archos/mediacenter/video/player/Player.smali"), "Player")
     text, status = patch_player(player.read_text())
     player.write_text(text)
-
     result = {
         "status": "PASS",
         "player": status,
         "policy": {
-            "webdav_native_buffer_mib": 128,
-            "default_native_buffer_mib": 24,
-            "control": "native aos-avos rebuffer state machine",
-            "low_bytes": 25165824,
-            "resume_bytes": 47185920,
+            "packet_handoff_mib": PACKET_HANDOFF_MIB,
+            "webdav_special_packet_buffer": False,
+            "raw_prefetch_owner": "native FFmpeg source layer",
+            "raw_policy": "dynamic 2X/5X/10X",
             "java_prefetch": False,
-            "java_pause_resume_guard": False,
         },
     }
     if report:
