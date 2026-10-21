@@ -23,7 +23,7 @@ def verify_source_baseline(root=ROOT):
             raise RuntimeError('Pinned main source changed: '+name)
     for name,meta in pin.get('intentional_overrides',{}).items():
         data=(root/name).read_bytes()
-        header=('blob '+str(len(data))+'\\0').encode()
+        header=('blob '+str(len(data))+'\0').encode()
         blob=hashlib.sha1(header+data).hexdigest()
         if blob!=meta['git_blob_sha1']:
             raise RuntimeError('Intentional native override changed: '+name)
