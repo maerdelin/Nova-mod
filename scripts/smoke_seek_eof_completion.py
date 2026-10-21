@@ -9,6 +9,7 @@ browser.
 """
 import argparse,http.server,json,re,shlex,subprocess,tempfile,threading,time
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 PACKAGE='org.courville.nova'
 PLAYER=PACKAGE+'/com.archos.mediacenter.video.player.PlayerActivity'
@@ -99,24 +100,53 @@ def main():
             text=wait_for(lambda t:'first_frame_sink' in t and 'ETYPE_MPEG_TS' in t,30,'ordinary TS first frame')
             if 'NOVA_ISO_TIMELINE_READY' in text or 'nova_iso=1' in text:
                 raise RuntimeError('Test accidentally entered ISO path')
-            adb('shell','input keyevent 20');time.sleep(.4)
-            adb('shell','input keyevent 20');time.sleep(.4)
+            # Show the real controller and drag Nova's own seek_progress thumb.
+            # This reproduces the field path where a single user interaction moved
+            # ordinary TS from a low relative position to ~987/1000.
+            adb('shell','input keyevent 20');time.sleep(.25)
+            adb('shell','input keyevent 20');time.sleep(.25)
 
-            seeks=[];final_marker=''
-            for n in range(20):
-                marker='NOVA_TS_POS_'+str(n)+'_'+str(time.monotonic_ns());final_marker=marker
-                adb('shell','log -p i -t NOVA_TS_EOF_TEST '+marker)
-                adb('shell','input keyevent 22')
-                try:
-                    text=wait_for(lambda t:seek_after(t,marker) is not None,5,'ordinary TS forward position seek')
-                except RuntimeError:
-                    continue
-                before,target,phase=seek_after(text,marker)
-                seeks.append([before,target])
-                if target>=850 and target<995:break
-                time.sleep(.25)
-            if not seeks or not (850<=seeks[-1][1]<995):
-                raise RuntimeError('Could not reach near-tail ordinary TS position seek: '+repr(seeks))
+            def progress_bounds():
+                for attempt in range(6):
+                    target='/data/local/tmp/nova-ts-eof-seek.xml'
+                    adb('shell','uiautomator dump '+target,timeout=15)
+                    xml=adb('shell','cat '+target)
+                    (a.reports/'ordinary-ts-seek-ui.xml').write_text(xml)
+                    try:
+                        root=ET.fromstring(xml[xml.index('<?xml'):])
+                        for node in root.iter('node'):
+                            if node.attrib.get('resource-id','')==PACKAGE+':id/seek_progress':
+                                b=node.attrib.get('bounds','')
+                                m=re.fullmatch(r'\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]',b)
+                                if m:
+                                    return tuple(map(int,m.groups()))
+                    except Exception:
+                        pass
+                    # DPAD_DOWN keeps controller visible without changing playback.
+                    adb('shell','input keyevent 20');time.sleep(.3)
+                raise RuntimeError('seek_progress not visible in ordinary TS controller')
+
+            x1,y1,x2,y2=progress_bounds()
+            if x2-x1 < 100:
+                raise RuntimeError('seek_progress bounds too small: '+repr((x1,y1,x2,y2)))
+            y=(y1+y2)//2
+            # Start close to current early-playback thumb and drag to 97%.
+            sx=x1+max(2,int((x2-x1)*0.08))
+            tx=x1+int((x2-x1)*0.97)
+            marker='NOVA_TS_POS_DRAG_'+str(time.monotonic_ns());final_marker=marker
+            adb('shell','log -p i -t NOVA_TS_EOF_TEST '+marker)
+            adb('shell',f'input swipe {sx} {y} {tx} {y} 900')
+            text=wait_for(lambda t:seek_after(t,marker) is not None,15,'ordinary TS seekbar drag')
+            phase=text[text.rfind(marker):]
+            events=list(re.finditer(r'avos_mp_video_seek current_pos=(\\d+) to pos=(\\d+)',phase))
+            if not events:
+                raise RuntimeError('No ordinary TS seek after seekbar drag')
+            seeks=[[int(m[1]),int(m[2])] for m in events]
+            before,target=seeks[-1]
+            if not (900<=target<995):
+                raise RuntimeError('Seekbar drag did not reach near-tail ordinary TS position: '+repr(seeks))
+            if 'NOVA_ISO_TIME_SEEK' in phase:
+                raise RuntimeError('ISO seek appeared in ordinary TS position test')
             phase_start=time.monotonic()
             text=wait_for(lambda t:
                 final_marker in t and
