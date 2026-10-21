@@ -33,9 +33,14 @@ class NativeRebufferStaticChecks(unittest.TestCase):
 
     def test_rebuffer_pause_keeps_parser_alive(self):
         self.assertIn(
-            "!s->paused || __atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE )",
+            "!s->paused || __atomic_load_n( &s->readahead_enabled, __ATOMIC_ACQUIRE )",
             NATIVE_PATCH,
         )
+        self.assertIn(
+            "__atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE )",
+            NATIVE_PATCH,
+        )
+        self.assertIn("NOVA_10X_PACKET_CAP_BYPASS", NATIVE_PATCH)
         self.assertIn("stream_pause( s )", NATIVE_PATCH)
         self.assertIn("stream_un_pause( s, 0 )", NATIVE_PATCH)
         self.assertIn("_rebuffer_thread", NATIVE_PATCH)
@@ -70,6 +75,10 @@ class NativeRebufferStaticChecks(unittest.TestCase):
             "__atomic_store_n(&video->s->rebuffer_play_requested, 0, __ATOMIC_RELEASE)",
             NATIVE_PATCH,
         )
+        pause_at = NATIVE_PATCH.index("int avos_mp_video_pause")
+        pause_window = NATIVE_PATCH[pause_at:pause_at + 2200]
+        self.assertNotIn("readahead_enabled, 0", pause_window)
+        self.assertIn("readahead_enabled, 1", NATIVE_PATCH)
 
     def test_run340_start_swallow_regression_is_gated(self):
         start_marker = NATIVE_PATCH.index("real play arms rebuffer lifecycle")

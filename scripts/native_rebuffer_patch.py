@@ -500,6 +500,8 @@ DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d
         raise RuntimeError("FFmpeg 10X read-ahead postcondition failed: diagnostic count")
     if text.count("readahead_enabled") < 2:
         raise RuntimeError("FFmpeg 10X read-ahead flag missing")
+    if text.count("if( mem_used > ff_p->buffer_size && !audio_starved && !ff_p->seeking )") != 1:
+        raise RuntimeError("FFmpeg dynamic 10X byte wall missing")
 
     path.write_text(text)
 
@@ -653,20 +655,21 @@ def apply(root: Path, report: Path | None = None) -> dict:
     result = {
         "status": "PASS",
         "aos_avos_commit": head,
-        "architecture": "native AVOS rebuffer monitor; normal pause freezes consumers while parser continues",
-        "activation": "128MiB WebDAV parser buffer + real AVOS Start + first frame submitted to video sink",
+        "architecture": "native AVOS single-stream read-ahead; presentation pause/decode consumption is decoupled from parser production",
+        "activation": "real AVOS Start arms continuous parser read-ahead; no Java FIFO or parallel downloader",
         "measurement": "STREAM_PARSER_STATS.buffer_used = FFmpeg audio queue bytes + video queue bytes",
         "startup_policy": "prepare/preroll/seek preview cannot enter automatic rebuffer",
         "low_bytes": LOW_BYTES,
         "resume_bytes": RESUME_BYTES,
         "poll_ms": POLL_MS,
         "abi_safety": "new STREAM fields appended at struct tail; existing offsets unchanged",
-        "manual_pause_policy": "manual pause disarms low-water entry; automatic resume is suppressed until user starts again",
+        "manual_pause_policy": "manual pause stops presentation but leaves read-ahead armed; parser keeps filling until the dynamic 10X byte budget",
         "events": ["MEDIA_INFO_BUFFERING_START", "MEDIA_INFO_BUFFERING_END"],
-        "queue_root_fix": "internal rebuffer bypasses FF_QUEUE_MAX_PACKETS while 128MiB byte budget remains authoritative",
-        "normal_packet_cap": 8192,
-        "manual_pause_packet_cap": 8192,
-        "diagnostic": "NOVA_REBUFFER_PACKET_CAP_BYPASS",
+        "queue_root_fix": "after real Start, FF_QUEUE_MAX_PACKETS is not a second wall; the existing dynamic 10X FFmpeg byte budget is normal backpressure",
+        "pre_start_packet_cap": 8192,
+        "post_start_packet_cap": None,
+        "extra_prefetch_wall_bytes": 0,
+        "diagnostic": "NOVA_10X_PACKET_CAP_BYPASS",
         "startup_diagnostic": "NOVA_STARTUP_TRACE",
         "dynamic_buffer": "2X low / 5X resume / 10X FFmpeg demux capacity, X=file size bytes / duration seconds",
     }
