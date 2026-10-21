@@ -194,6 +194,7 @@ jobs:
             python3 scripts/smoke_seek_playback.py --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
+            python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
             python3 scripts/smoke_seek_eof_completion.py --reports reports
 
       - name: Verify official selection has not changed

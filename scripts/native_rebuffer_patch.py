@@ -323,7 +323,6 @@ static void *nova_raw_thread(void *opaque)
         int64_t room = raw->capacity_bytes - raw->used_bytes;
         want = room > NOVA_RAW_CHUNK_BYTES ?
             NOVA_RAW_CHUNK_BYTES : (int)room;
-        generation = raw->generation;
         pthread_mutex_unlock(&raw->mutex);
 
         if( want <= 0 )
@@ -342,7 +341,19 @@ static void *nova_raw_thread(void *opaque)
         chunk->offset = 0;
         chunk->size = 0;
 
+        /*
+         * Capture generation only AFTER owning source_mutex. A seek also owns
+         * source_mutex before advancing generation and repositioning the
+         * underlying AVIO. Capturing generation earlier creates a destructive
+         * race: seek can move source to N, then the producer reads N..N+chunk
+         * under the stale generation and discards it, silently leaving source
+         * at N+chunk while consumer_pos still says N. MOV/MP4 runtime random
+         * access is especially sensitive to that byte-position skew.
+         */
         pthread_mutex_lock(&raw->source_mutex);
+        pthread_mutex_lock(&raw->mutex);
+        generation = raw->generation;
+        pthread_mutex_unlock(&raw->mutex);
         int got = avio_read(raw->source, chunk->data, want);
         pthread_mutex_unlock(&raw->source_mutex);
 
@@ -464,6 +475,7 @@ static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
     if( result >= 0 ) {
         pthread_mutex_lock(&raw->mutex);
         raw->generation++;
+        unsigned generation = raw->generation;
         nova_raw_free_chunks_locked(raw);
         raw->consumer_pos = result;
         raw->eof = 0;
@@ -472,6 +484,9 @@ static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
             &raw->s->raw_prefetch_eof, 0, __ATOMIC_RELEASE );
         pthread_cond_broadcast(&raw->can_read);
         pthread_cond_broadcast(&raw->can_write);
+        serprintf(
+            "NOVA_RAW10X_SEEK: target=%lld result=%lld generation=%u\n",
+            (long long)target, (long long)result, generation );
         pthread_mutex_unlock(&raw->mutex);
     }
     pthread_mutex_unlock(&raw->source_mutex);
@@ -1277,6 +1292,7 @@ def apply(
         "seek_policy": "single adopted source AVIO; playback seek serializes source, invalidates queued raw generation, no parallel Range",
         "telemetry": ["NOVA_RAW10X_OPEN", "NOVA_RAW10X", "NOVA_RAW_10X_POLICY", "NOVA_REBUFFER_ENTER", "NOVA_REBUFFER_WAIT", "NOVA_REBUFFER_EXIT", "NOVA_STARTUP_TRACE"],
         "mp4_tail_moov_safe": True,
+        "mp4_runtime_seek_race_safe": True,
         "events": ["MEDIA_INFO_BUFFERING_START", "MEDIA_INFO_BUFFERING_END"],
         "extra_fixed_prefetch_wall_bytes": 0,
     }
