@@ -121,7 +121,7 @@ def main():
                 phase=text[at:]
                 if 'NOVA_ISO_TIME_SEEK' in phase:
                     raise RuntimeError('ISO seek appeared in ordinary TS position test')
-                events=list(re.finditer(r'avos_mp_video_seek current_pos=(\\d+) to pos=(\\d+) direction=1',phase))
+                events=list(re.finditer(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=1',phase))
                 if not events:
                     continue
                 for m in events:
