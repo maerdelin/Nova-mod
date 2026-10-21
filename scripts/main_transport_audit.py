@@ -21,6 +21,12 @@ def verify_source_baseline(root=ROOT):
     for name,expected in pin['source_files'].items():
         if sha((root/name).read_bytes())!=expected:
             raise RuntimeError('Pinned main source changed: '+name)
+    for name,meta in pin.get('intentional_overrides',{}).items():
+        data=(root/name).read_bytes()
+        header=('blob '+str(len(data))+'\\0').encode()
+        blob=hashlib.sha1(header+data).hexdigest()
+        if blob!=meta['git_blob_sha1']:
+            raise RuntimeError('Intentional native override changed: '+name)
     for name in ['parallel_range4','single_stream']:
         if (root/name).exists(): raise RuntimeError('Removed source directory remains: '+name)
     return pin

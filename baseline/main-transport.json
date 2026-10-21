@@ -5,9 +5,14 @@
     "scripts/webdav_midstream_resume_patch.py": "626e15fd330faf132f308879610e1e817815e141e21e5f44fde2bdd869ba02f8",
     "scripts/webdav_connect_retry_patch.py": "12f2d1d32e85f0a1e0e2f912fa10e4a78f0331819cfed2c246801b6069a1e162",
     "scripts/stream_throughput_patch.py": "ce3f35aec0dcdb833d659c0e950b6779702912fca985eccb2788d3b6437a71bc",
-    "scripts/native_rebuffer_patch.py": "227366e12f2e4f9a7f73c8513fadf54f2c13c2a391609cf59384a9b2b6b0bc2b",
     "scripts/iso_patch.py": "6acde4e04179d33d85d4d8f0874da6a482dfd32b9f38d8c1f4f5bf606176acb9",
     "scripts/ts_bitrate_patch.py": "e36f512ef151d9f44becff3cb32ca40c605ea4e14b7a40791f13452b38539cfb",
     "patches/v982-granular.json": "9ae0fc9773374db7b108478bd48b6f756e2f2f24a4a105360ca13aa9a5a38a8e"
+  },
+  "intentional_overrides": {
+    "scripts/native_rebuffer_patch.py": {
+      "git_blob_sha1": "f6b7635381210b90b04d2eddfc4264380cfc5ca8",
+      "reason": "Run419 native-only: parser keeps producing through pause until existing dynamic 10X byte budget"
+    }
   }
 }
