@@ -187,9 +187,16 @@ def patch_stream_video(text: str) -> str:
         "existing player stop/completion path")
 
     text = once(text,
-        "\ts->seek_end_of_stream = 0;\n",
-        "\ts->seek_end_of_stream = 0;\n\ts->eof_completion_wait_start_ms = 0;\n",
-        "reset player EOF fallback on seek")
+        """\ts->seek_video_ready_ts = STREAM_NO_PTS_VALUE;
+\ts->seek_end_of_stream = 0;
+
+\t// video_end is a one-way latch""",
+        """\ts->seek_video_ready_ts = STREAM_NO_PTS_VALUE;
+\ts->seek_end_of_stream = 0;
+\ts->eof_completion_wait_start_ms = 0;
+
+\t// video_end is a one-way latch""",
+        "reset player EOF fallback in _seek_init")
 
     text = once(text,
         """\t\tint video_end = s->video_error || (s->video->valid ? _video_presentation_drained(s) : 1);
