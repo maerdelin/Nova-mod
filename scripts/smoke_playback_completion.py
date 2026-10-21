@@ -93,13 +93,13 @@ def main():
                 first=first or 'first_frame_sink' in last
                 complete=complete or 'NOVA_PLAYBACK_COMPLETE' in last
                 top=resumed()
-                if first and complete and (top==home or top.endswith(home.split('/',1)[1])):
+                if first and complete and ('com.archos.mediacenter.video.browser.MainActivity' in top):
                     returned=True;break
                 time.sleep(0.5)
             (a.reports/'playback-completion-logcat.txt').write_text(last)
             if not first: raise RuntimeError('No first frame before EOF')
             if not complete: raise RuntimeError('Native player completion was not emitted')
-            if not returned: raise RuntimeError('PlayerActivity did not finish back to MainActivity')
+            if not returned: raise RuntimeError('PlayerActivity did not finish back to browser MainActivity')
             report.update(status='PASS',first_frame=True,native_completion=True,returned_to_browser=True,launcher_component=home)
             print('PLAYBACK_COMPLETION_SMOKE=PASS '+json.dumps(report))
     except Exception as e:
