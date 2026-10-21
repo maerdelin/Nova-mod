@@ -12,6 +12,8 @@ class NativeRaw10XTests(unittest.TestCase):
             "nova_raw_thread",
             "nova_raw_read",
             "nova_raw_seek",
+            "nova_raw_adopt",
+            "phase=post_probe",
             "NOVA_RAW10X:",
             "NOVA_RAW_10X_POLICY:",
             "capacity = (int)(10 * nova_x)",
@@ -19,6 +21,15 @@ class NativeRaw10XTests(unittest.TestCase):
             "stats->buffer2_size",
         ):
             self.assertIn(token, PATCH)
+
+    def test_probe_keeps_native_ffmpeg_url_io_until_after_format_parse(self):
+        direct = PATCH.index('if (strncmp(url, "fd://", 5))')
+        adopt = PATCH.index('nova_raw_adopt(')
+        parse_anchor = PATCH.index('adopt native raw producer only after FFmpeg probe')
+        self.assertGreater(adopt, direct)
+        self.assertGreater(parse_anchor, adopt)
+        self.assertIn('Keep FFmpeg\'s native URL AVIO through open+probe', PATCH)
+        self.assertIn('mp4_tail_moov_safe', PATCH)
 
     def test_no_post_demux_10x_wall(self):
         self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", PATCH)

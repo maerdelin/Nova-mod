@@ -492,21 +492,35 @@ static void nova_raw_stats(NOVA_RAW_PREFETCH *raw,
     pthread_mutex_unlock(&raw->mutex);
 }
 
-static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
-                         AVFormatContext *fmt, const char *url,
-                         AVDictionary **options)
+static int nova_raw_adopt(NOVA_RAW_PREFETCH *raw, STREAM *s,
+                          AVFormatContext *fmt, int64_t known_size)
 {
-    if( strncmp(url, "http://", 7) && strncmp(url, "https://", 8) )
+    if( !fmt || !fmt->pb )
+        return 0;
+    if( strncmp(s->src.url, "http://", 7) &&
+        strncmp(s->src.url, "https://", 8) )
         return 0;
 
+    /*
+     * IMPORTANT: AVFormat has already completed avformat_open_input() and
+     * avformat_find_stream_info() on its native URL-backed AVIO before this
+     * function runs. That preserves MOV/MP4 probe-time random access exactly
+     * (notably mdat -> tail moov -> media seek-back). Only the steady-state
+     * parser handoff is wrapped in RAW10X.
+     */
     memset(raw, 0, sizeof(*raw));
     raw->s = s;
-    raw->source_size = -1;
+    raw->source = fmt->pb;
+    raw->source_size = known_size >= 0 ? known_size : avio_size(raw->source);
     raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;
     raw->low_bytes = NOVA_RAW_FALLBACK_LOW_BYTES;
     raw->resume_bytes = NOVA_RAW_FALLBACK_RESUME_BYTES;
     raw->upstream_interrupt = fmt->interrupt_callback;
     __atomic_store_n(&raw->run, 1, __ATOMIC_RELEASE);
+
+    int64_t start_pos = avio_tell(raw->source);
+    if( start_pos < 0 )
+        start_pos = 0;
 
     int ret = AVERROR(ENOMEM);
     int mutex_ready = 0, source_mutex_ready = 0;
@@ -524,32 +538,25 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         goto init_fail;
     can_write_ready = 1;
 
-    AVDictionary *io_options = NULL;
-    av_dict_copy(&io_options, *options, 0);
-    AVIOInterruptCB interrupt = { nova_raw_interrupt, raw };
-    ret = avio_open2(
-        &raw->source, url, AVIO_FLAG_READ, &interrupt, &io_options );
-    av_dict_free(&io_options);
-    if( ret < 0 )
-        goto fail;
-
-    raw->source_size = avio_size(raw->source);
-
     unsigned char *buffer = av_malloc(NOVA_RAW_CHUNK_BYTES);
-    if( !buffer ) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
-    }
+    if( !buffer )
+        goto init_fail;
     raw->consumer = avio_alloc_context(
         buffer, NOVA_RAW_CHUNK_BYTES, 0, raw,
         nova_raw_read, NULL, nova_raw_seek );
     if( !raw->consumer ) {
         av_free(buffer);
-        ret = AVERROR(ENOMEM);
-        goto fail;
+        goto init_fail;
     }
-    raw->consumer->seekable = raw->source->seekable;
 
+    raw->consumer->seekable = raw->source->seekable;
+    raw->consumer->pos = start_pos;
+    raw->consumer_pos = start_pos;
+
+    /*
+     * From this point AVFormat owns the custom consumer logically; the original
+     * URL AVIO is owned by raw->source and is closed in nova_raw_close().
+     */
     fmt->pb = raw->consumer;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
     raw->enabled = 1;
@@ -562,28 +569,32 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);
     if( ret ) {
         ret = AVERROR(ret);
-        goto fail;
+        /*
+         * Restore the exact URL AVIO if the producer cannot be started. The
+         * demuxer may continue without RAW rather than being left on a dead
+         * custom context.
+         */
+        fmt->pb = raw->source;
+        fmt->flags &= ~AVFMT_FLAG_CUSTOM_IO;
+        raw->source = NULL;
+        raw->enabled = 0;
+        __atomic_store_n(&s->raw_prefetch_enabled, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
+        if( raw->consumer ) {
+            av_freep(&raw->consumer->buffer);
+            avio_context_free(&raw->consumer);
+        }
+        goto init_fail;
     }
     raw->thread_started = 1;
     serprintf(
-        "NOVA_RAW10X_OPEN: url=%s fallback_low=%d fallback_resume=%d fallback_capacity=%d source_size=%lld\n",
-        url, NOVA_RAW_FALLBACK_LOW_BYTES,
-        NOVA_RAW_FALLBACK_RESUME_BYTES,
-        NOVA_RAW_FALLBACK_CAP_BYTES,
-        (long long)raw->source_size );
+        "NOVA_RAW10X_OPEN: phase=post_probe url=%s start=%lld fallback_low=%d fallback_resume=%d fallback_capacity=%d source_size=%lld seekable=%d\n",
+        s->src.url, (long long)start_pos,
+        NOVA_RAW_FALLBACK_LOW_BYTES, NOVA_RAW_FALLBACK_RESUME_BYTES,
+        NOVA_RAW_FALLBACK_CAP_BYTES, (long long)raw->source_size,
+        !!(raw->consumer->seekable & AVIO_SEEKABLE_NORMAL) );
     return 1;
 
-fail:
-    __atomic_store_n(&raw->run, 0, __ATOMIC_RELEASE);
-    if( raw->consumer ) {
-        av_freep(&raw->consumer->buffer);
-        avio_context_free(&raw->consumer);
-    }
-    if( raw->source )
-        avio_closep(&raw->source);
-    raw->enabled = 0;
-    __atomic_store_n(&s->raw_prefetch_enabled, 0, __ATOMIC_RELEASE);
-    __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
 init_fail:
     if( can_write_ready ) pthread_cond_destroy(&raw->can_write);
     if( can_read_ready ) pthread_cond_destroy(&raw->can_read);
@@ -997,17 +1008,13 @@ def patch_stream_parser_ffmpeg(path: Path) -> None:
     )
     open_replacement = r'''static int ffmpeg_open_input(FF_PRIV *priv, const char *url, AVDictionary **options)
 {
-	if (strncmp(url, "fd://", 5)) {
-		int raw = 0;
-		if (priv->s)
-			raw = nova_raw_open(
-				&priv->raw, priv->s, priv->fmt, url, options);
-		if (raw < 0)
-			return raw;
-		if (raw > 0)
-			return avformat_open_input(&priv->fmt, url, NULL, options);
+	/*
+	 * Keep FFmpeg's native URL AVIO through open+probe. MOV/MP4 may need
+	 * arbitrary tail seeks to locate moov before any stream metadata exists.
+	 * RAW10X adopts fmt->pb only after stream probing and format parsing.
+	 */
+	if (strncmp(url, "fd://", 5))
 		return avformat_open_input(&priv->fmt, url, NULL, options);
-	}
 	int fd;
 	int64_t offset, length;
 	if (stream_fd_parse_url(url, &fd, &offset, &length)) return AVERROR(EINVAL);
@@ -1031,6 +1038,21 @@ static int ff_force_seek'''
     text = sub_once(
         text, open_pattern, open_replacement,
         "replace FFmpeg source open with raw producer",
+    )
+
+    text = replace_once(
+        text,
+        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;\n\n"
+        "\tmemcpy( &s->av, &ff_p->av, sizeof( AV_PROPERTIES ) );",
+        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;\n"
+        "\tif( ff_p->s ) {\n"
+        "\t\tint nova_raw_result = nova_raw_adopt(\n"
+        "\t\t\t&ff_p->raw, s, ff_p->fmt,\n"
+        "\t\t\tff_p->size_known ? (int64_t)ff_p->size : -1 );\n"
+        "\t\tif( nova_raw_result < 0 ) goto ErrorExit4;\n"
+        "\t}\n\n"
+        "\tmemcpy( &s->av, &ff_p->av, sizeof( AV_PROPERTIES ) );",
+        "adopt native raw producer only after FFmpeg probe",
     )
 
     text = replace_once(
@@ -1251,8 +1273,10 @@ def apply(
         "packet_queue_10x": False,
         "manual_pause_policy": "manual pause may stop parser/playback; independent raw producer continues until raw 10X",
         "internal_rebuffer_policy": "parser may continue only during automatic rebuffer; raw producer is independent in all states",
-        "seek_policy": "single source AVIO; seek serializes source, invalidates queued raw generation, no parallel Range",
+        "probe_policy": "FFmpeg native URL AVIO remains in control through open/find_stream_info/_parse_format; RAW10X adopts the same AVIO only after probe",
+        "seek_policy": "single adopted source AVIO; playback seek serializes source, invalidates queued raw generation, no parallel Range",
         "telemetry": ["NOVA_RAW10X_OPEN", "NOVA_RAW10X", "NOVA_RAW_10X_POLICY", "NOVA_REBUFFER_ENTER", "NOVA_REBUFFER_WAIT", "NOVA_REBUFFER_EXIT", "NOVA_STARTUP_TRACE"],
+        "mp4_tail_moov_safe": True,
         "events": ["MEDIA_INFO_BUFFERING_START", "MEDIA_INFO_BUFFERING_END"],
         "extra_fixed_prefetch_wall_bytes": 0,
     }
