@@ -98,13 +98,14 @@ public final class FourFixApkProbe {
             File f=new File("/data/local/tmp/nova-fourfix-probe.xml");try(FileOutputStream out=new FileOutputStream(f)){out.write("test".getBytes(StandardCharsets.US_ASCII));}
             String base=server.base()+"/[HDR] \u4e2d\u6587/.movie.mkv.";
             int before=server.requests.size();
-            for(int pos:new int[]{0,44,88}){
-                try{put.invoke(sardine,base+pos+".archos.resume.xml",f,"application/octet-stream");throw new AssertionError("denied PUT reported success");}
-                catch(InvocationTargetException failure){Throwable t=actual(failure);require(t instanceof IOException,"unexpected PUT exception "+t);}
-            }
-            require(server.requests.size()==before+1,"sidecar cooldown did not suppress real PUT requests");
+            for(int pos:new int[]{0,44,88})
+                put.invoke(sardine,base+pos+".archos.resume.xml",f,"application/octet-stream");
+            require(server.requests.size()==before,"resume sidecar escaped local-only policy");
+            try{put.invoke(sardine,server.base()+"/ordinary-upload.xml",f,"application/octet-stream");throw new AssertionError("ordinary PUT did not reach server");}
+            catch(InvocationTargetException failure){Throwable t=actual(failure);require(t instanceof IOException,"unexpected ordinary PUT exception "+t);}
+            require(server.requests.size()==before+1,"ordinary WebDAV PUT was incorrectly suppressed");
             require(f.length()==4,"local input damaged");f.delete();
-            System.out.println("PASS final APK actual OkHttpSardine PUT: raw Unicode/brackets + rotated filenames; 3 calls, 1 HTTP request, no false success");
+            System.out.println("PASS final APK actual OkHttpSardine PUT: 3 resume sidecars, 0 HTTP requests; ordinary PUT still reaches WebDAV");
             for(String request:server.requests)System.out.println("MOCK_REQUEST="+request);
         }
     }

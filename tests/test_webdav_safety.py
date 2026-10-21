@@ -26,6 +26,11 @@ class FourFixTests(unittest.TestCase):
         r=subprocess.run(['java','-Xmx384m','-cp',str(self.classes),'com.archos.filecorelibrary.FourFixHarness',case],capture_output=True,text=True,timeout=30)
         self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertIn('PASS ',r.stdout);print(r.stdout.strip())
     def test_raw_encoded_chinese_bracket_filenames(self):self.java('paths')
+    def test_production_sidecar_put_is_local_only(self):
+        self.assertIn('isLocalOnlyResume', patch.PUT_WRAPPER)
+        self.assertIn('return-void', patch.PUT_WRAPPER)
+        self.assertNotIn('recordFailure', patch.PUT_WRAPPER)
+        self.assertNotIn('beforePut', patch.PUT_WRAPPER)
     def test_concurrent_sidecar_admission_and_cooldown(self):self.java('concurrent')
     def test_backend_open_same_offset_bounded_retry(self):self.java('retry')
     def test_direct_and_redirected_denial_boundaries(self):self.java('denied')

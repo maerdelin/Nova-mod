@@ -72,6 +72,9 @@ public final class NovaWebdavSidecarPolicy {
             return scheme + "://" + authority + base + SUFFIX;
         } catch (Exception malformed) { return null; }
     }
+    /** Playback progress is local-only in this build. Hidden Archos resume XML is never sent to WebDAV. */
+    public static boolean isLocalOnlyResume(String url) { return key(url) != null; }
+
     private static LinkedHashMap<String, Entry> entries(Object client) {
         LinkedHashMap<String, Entry> map = STATES.get(client);
         if (map == null) { map = new LinkedHashMap<String, Entry>(); STATES.put(client, map); }

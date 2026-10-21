@@ -23,11 +23,14 @@ public final class FourFixHarness {
             String encoded = new URI("http", "127.0.0.1:5244", raw.substring(raw.indexOf('/', 8)), null, null).toASCIIString();
             String a = NovaWebdavSidecarPolicy.key(raw), b = NovaWebdavSidecarPolicy.key(encoded);
             expect(a != null && a.equals(b), "raw/encoded path differs: " + raw);
+            expect(NovaWebdavSidecarPolicy.isLocalOnlyResume(raw), "resume XML not classified local-only");
+            expect(NovaWebdavSidecarPolicy.isLocalOnlyResume(encoded), "encoded resume XML not classified local-only");
             String rotated = folder + ".video \u4e2d\u6587 [HDR].mkv.88.archos.resume.xml";
             expect(a.equals(NovaWebdavSidecarPolicy.key(rotated)), "position not canonicalized");
         }
         String base = root();
         expect(NovaWebdavSidecarPolicy.key(base + "movie.mkv") == null, "media GET target admitted");
+        expect(!NovaWebdavSidecarPolicy.isLocalOnlyResume(base + "movie.mkv"), "media path suppressed as resume XML");
         expect(NovaWebdavSidecarPolicy.key(base + "note.archos.resume.xml") == null, "visible arbitrary XML admitted");
         expect(!NovaWebdavSidecarPolicy.key(base + ".a%2Fb.0.archos.resume.xml").equals(
                 NovaWebdavSidecarPolicy.key(base + "a/.b.0.archos.resume.xml")), "escaped path separator collapsed");

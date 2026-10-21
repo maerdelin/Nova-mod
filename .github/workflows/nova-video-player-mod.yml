@@ -64,6 +64,7 @@ jobs:
           git -C native/avos checkout --detach b313441df14414632781617742efb66778689b91
           cd ..
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --report reports/native-rebuffer.json
+          python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
           python3 scripts/ts_resume_fallback_patch.py native-src/native/avos --report reports/ts-resume-fallback.json
           python3 scripts/iso_fast_probe_patch.py native-src/native/avos --report reports/iso-fast-probe.json
@@ -191,6 +192,7 @@ jobs:
             python3 scripts/smoke_main_transport.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_seek_ui.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_seek_playback.py --reports reports
+            python3 scripts/smoke_playback_completion.py --reports reports
 
       - name: Verify official selection has not changed
         env:

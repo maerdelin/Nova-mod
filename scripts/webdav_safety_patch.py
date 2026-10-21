@@ -296,17 +296,13 @@ PUT_PROTO = '(Ljava/lang/String;Ljava/io/File;Ljava/lang/String;)V'
 PUT_WRAPPER = f'''
 .method public put{PUT_PROTO}
     .locals 1
-    invoke-static {{p0, p1}}, {SIDECAR_POLICY}->beforePut(Ljava/lang/Object;Ljava/lang/String;)V
-    :nova_sidecar_put_start
-    invoke-virtual {{p0, p1, p2, p3}}, {SARDINE}->novaPutOriginalFile{PUT_PROTO}
-    :nova_sidecar_put_end
-    .catch Ljava/io/IOException; {{:nova_sidecar_put_start .. :nova_sidecar_put_end}} :nova_sidecar_put_failed
-    invoke-static {{p0, p1}}, {SIDECAR_POLICY}->recordSuccess(Ljava/lang/Object;Ljava/lang/String;)V
+    invoke-static {{p1}}, {SIDECAR_POLICY}->isLocalOnlyResume(Ljava/lang/String;)Z
+    move-result v0
+    if-eqz v0, :nova_normal_put
     return-void
-    :nova_sidecar_put_failed
-    move-exception v0
-    invoke-static {{p0, p1, v0}}, {SIDECAR_POLICY}->recordFailure(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Throwable;)V
-    throw v0
+    :nova_normal_put
+    invoke-virtual {{p0, p1, p2, p3}}, {SARDINE}->novaPutOriginalFile{PUT_PROTO}
+    return-void
 .end method
 '''
 
@@ -347,16 +343,16 @@ def apply(root: Path, report: Path | None = None) -> dict:
     }
     changes = [(one(root, path), fn(one(root, path).read_text())) for path, fn in transforms.items()]
     sardine = one(root, 'com/thegrizzlylabs/sardineandroid/impl/OkHttpSardine.smali')
-    def release_put(body):
-        return once(body, '.catch Ljava/io/IOException;', '.catch Ljava/lang/Throwable;', 'release sidecar in-flight on every failure')
-    changes.append((sardine, replace_method(sidecar_text(sardine.read_text()), 'put(Ljava/lang/String;Ljava/io/File;Ljava/lang/String;)V', release_put)))
+    # Hidden .archos.resume.xml writes are local-only and return before any HTTP PUT.
+    # Every other Sardine PUT is delegated to the untouched original method.
+    changes.append((sardine, sidecar_text(sardine.read_text())))
     folder = one(root, 'com/archos/mediacenter/video/player/BlurayIsoProxy.smali').parent
     for name, text in [('NovaIsoSourceClose.smali', SOURCE_TASK), ('NovaIsoNativeClose.smali', NATIVE_TASK)]:
         p = folder/name
         if p.exists(): raise RuntimeError('Unexpected existing adapter '+name)
         changes.append((p,text))
     for p, text in changes: p.write_text(text)
-    result = {'status':'PASS','scope':'WebDAV backend open, response diagnosis, ISO owner close, optional sidecar PUT',
+    result = {'status':'PASS','scope':'WebDAV backend open, response diagnosis, ISO owner close, local-only resume sidecar',
               'localhost_request_parsed_once': True, 'range_validation_unchanged':True,
               'transient_open_max_attempts':3,'redirected403_refresh_per_origin_cooldown_seconds':30,
               'redirected403_max_distinct_offsets_per_cooldown':4,
