@@ -25,8 +25,11 @@ def sha256(data: bytes) -> str:
 
 
 def patch_dex(original: bytes) -> bytes:
-    if sha256(original) != BASE_SHA:
-        raise RuntimeError("Expected original Run370 classes.dex; refusing an incompatible build")
+    # The raw-10X branch intentionally changes an unrelated Player constant in
+    # classes.dex. Do not key this credential fix to the whole-DEX hash.
+    # Fail closed on the exact target method layout/instructions instead.
+    if len(original) <= INSNS_OFF + 512:
+        raise RuntimeError("classes.dex is too small for reviewed credential target")
     b = bytearray(original)
     regs, ins, outs, tries, debug, size = struct.unpack_from("<HHHHII", b, CODE_OFF)
     if (regs, ins, tries, size) != (13, 2, 2, 256):
@@ -62,8 +65,12 @@ def patch_dex(original: bytes) -> bytes:
     b[12:32] = hashlib.sha1(b[32:]).digest()
     b[8:12] = struct.pack("<I", zlib.adler32(b[12:]) & 0xffffffff)
     patched = bytes(b)
-    if len(patched) != len(original) or sha256(patched) != PATCHED_SHA:
-        raise RuntimeError("Patched DEX SHA-256 differs from reviewed Run370 candidate")
+    if len(patched) != len(original):
+        raise RuntimeError("Credential patch unexpectedly changed DEX length")
+    # Re-check the exact local control-flow edits. Unrelated same-size changes
+    # elsewhere in the DEX are allowed on this feature branch.
+    if words(1, 3) != [0x002a, 71, 0] or words(70, 2) != [0x0029, 43]:
+        raise RuntimeError("Credential patch postcondition failed")
     return patched
 
 
@@ -95,11 +102,11 @@ def main() -> None:
             raise RuntimeError("Unexpected payload changes: " + str(changed))
     report = {
         "status": "PASS",
-        "baseline": "Run370, exact SHA-256 matching required",
+        "baseline": "Run370 target method layout/instructions; unrelated DEX bytes may differ",
         "changes": ["classes.dex: WebdavUtils.getSardine credentials DB cold load"],
-        "preserved": "native libraries, AVOS, buffering and WebDAV midstream reconnect",
-        "base_classes_dex_sha256": BASE_SHA,
-        "patched_classes_dex_sha256": PATCHED_SHA,
+        "preserved": "native libraries, AVOS, raw buffering and WebDAV midstream reconnect",
+        "input_classes_dex_sha256": sha256(src.read("classes.dex")),
+        "patched_classes_dex_sha256": sha256(patched_dex),
         "sqlite_write_logic_changed": False,
         "device_cold_boot_tested": False,
     }
