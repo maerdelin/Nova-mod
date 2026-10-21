@@ -30,10 +30,10 @@ class NativeRaw10XTests(unittest.TestCase):
         self.assertIn("return avformat_open_input(&priv->fmt, url, NULL, options);", open_block)
         self.assertNotIn("nova_raw_adopt(", open_block)
 
-        patch_anchor = PATCH.index("adopt native raw producer only after FFmpeg probe")
-        adopt_region = PATCH[patch_anchor:patch_anchor + 1800]
-        self.assertIn('if (_parse_format(s->etype, ff_p)) goto ErrorExit4;', adopt_region)
-        self.assertIn("nova_raw_adopt(", adopt_region)
+        self.assertIn('"\\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;\\n\\n"', PATCH)
+        self.assertIn('"\\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;\\n"', PATCH)
+        self.assertIn('"\\t\\tint nova_raw_result = nova_raw_adopt(\\n"', PATCH)
+        self.assertIn('"adopt native raw producer only after FFmpeg probe"', PATCH)
         self.assertIn("mp4_tail_moov_safe", PATCH)
 
     def test_no_post_demux_10x_wall(self):
