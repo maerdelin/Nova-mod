@@ -161,10 +161,20 @@ DBGCV3 CLOG("sfdec_read <- size %dx%d (%d)", read_out.size.width, read_out.size.
         "register sfdec decoder drain")
     return text
 
-def patch_stream_video(text: str) -> str:
-    if "NOVA_PLAYBACK_COMPLETE" in text:
-        raise RuntimeError("player completion trace already installed")
+def patch_stream_header(text: str) -> str:
+    if "eof_completion_wait_start_ms" in text:
+        raise RuntimeError("EOF completion state already installed")
     return once(text,
+        "\tint\t\tseek_end_of_stream;\t// last seek targeted at/after the duration; complete instead of replaying the tail\n",
+        "\tint\t\tseek_end_of_stream;\t// last seek targeted at/after the duration; complete instead of replaying the tail\n"
+        "\tint64_t\teof_completion_wait_start_ms __attribute__((aligned(8))); // player-only EOF drain fallback timer\n",
+        "player EOF fallback state")
+
+def patch_stream_video(text: str) -> str:
+    if "NOVA_EOF_FORCE_COMPLETE" in text:
+        raise RuntimeError("player EOF fallback already installed")
+
+    text = once(text,
         """\t\t\t} else {
 \t\t\t\tif( s->stop ) {
 \t\t\t\t\ts->stop( s );
@@ -176,12 +186,83 @@ def patch_stream_video(text: str) -> str:
 \t\t\t\t}""",
         "existing player stop/completion path")
 
+    text = once(text,
+        "\ts->seek_end_of_stream = 0;\n",
+        "\ts->seek_end_of_stream = 0;\n\ts->eof_completion_wait_start_ms = 0;\n",
+        "reset player EOF fallback on seek")
+
+    text = once(text,
+        """\t\tint video_end = s->video_error || (s->video->valid ? _video_presentation_drained(s) : 1);
+\t\tint audio_end = s->video_error || (s->audio->valid ?  s->audio_end : 1);
+\t\t
+\t\tif( video_end && audio_end ) {""",
+        """\t\tint video_end = s->video_error || (s->video->valid ? _video_presentation_drained(s) : 1);
+\t\tint audio_end = s->video_error || (s->audio->valid ?  s->audio_end : 1);
+
+\t\t/*
+\t\t * Seek/flush can leave sfdec2 or the audio presentation gate with stale
+\t\t * ownership after the parser has genuinely consumed the entire file.
+\t\t * Keep completion wholly player-owned: never inspect transport, RAW
+\t\t * occupancy, WebDAV, bitrate or producer state. Normal decoder/sink drain
+\t\t * wins. Only after all parser queues and engine video queues are empty for
+\t\t * a bounded grace period do we collapse a stuck presentation gate and let
+\t\t * the existing s->stop() / MEDIA_PLAYBACK_COMPLETE path run.
+\t\t */
+\t\tSTREAM_PARSER_STATS nova_eof_stats;
+\t\tSTREAM_PARSER_STATS *nova_eof_pst =
+\t\t\t(s->parser && s->parser->get_stats) ?
+\t\t\ts->parser->get_stats(s, &nova_eof_stats) : NULL;
+\t\tint nova_parser_empty = !nova_eof_pst ||
+\t\t\t(nova_eof_pst->video_chunks == 0 && nova_eof_pst->audio_chunks == 0);
+\t\tint nova_player_eof_quiet =
+\t\t\ts->video_end && s->video_parse_end &&
+\t\t\t!s->cdata_now.valid && !s->cdata_next.valid &&
+\t\t\t(!s->audio->valid || s->audio_parse_end) &&
+\t\t\tframe_q_count(&s->disp_q) == 0 &&
+\t\t\tnova_parser_empty;
+
+\t\tif( nova_player_eof_quiet && !(video_end && audio_end) ) {
+\t\t\tint64_t nova_now_ms = atime64();
+\t\t\tif( !s->eof_completion_wait_start_ms ) {
+\t\t\t\ts->eof_completion_wait_start_ms = nova_now_ms;
+\t\t\t\tserprintf("NOVA_EOF_GATE_ARM: video_end=%d audio_end=%d decoder_drained=%d disp=%d sink_count=%d aq=%d vq=%d epoch=%d\\n",
+\t\t\t\t\tvideo_end, audio_end, s->video_decoder_drained,
+\t\t\t\t\tframe_q_count(&s->disp_q), s->video_sink_count,
+\t\t\t\t\tnova_eof_pst ? nova_eof_pst->audio_chunks : -1,
+\t\t\t\t\tnova_eof_pst ? nova_eof_pst->video_chunks : -1,
+\t\t\t\t\ts->seek_epoch);
+\t\t\t}
+\t\t\tint64_t nova_wait_ms = nova_now_ms - s->eof_completion_wait_start_ms;
+\t\t\tif( nova_wait_ms >= 2500 && !s->paused && !s->seek_paused ) {
+\t\t\t\tserprintf("NOVA_EOF_FORCE_COMPLETE: wait=%lld video_end=%d audio_end=%d decoder_drained=%d sink_count=%d epoch=%d\\n",
+\t\t\t\t\t(long long)nova_wait_ms, video_end, audio_end,
+\t\t\t\t\ts->video_decoder_drained, s->video_sink_count, s->seek_epoch);
+\t\t\t\t/*
+\t\t\t\t * No input packets or engine display frames remain. Any false
+\t\t\t\t * presentation gate beyond this grace is stale bookkeeping from
+\t\t\t\t * the seek generation, not playable media.
+\t\t\t\t */
+\t\t\t\ts->video_decoder_drained = 1;
+\t\t\t\ts->audio_end = 1;
+\t\t\t\tvideo_end = 1;
+\t\t\t\taudio_end = 1;
+\t\t\t}
+\t\t} else if( !nova_player_eof_quiet ) {
+\t\t\ts->eof_completion_wait_start_ms = 0;
+\t\t}
+
+\t\tif( video_end && audio_end ) {""",
+        "bounded player-owned seek-to-EOF completion fallback")
+    return text
+
 def apply(root: Path, report: Path | None = None) -> dict:
     sfdec = root / "Source/codec_sfdec.c"
     stream = root / "Source/stream_video.c"
-    if not sfdec.is_file() or not stream.is_file():
+    header = root / "Include/stream.h"
+    if not sfdec.is_file() or not stream.is_file() or not header.is_file():
         raise RuntimeError("expected pinned AVOS source tree")
     sfdec.write_text(patch_sfdec(sfdec.read_text()))
+    header.write_text(patch_stream_header(header.read_text()))
     stream.write_text(patch_stream_video(stream.read_text()))
     result = {
         "status":"PASS",
@@ -189,6 +270,8 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "uses_existing_stream_stop":True,
         "sfdec_decoder_eos":True,
         "sfdec_sink_drain":True,
+        "seek_to_eof_player_fallback_ms":2500,
+        "fallback_basis":"parser EOF + empty parser/video queues only",
         "download_pipeline_changed":False,
         "webdav_transport_changed":False,
         "rebuffer_thresholds_changed":False,
