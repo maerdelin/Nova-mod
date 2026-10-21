@@ -58,7 +58,7 @@ class NativeRaw10XTests(unittest.TestCase):
         interrupt = PATCH[start:end]
         self.assertIn("stream_abort(raw->s)", interrupt)
         self.assertNotIn("upstream_interrupt.callback", interrupt)
-        self.assertNotIn("parser_interrupt", interrupt)
+        self.assertNotIn("raw->upstream_interrupt.opaque", interrupt)
 
     def test_producer_generation_snapshot_is_serialized_with_source_position(self):
         start = PATCH.index("static void *nova_raw_thread")
