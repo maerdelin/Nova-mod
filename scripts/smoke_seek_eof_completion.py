@@ -110,9 +110,13 @@ def main():
                 marker='NOVA_TS_POS_BATCH_'+str(batch)+'_'+str(time.monotonic_ns())
                 final_marker=marker
                 adb('shell','log -p i -t NOVA_TS_EOF_TEST '+marker)
-                # 20 independent DPAD-right presses normally advance 100/1000.
-                adb('shell','input keyevent '+' '.join(['22']*20),timeout=30)
-                time.sleep(.8)
+                # 20 real independent DPAD-right events. Run456 proved one
+                # event moves ordinary MPEG-TS by about 5/1000, so repeated
+                # single events reproduce the production position-seek path.
+                for _ in range(20):
+                    adb('shell','input keyevent 22')
+                    time.sleep(.035)
+                time.sleep(.5)
                 text=logs()
                 at=text.rfind(marker)
                 if at<0: continue

@@ -23,13 +23,18 @@ class NativeRaw10XTests(unittest.TestCase):
             self.assertIn(token, PATCH)
 
     def test_probe_keeps_native_ffmpeg_url_io_until_after_format_parse(self):
-        direct = PATCH.index('if (strncmp(url, "fd://", 5))')
-        adopt = PATCH.index('nova_raw_adopt(')
-        parse_anchor = PATCH.index('adopt native raw producer only after FFmpeg probe')
-        self.assertGreater(adopt, direct)
-        self.assertGreater(parse_anchor, adopt)
-        self.assertIn('Keep FFmpeg\'s native URL AVIO through open+probe', PATCH)
-        self.assertIn('mp4_tail_moov_safe', PATCH)
+        open_start = PATCH.index("open_replacement = r'''static int ffmpeg_open_input")
+        open_end = PATCH.index("static int ff_force_seek'''", open_start)
+        open_block = PATCH[open_start:open_end]
+        self.assertIn("Keep FFmpeg's native URL AVIO through open+probe", open_block)
+        self.assertIn("return avformat_open_input(&priv->fmt, url, NULL, options);", open_block)
+        self.assertNotIn("nova_raw_adopt(", open_block)
+
+        patch_anchor = PATCH.index("adopt native raw producer only after FFmpeg probe")
+        adopt_region = PATCH[patch_anchor:patch_anchor + 1800]
+        self.assertIn('if (_parse_format(s->etype, ff_p)) goto ErrorExit4;', adopt_region)
+        self.assertIn("nova_raw_adopt(", adopt_region)
+        self.assertIn("mp4_tail_moov_safe", PATCH)
 
     def test_no_post_demux_10x_wall(self):
         self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", PATCH)
