@@ -9,8 +9,8 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "3a2dc2f7d42018f268f54555d758f52bd06fd7e1",
-      "reason": "Feature test: sole normal 10X wall is native pre-demux raw producer; packet queues are handoff/safety only; startup trace is observational"
+      "git_blob_sha1": "822f8f53bd1d6f6b85073ec4d0706c773890e9c6",
+      "reason": "Feature test: RAW10X now adopts FFmpeg native URL AVIO only after open/probe/format parsing, preserving tail-moov MP4 random access while keeping native pre-demux 10X as the sole normal buffer wall"
     },
     "scripts/granular_build.py": {
       "git_blob_sha1": "7a4b33f2d102ace675acb98639b21ceaa7feb730",
