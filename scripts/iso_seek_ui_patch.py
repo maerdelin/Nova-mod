@@ -207,7 +207,8 @@ def entry(body: str, instructions: str) -> str:
 
 def native_text(text: str) -> str:
     if 'nova_iso_time_mode' in text: raise RuntimeError('ISO timeline already installed')
-    if 'NOVA_RAW_10X_POLICY:' not in text: raise RuntimeError('Expected native raw 10X buffer base')
+    if 'NOVA_RAW_10X_POLICY:' not in text and 'NOVA_DYNAMIC_BUFFER:' not in text:
+        raise RuntimeError('Expected native buffering base')
     text = once(text, '\tint\t\tstart_time;\n', '\tint\t\tstart_time;\n\tint nova_iso_time_mode;\n','private parser time mode')
     text = once(text, 'static int _open( STREAM *s, int buffer_size, int flags )', C_HELPERS+'\nstatic int _open( STREAM *s, int buffer_size, int flags )','ISO helpers')
     text = once(text, '\ts->parser_open = 1;', C_ACTIVATE+'\n\ts->parser_open = 1;','activate consistent timeline')
