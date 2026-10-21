@@ -105,36 +105,62 @@ def main():
             seeks=[]
             final_marker=''
             current_target=-1
-            for batch in range(40):
-                marker='NOVA_TS_POS_BATCH_'+str(batch)+'_'+str(time.monotonic_ns())
-                final_marker=marker
+            for step in range(180):
+                marker='NOVA_TS_POS_STEP_'+str(step)+'_'+str(time.monotonic_ns())
                 adb('shell','log -p i -t NOVA_TS_EOF_TEST '+marker)
-                # Small batches prevent the driver from racing through the
-                # usable 930..975 tail window into the terminal 990/1000 edge.
-                for _ in range(4):
-                    adb('shell','input keyevent 22')
-                    time.sleep(.035)
-                time.sleep(.5)
-                text=logs()
-                at=text.rfind(marker)
-                if at<0: continue
-                phase=text[at:]
+                adb('shell','input keyevent 22')
+
+                # Synchronize one physical key event with one observed forward
+                # position seek. Never send another key until this one is
+                # either observed or times out.
+                try:
+                    text=wait_for(lambda t:seek_after(t,marker) is not None,
+                                  3,'ordinary TS forward position seek step '+str(step))
+                except RuntimeError:
+                    time.sleep(.15)
+                    continue
+
+                before,current_target,phase=seek_after(text,marker)
                 if 'NOVA_ISO_TIME_SEEK' in phase:
                     raise RuntimeError('ISO seek appeared in ordinary TS position test')
-                events=list(re.finditer(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=1',phase))
-                if not events:
-                    continue
-                for m in events:
-                    a0,b0=int(m[1]),int(m[2])
-                    seeks.append([a0,b0])
-                if seeks:
-                    current_target=seeks[-1][1]
+                seeks.append([before,current_target])
+
+                # Run463 proved a batched driver could pass through 966 and
+                # race into 990. Stop all input immediately at the first
+                # verified safe tail position.
                 if 930 <= current_target <= 975:
+                    final_marker=marker
                     break
+
                 if current_target > 975:
-                    raise RuntimeError('Ordinary TS position seek overshot EOF: '+repr(seeks[-10:]))
-            if not seeks or not (930<=seeks[-1][1]<=975):
-                raise RuntimeError('Could not reach near-tail ordinary TS position seek: '+repr(seeks[-20:]))
+                    # Recover with single left events if scheduling skipped
+                    # over the safe window.
+                    for back_step in range(12):
+                        back_marker='NOVA_TS_POS_BACK_'+str(back_step)+'_'+str(time.monotonic_ns())
+                        adb('shell','log -p i -t NOVA_TS_EOF_TEST '+back_marker)
+                        adb('shell','input keyevent 21')
+                        try:
+                            back_text=wait_for(
+                                lambda t: re.search(
+                                    r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=0',
+                                    t[t.rfind(back_marker):] if back_marker in t else '') is not None,
+                                3,'ordinary TS backward recovery seek')
+                        except RuntimeError:
+                            continue
+                        back_phase=back_text[back_text.rfind(back_marker):]
+                        m=list(re.finditer(
+                            r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=0',
+                            back_phase))[-1]
+                        current_target=int(m[2])
+                        seeks.append([int(m[1]),current_target])
+                        if 930 <= current_target <= 975:
+                            final_marker=back_marker
+                            break
+                    if final_marker:
+                        break
+
+            if not final_marker or not seeks or not (930<=seeks[-1][1]<=975):
+                raise RuntimeError('Could not land in verified near-tail ordinary TS position: '+repr(seeks[-30:]))
             phase_start=time.monotonic()
             text=wait_for(lambda t:
                 final_marker in t and
