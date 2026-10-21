@@ -9,8 +9,8 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "4bcd9e27032e644d298aa188531187fe5e75f102",
-      "reason": "Feature test: one RAW custom AVIO is installed before avformat_open_input and remains stable through MP4 probe/runtime; producer generation snapshots are serialized with source_mutex so seeks cannot desynchronize source position"
+      "git_blob_sha1": "a395b9443fd935701485b056e2fa4f0627bc112d",
+      "reason": "Feature test: one RAW custom AVIO remains stable through MP4 probe/runtime; producer generation snapshots serialize with source_mutex and the independent RAW network owner ignores parser-only seek interrupts while still honoring real stream abort"
     },
     "scripts/granular_build.py": {
       "git_blob_sha1": "7a4b33f2d102ace675acb98639b21ceaa7feb730",

@@ -52,6 +52,14 @@ class NativeRaw10XTests(unittest.TestCase):
         self.assertNotIn("audio_time", producer)
         self.assertIn("raw->used_bytes >= raw->capacity_bytes", producer)
 
+    def test_raw_network_interrupt_ignores_parser_seek_interrupt(self):
+        start = PATCH.index("static int nova_raw_interrupt")
+        end = PATCH.index("static void nova_raw_free_chunks_locked", start)
+        interrupt = PATCH[start:end]
+        self.assertIn("stream_abort(raw->s)", interrupt)
+        self.assertNotIn("upstream_interrupt.callback", interrupt)
+        self.assertNotIn("parser_interrupt", interrupt)
+
     def test_producer_generation_snapshot_is_serialized_with_source_position(self):
         start = PATCH.index("static void *nova_raw_thread")
         end = PATCH.index("static int nova_raw_read", start)

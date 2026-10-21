@@ -235,8 +235,17 @@ static int nova_raw_interrupt(void *opaque)
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
     if( !raw || !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) )
         return 1;
-    return raw->upstream_interrupt.callback &&
-           raw->upstream_interrupt.callback(raw->upstream_interrupt.opaque);
+
+    /*
+     * The demux parser deliberately raises s->parser_interrupt while parking
+     * its own av_read_frame() thread for a runtime seek. The RAW producer is a
+     * separate network owner and must NOT inherit that parser-only interrupt:
+     * doing so turns a normal seek into AVERROR_EXIT ("Immediate exit
+     * requested"), poisons raw->error and makes the seek fail before the RAW
+     * source can reposition. Only a real player/user abort may interrupt this
+     * upstream AVIO.
+     */
+    return raw->s && stream_abort(raw->s) ? 1 : 0;
 }
 
 static void nova_raw_free_chunks_locked(NOVA_RAW_PREFETCH *raw)
