@@ -58,8 +58,8 @@ static int videosink_syncable""",
         "reset sink presentation deadline")
 
     text = once(text,
-        "\t\t\tint do_render = 1;\n",
-        "\t\t\tint do_render = 1;\n\t\t\tint presented = 0;\n",
+        "\t\tVIDEO_FRAME *f = NULL;\n\t\twhile (p->locked.run && !(f = frame_q_get(&p->locked.venc_q))) {",
+        "\t\tVIDEO_FRAME *f = NULL;\n\t\tint presented = 0;\n\t\twhile (p->locked.run && !(f = frame_q_get(&p->locked.venc_q))) {",
         "sfdec render presentation flag")
 
     text = once(text,
