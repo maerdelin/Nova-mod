@@ -162,17 +162,82 @@ DBGCV3 CLOG("sfdec_read <- size %dx%d (%d)", read_out.size.width, read_out.size.
     return text
 
 def patch_stream_header(text: str) -> str:
-    if "eof_completion_wait_start_ms" in text:
-        raise RuntimeError("EOF completion state already installed")
+    if "audio_eof_drain_requested" in text:
+        raise RuntimeError("audio EOF drain request state already installed")
     return once(text,
-        "\tint\t\tseek_end_of_stream;\t// last seek targeted at/after the duration; complete instead of replaying the tail\n",
-        "\tint\t\tseek_end_of_stream;\t// last seek targeted at/after the duration; complete instead of replaying the tail\n"
-        "\tint64_t\teof_completion_wait_start_ms __attribute__((aligned(8))); // player-only EOF drain fallback timer\n",
-        "player EOF fallback state")
+        "\tint\t\taudio_parse_end;\t// parser has parsed complete file\n\tint\t\taudio_decoder_draining;\n",
+        "\tint\t\taudio_parse_end;\t// parser has parsed complete file\n"
+        "\tvolatile int\taudio_eof_drain_requested; // player asks audio worker to finish natural EOF\n"
+        "\tint\t\taudio_eof_drain_epoch;\n"
+        "\tint\t\taudio_decoder_draining;\n",
+        "audio EOF drain request state")
+
+def patch_stream_audio(text: str) -> str:
+    if "NOVA_AUDIO_EOF_DRAIN_BEGIN" in text:
+        raise RuntimeError("audio EOF drain patch already installed")
+
+    text = once(text,
+        """void stream_audio_flush( STREAM *s )
+{
+\ts->audio_buffer_size = 0;
+\ts->audio_end = 0;""",
+        """void stream_audio_flush( STREAM *s )
+{
+\ts->audio_buffer_size = 0;
+\ts->audio_end = 0;
+\t__atomic_store_n(&s->audio_eof_drain_requested, 0, __ATOMIC_RELEASE);
+\ts->audio_eof_drain_epoch = -1;""",
+        "reset audio EOF drain request on destructive flush")
+
+    text = once(text,
+        """decode_next_chunk:
+\t\tmemset(&audio_frame, 0, sizeof(audio_frame));
+\t\tac3_output_ready = 0;
+\t\tatempo_output_ready = 0;
+\t\tpcm_output_ready = 0;
+\t\tif( s->audio_end )
+\t\t\treturn;""",
+        """decode_next_chunk:
+\t\tmemset(&audio_frame, 0, sizeof(audio_frame));
+\t\tac3_output_ready = 0;
+\t\tatempo_output_ready = 0;
+\t\tpcm_output_ready = 0;
+\t\tif( s->audio_end ) {
+\t\t\tif( __atomic_exchange_n(&s->audio_eof_drain_requested, 0, __ATOMIC_ACQ_REL) )
+\t\t\t\tserprintf("NOVA_AUDIO_EOF_COMPLETE: epoch=%d\\n", s->seek_epoch);
+\t\t\treturn;
+\t\t}""",
+        "observe real audio EOF completion")
+
+    text = once(text,
+        """\t\t\t// and try to get a new one
+\t\t\tif ( s->parser->get_audio_cdata( s, &s->audio_now, &cdata  ) ) {""",
+        """\t\t\t// At natural EOF the player may have already drained video while this
+\t\t\t// worker is still waiting for the parser API to report another chunk.
+\t\t\t// A player-owned request bypasses that extra fetch only after the parser
+\t\t\t// itself has declared EOF. It never observes transport or readahead state.
+\t\t\tint nova_audio_eof_request =
+\t\t\t\t__atomic_load_n(&s->audio_eof_drain_requested, __ATOMIC_ACQUIRE) &&
+\t\t\t\ts->audio_parse_end && !s->paused && !s->seek_paused;
+\t\t\tif ( nova_audio_eof_request ||
+\t\t\t     s->parser->get_audio_cdata( s, &s->audio_now, &cdata  ) ) {""",
+        "audio worker consumes player-owned EOF request")
+
+    text = once(text,
+        """\t\t\t\t\t\tif( decoder_active && s->audio_dec->drain ) {
+\t\t\t\t\t\t\tif( !s->audio_decoder_draining ) {
+\t\t\t\t\t\t\t\tif( s->audio_dec->drain( s->audio ) ) {""",
+        """\t\t\t\t\t\tif( decoder_active && s->audio_dec->drain ) {
+\t\t\t\t\t\t\tif( !s->audio_decoder_draining ) {
+\t\t\t\t\t\t\t\tif( nova_audio_eof_request )
+\t\t\t\t\t\t\t\t\tserprintf("NOVA_AUDIO_EOF_DRAIN_BEGIN: epoch=%d decoder=1\\n", s->seek_epoch);
+\t\t\t\t\t\t\t\tif( s->audio_dec->drain( s->audio ) ) {""",
+        "trace real decoder drain begin")
+    return text
 
 def patch_stream_video(text: str) -> str:
-    if "NOVA_EOF_FORCE_COMPLETE" in text:
-        raise RuntimeError("player EOF fallback already installed")
+    if "NOVA_AUDIO_EOF_DRAIN_REQUEST" in text:
+        raise RuntimeError("player audio EOF request patch already installed")
 
     text = once(text,
         """\t\t\t} else {
@@ -187,18 +252,6 @@ def patch_stream_video(text: str) -> str:
         "existing player stop/completion path")
 
     text = once(text,
-        """\ts->seek_video_ready_ts = STREAM_NO_PTS_VALUE;
-\ts->seek_end_of_stream = 0;
-
-\t// video_end is a one-way latch""",
-        """\ts->seek_video_ready_ts = STREAM_NO_PTS_VALUE;
-\ts->seek_end_of_stream = 0;
-\ts->eof_completion_wait_start_ms = 0;
-
-\t// video_end is a one-way latch""",
-        "reset player EOF fallback in _seek_init")
-
-    text = once(text,
         """\t\tint video_end = s->video_error || (s->video->valid ? _video_presentation_drained(s) : 1);
 \t\tint audio_end = s->video_error || (s->audio->valid ?  s->audio_end : 1);
 \t\t
@@ -207,69 +260,49 @@ def patch_stream_video(text: str) -> str:
 \t\tint audio_end = s->video_error || (s->audio->valid ?  s->audio_end : 1);
 
 \t\t/*
-\t\t * Seek/flush can leave sfdec2 or the audio presentation gate with stale
-\t\t * ownership after the parser has genuinely consumed the entire file.
-\t\t * Keep completion wholly player-owned: never inspect transport, RAW
-\t\t * occupancy, WebDAV, bitrate or producer state. Normal decoder/sink drain
-\t\t * wins. Only after all parser queues and engine video queues are empty for
-\t\t * a bounded grace period do we collapse a stuck presentation gate and let
-\t\t * the existing s->stop() / MEDIA_PLAYBACK_COMPLETE path run.
+\t\t * Real-device MPEG-TS position seek can finish video while the audio
+\t\t * worker remains parked before its terminal decoder drain. Do not fake
+\t\t * audio_end here. Once the parser itself is at EOF and video presentation
+\t\t * is genuinely drained, request the AUDIO WORKER to execute its existing
+\t\t * decoder/filter/AudioTrack drain path. This is entirely downstream of
+\t\t * the parser and has no dependency on RAW, WebDAV or download state.
 \t\t */
-\t\tSTREAM_PARSER_STATS nova_eof_stats;
-\t\tSTREAM_PARSER_STATS *nova_eof_pst =
-\t\t\t(s->parser && s->parser->get_stats) ?
-\t\t\ts->parser->get_stats(s, &nova_eof_stats) : NULL;
-\t\tint nova_parser_empty = !nova_eof_pst ||
-\t\t\t(nova_eof_pst->video_chunks == 0 && nova_eof_pst->audio_chunks == 0);
-\t\tint nova_player_eof_quiet =
-\t\t\ts->video_end && s->video_parse_end &&
-\t\t\t!s->cdata_now.valid && !s->cdata_next.valid &&
-\t\t\t(!s->audio->valid || s->audio_parse_end) &&
-\t\t\tframe_q_count(&s->disp_q) == 0 &&
-\t\t\tnova_parser_empty;
-
-\t\tif( nova_player_eof_quiet && !(video_end && audio_end) ) {
-\t\t\tint64_t nova_now_ms = atime64();
-\t\t\tif( !s->eof_completion_wait_start_ms ) {
-\t\t\t\ts->eof_completion_wait_start_ms = nova_now_ms;
-\t\t\t\tserprintf("NOVA_EOF_GATE_ARM: video_end=%d audio_end=%d decoder_drained=%d disp=%d sink_count=%d aq=%d vq=%d epoch=%d\\n",
-\t\t\t\t\tvideo_end, audio_end, s->video_decoder_drained,
-\t\t\t\t\tframe_q_count(&s->disp_q), s->video_sink_count,
-\t\t\t\t\tnova_eof_pst ? nova_eof_pst->audio_chunks : -1,
-\t\t\t\t\tnova_eof_pst ? nova_eof_pst->video_chunks : -1,
-\t\t\t\t\ts->seek_epoch);
+\t\tif( video_end && s->video_end && s->video_parse_end &&
+\t\t\ts->audio->valid && s->audio_parse_end && !s->audio_end &&
+\t\t\t!s->paused && !s->seek_paused ) {
+\t\t\tif( !__atomic_exchange_n(&s->audio_eof_drain_requested, 1, __ATOMIC_ACQ_REL) ) {
+\t\t\t\ts->audio_eof_drain_epoch = s->seek_epoch;
+\t\t\t\tSTREAM_PARSER_STATS nova_audio_stats;
+\t\t\t\tSTREAM_PARSER_STATS *nova_audio_pst =
+\t\t\t\t\t(s->parser && s->parser->get_stats) ?
+\t\t\t\t\ts->parser->get_stats(s, &nova_audio_stats) : NULL;
+\t\t\t\tserprintf("NOVA_AUDIO_EOF_DRAIN_REQUEST: epoch=%d aq=%d vq=%d thread=%d asked=%d\\n",
+\t\t\t\t\ts->seek_epoch,
+\t\t\t\t\tnova_audio_pst ? nova_audio_pst->audio_chunks : -1,
+\t\t\t\t\tnova_audio_pst ? nova_audio_pst->video_chunks : -1,
+\t\t\t\t\tthread_state_get(&s->audio_tstate),
+\t\t\t\t\tthread_state_asked(&s->audio_tstate));
+\t\t\t\t// A seek may have left the worker parked in IDLE. Wake only the
+\t\t\t\t// existing audio worker; no decoder work is performed on this thread.
+\t\t\t\tif( thread_state_asked(&s->audio_tstate) != THREAD_RUNNING )
+\t\t\t\t\tthread_state_set(&s->audio_tstate, THREAD_RUNNING);
 \t\t\t}
-\t\t\tint64_t nova_wait_ms = nova_now_ms - s->eof_completion_wait_start_ms;
-\t\t\tif( nova_wait_ms >= 2500 && !s->paused && !s->seek_paused ) {
-\t\t\t\tserprintf("NOVA_EOF_FORCE_COMPLETE: wait=%lld video_end=%d audio_end=%d decoder_drained=%d sink_count=%d epoch=%d\\n",
-\t\t\t\t\t(long long)nova_wait_ms, video_end, audio_end,
-\t\t\t\t\ts->video_decoder_drained, s->video_sink_count, s->seek_epoch);
-\t\t\t\t/*
-\t\t\t\t * No input packets or engine display frames remain. Any false
-\t\t\t\t * presentation gate beyond this grace is stale bookkeeping from
-\t\t\t\t * the seek generation, not playable media.
-\t\t\t\t */
-\t\t\t\ts->video_decoder_drained = 1;
-\t\t\t\ts->audio_end = 1;
-\t\t\t\tvideo_end = 1;
-\t\t\t\taudio_end = 1;
-\t\t\t}
-\t\t} else if( !nova_player_eof_quiet ) {
-\t\t\ts->eof_completion_wait_start_ms = 0;
 \t\t}
 
 \t\tif( video_end && audio_end ) {""",
-        "bounded player-owned seek-to-EOF completion fallback")
+        "request real audio EOF drain from player")
     return text
 
 def apply(root: Path, report: Path | None = None) -> dict:
     sfdec = root / "Source/codec_sfdec.c"
     stream = root / "Source/stream_video.c"
+    audio = root / "Source/stream_audio.c"
     header = root / "Include/stream.h"
-    if not sfdec.is_file() or not stream.is_file() or not header.is_file():
+    if not sfdec.is_file() or not stream.is_file() or not audio.is_file() or not header.is_file():
         raise RuntimeError("expected pinned AVOS source tree")
     sfdec.write_text(patch_sfdec(sfdec.read_text()))
     header.write_text(patch_stream_header(header.read_text()))
+    audio.write_text(patch_stream_audio(audio.read_text()))
     stream.write_text(patch_stream_video(stream.read_text()))
     result = {
         "status":"PASS",
@@ -277,8 +310,8 @@ def apply(root: Path, report: Path | None = None) -> dict:
         "uses_existing_stream_stop":True,
         "sfdec_decoder_eos":True,
         "sfdec_sink_drain":True,
-        "seek_to_eof_player_fallback_ms":2500,
-        "fallback_basis":"parser EOF + empty parser/video queues only",
+        "mpegts_seek_audio_eof_drain_request":True,
+        "fake_audio_end_fallback":False,
         "download_pipeline_changed":False,
         "webdav_transport_changed":False,
         "rebuffer_thresholds_changed":False,
