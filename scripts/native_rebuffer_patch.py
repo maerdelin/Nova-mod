@@ -1101,7 +1101,7 @@ static int ff_force_seek'''
         raise RuntimeError("raw prefetch postcondition missing: " + repr(missing))
     forbidden = (
         "NOVA_10X_PACKET_CAP_BYPASS",
-        "ff_p->buffer_size = s->rebuffer_capacity_bytes",
+        "ff_p->buffer_size" + " = s->rebuffer_capacity_bytes",
     )
     present = [token for token in forbidden if token in text]
     if present:

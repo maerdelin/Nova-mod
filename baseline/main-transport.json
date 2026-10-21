@@ -9,7 +9,7 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "3f0f800bf650fec08fb08ed475de61c90f21c1bb",
+      "git_blob_sha1": "f6176d42a5242249a3152da9503e6f49d7e7cb9d",
       "reason": "Feature test: move the sole normal 10X download wall to an independent native pre-demux raw producer; packet queues remain handoff/safety only"
     },
     "scripts/granular_build.py": {
@@ -17,7 +17,7 @@
       "reason": "Feature test: report raw-source 2X/5X/10X architecture and fixed 24MiB packet handoff"
     },
     "scripts/ts_bitrate_patch.py": {
-      "git_blob_sha1": "6f499f8fa4641571b5aabdffdfcd62adb7a863ee",
+      "git_blob_sha1": "2f8261df39877a10685f4e588f19c2543b495d92",
       "reason": "Feature test: TS X derivation is integrated into the single raw-source policy; this step validates only"
     }
   }

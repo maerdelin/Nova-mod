@@ -23,7 +23,7 @@ class RawBufferArchitectureChecks(unittest.TestCase):
             "NOVA_RAW_10X_POLICY:",
         ):
             self.assertIn(token, NATIVE_PATCH)
-        self.assertNotIn("ff_p->buffer_size = s->rebuffer_capacity_bytes", NATIVE_PATCH)
+        self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", NATIVE_PATCH)
 
     def test_buffering_events_remain_standard_media_info(self):
         self.assertIn("STREAM_BUFFERING_START", NATIVE_PATCH)

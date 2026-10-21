@@ -21,7 +21,7 @@ class NativeRaw10XTests(unittest.TestCase):
             self.assertIn(token, PATCH)
 
     def test_no_post_demux_10x_wall(self):
-        self.assertNotIn("ff_p->buffer_size = s->rebuffer_capacity_bytes", PATCH)
+        self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", PATCH)
         self.assertNotIn("NOVA_10X_PACKET_CAP_BYPASS", PATCH)
         self.assertNotIn("readahead_enabled", PATCH)
         self.assertIn(

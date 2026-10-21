@@ -19,9 +19,10 @@ class StreamThroughputStaticChecks(unittest.TestCase):
         self.assertIn("0x20000", PATCH)
         self.assertIn("localhost copy 128KiB", PATCH)
 
-    def test_native_rebuffer_policy_is_not_changed(self):
-        self.assertIn("NOVA_REBUFFER_LOW_BYTES    (24 * 1024 * 1024)", NATIVE)
-        self.assertIn("NOVA_REBUFFER_RESUME_BYTES (64 * 1024 * 1024)", NATIVE)
+    def test_transport_tuning_does_not_own_raw_10x_policy(self):
+        self.assertIn("NOVA_RAW_FALLBACK_LOW_BYTES", NATIVE)
+        self.assertIn("NOVA_RAW_FALLBACK_RESUME_BYTES", NATIVE)
+        self.assertIn("NOVA_RAW_10X_POLICY:", NATIVE)
         self.assertNotIn("stream_throughput_patch", NATIVE)
 
     def test_build_applies_throughput_after_webdav_marker(self):
