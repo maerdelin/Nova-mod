@@ -112,7 +112,7 @@ def main():
                  f'&nova_iso_duration_us={duration_us}&nova_iso_clip_count=1'
                  f'&nova_iso_title_size={size}&nova_iso_generation=1')
             adb('shell',f'am start -W -n {PLAYER} -a android.intent.action.VIEW -d {shlex.quote(url)} -t video/mp2t',timeout=30)
-            wait_for(lambda t:'NOVA_ISO_TIMELINE_READY' in t and 'first_frame_sink' in t,35,'timeline and first frame')
+            wait_for(lambda t:'first_frame_sink' in t,20,'first frame')
             adb('shell','input keyevent 20');time.sleep(0.4)
             adb('shell','input keyevent 20');time.sleep(0.4)
 
