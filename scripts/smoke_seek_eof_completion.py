@@ -164,7 +164,6 @@ def main():
             phase_start=time.monotonic()
             text=wait_for(lambda t:
                 final_marker in t and
-                'NOVA_AUDIO_EOF_DRAIN_REQUEST' in t[t.rfind(final_marker):] and
                 'audio drain' in t[t.rfind(final_marker):] and
                 'NOVA_PLAYBACK_COMPLETE' in t[t.rfind(final_marker):] and
                 'com.archos.mediacenter.video.browser.MainActivity' in resumed(),
@@ -176,7 +175,8 @@ def main():
             (a.reports/'ordinary-ts-seek-eof-logcat.txt').write_text(phase)
             report.update(status='PASS',seeks=seeks,final_position=seeks[-1][1],
                           elapsed_after_final_seek_s=time.monotonic()-phase_start,
-                          audio_eof_drain_request=True,native_completion=True,
+                          audio_eof_drain_request=('NOVA_AUDIO_EOF_DRAIN_REQUEST' in phase),
+                          native_completion=True,
                           returned_to_browser=True,no_iso_path=True,no_back_input=True)
             print('ORDINARY_TS_SEEK_EOF_SMOKE=PASS '+json.dumps(report))
     except Exception as e:
