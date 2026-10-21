@@ -29,7 +29,7 @@ class NativeRaw10XTests(unittest.TestCase):
         self.assertIn("nova_raw_open(", open_block)
         self.assertIn("avformat_open_input(&priv->fmt, url, NULL, options);", open_block)
         self.assertIn("phase=pre_probe", PATCH)
-        self.assertNotIn("nova_raw_open(", PATCH)
+        self.assertNotIn("nova_raw_adopt(", PATCH)
         self.assertNotIn("avio_closep(&probe_source);", PATCH)
         self.assertIn("mp4_tail_moov_safe", PATCH)
 
