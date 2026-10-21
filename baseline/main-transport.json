@@ -11,8 +11,8 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "1c69caf4938f0d082255831910487661ace7943d",
-      "reason": "Native-only read-ahead: main single stream keeps parser producing through pause; dynamic 10X byte budget is the sole post-start normal wall"
+      "git_blob_sha1": "96db27516bc03cc129bdd6aae7f790bfada3a8f9",
+      "reason": "Native-only 10X read-ahead; main stays pinned by default, Always-new may use latest aos-avos only when every exact structural patch anchor still matches"
     }
   }
 }

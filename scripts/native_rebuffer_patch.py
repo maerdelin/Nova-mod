@@ -28,14 +28,27 @@ def sub_once(text: str, pattern: str, repl, label: str) -> str:
     return out
 
 
-def check_head(root: Path) -> str:
+def check_head(root: Path, allow_unpinned_head: bool = False) -> str:
     head = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
-    if head != EXPECTED_AVOS_COMMIT:
+    if head != EXPECTED_AVOS_COMMIT and not allow_unpinned_head:
         raise RuntimeError(
             f"aos-avos commit mismatch: expected {EXPECTED_AVOS_COMMIT}, got {head}"
         )
+    if head != EXPECTED_AVOS_COMMIT:
+        required = (
+            root / "Include" / "stream.h",
+            root / "Source" / "stream_video.c",
+            root / "Source" / "stream.c",
+            root / "Source" / "avos_mp_video.c",
+            root / "Source" / "stream_parser_ffmpeg.c",
+        )
+        missing = [str(p.relative_to(root)) for p in required if not p.is_file()]
+        if missing:
+            raise RuntimeError(
+                "unpinned aos-avos source is missing required files: " + ", ".join(missing)
+            )
     return head
 
 
@@ -640,9 +653,13 @@ def patch_startup_trace(root: Path) -> None:
         "trace first sink frame")
     video.write_text(text)
 
-def apply(root: Path, report: Path | None = None) -> dict:
+def apply(
+    root: Path,
+    report: Path | None = None,
+    allow_unpinned_head: bool = False,
+) -> dict:
     root = root.resolve()
-    head = check_head(root)
+    head = check_head(root, allow_unpinned_head)
 
     patch_stream_h(root / "Include" / "stream.h")
     patch_stream_video(root / "Source" / "stream_video.c")
@@ -655,6 +672,7 @@ def apply(root: Path, report: Path | None = None) -> dict:
     result = {
         "status": "PASS",
         "aos_avos_commit": head,
+        "aos_avos_head_policy": "latest-structural" if allow_unpinned_head else "pinned",
         "architecture": "native AVOS single-stream read-ahead; presentation pause/decode consumption is decoupled from parser production",
         "activation": "real AVOS Start arms continuous parser read-ahead; no Java FIFO or parallel downloader",
         "measurement": "STREAM_PARSER_STATS.buffer_used = FFmpeg audio queue bytes + video queue bytes",
@@ -683,8 +701,13 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("root", type=Path)
     p.add_argument("--report", type=Path)
+    p.add_argument(
+        "--allow-unpinned-head",
+        action="store_true",
+        help="Allow a newer aos-avos HEAD; all exact patch anchors still fail closed.",
+    )
     args = p.parse_args()
-    print(json.dumps(apply(args.root, args.report), indent=2))
+    print(json.dumps(apply(args.root, args.report, args.allow_unpinned_head), indent=2))
 
 
 if __name__ == "__main__":
