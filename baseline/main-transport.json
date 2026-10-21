@@ -11,8 +11,8 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "f6b7635381210b90b04d2eddfc4264380cfc5ca8",
-      "reason": "Run419 native-only: parser keeps producing through pause until existing dynamic 10X byte budget"
+      "git_blob_sha1": "1c69caf4938f0d082255831910487661ace7943d",
+      "reason": "Native-only read-ahead: main single stream keeps parser producing through pause; dynamic 10X byte budget is the sole post-start normal wall"
     }
   }
 }
