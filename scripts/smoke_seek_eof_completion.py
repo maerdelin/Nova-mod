@@ -70,7 +70,7 @@ def main():
     try:
         if adb('shell','getprop ro.kernel.qemu').strip()!='1':raise RuntimeError('Fresh CI emulator required')
         with tempfile.TemporaryDirectory(prefix='nova-seek-eof-') as td:
-            root=Path(td);media=root/'seek-eof.m2ts'
+            root=Path(td);media=root/'main.m2ts'
             run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=24',
                  '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','30',
                  '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-g','24',
@@ -80,7 +80,7 @@ def main():
             class Handler(http.server.BaseHTTPRequestHandler):
                 def log_message(self,*_):pass
                 def do_GET(self):
-                    if self.path.split('?',1)[0]!='/seek-eof.m2ts':self.send_error(404);return
+                    if self.path.split('?',1)[0]!='/main.m2ts':self.send_error(404);return
                     start=0;end=size-1;partial=False
                     value=self.headers.get('Range')
                     if value:
@@ -108,7 +108,7 @@ def main():
             home=launcher()
             adb('shell','am start -W -n '+home,timeout=30)
             adb('logcat','-c')
-            url=(f'http://127.0.0.1:{port}/seek-eof.m2ts?mpegts&nova_iso=1'
+            url=(f'http://127.0.0.1:{port}/main.m2ts?mpegts&nova_iso=1'
                  f'&nova_iso_duration_us={duration_us}&nova_iso_clip_count=1'
                  f'&nova_iso_title_size={size}&nova_iso_generation=1')
             adb('shell',f'am start -W -n {PLAYER} -a android.intent.action.VIEW -d {shlex.quote(url)} -t video/mp2t',timeout=30)
