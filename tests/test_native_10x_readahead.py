@@ -12,8 +12,8 @@ class NativeRaw10XTests(unittest.TestCase):
             "nova_raw_thread",
             "nova_raw_read",
             "nova_raw_seek",
-            "nova_raw_adopt",
-            "phase=post_probe_reopen",
+            "nova_raw_open",
+            "phase=pre_probe",
             "NOVA_RAW10X:",
             "NOVA_RAW_10X_POLICY:",
             "capacity = (int)(10 * nova_x)",
@@ -22,22 +22,17 @@ class NativeRaw10XTests(unittest.TestCase):
         ):
             self.assertIn(token, PATCH)
 
-    def test_probe_keeps_native_ffmpeg_url_io_until_after_format_parse(self):
+    def test_mp4_probe_uses_one_stable_raw_avio_from_open(self):
         open_start = PATCH.index("open_replacement = r'''static int ffmpeg_open_input")
         open_end = PATCH.index("static int ff_force_seek'''", open_start)
         open_block = PATCH[open_start:open_end]
-        self.assertIn("Keep FFmpeg's native URL AVIO through open+probe", open_block)
-        self.assertIn("return avformat_open_input(&priv->fmt, url, NULL, options);", open_block)
-        self.assertNotIn("nova_raw_adopt(", open_block)
-
-        self.assertIn('"\\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;\\n\\n"', PATCH)
-        self.assertIn('"\\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;\\n"', PATCH)
-        self.assertIn('"\\t\\tint nova_raw_result = nova_raw_adopt(\\n"', PATCH)
-        self.assertIn('"adopt native raw producer only after FFmpeg probe"', PATCH)
+        self.assertIn("nova_raw_open(", open_block)
+        self.assertIn("avformat_open_input(&priv->fmt, url, NULL, options);", open_block)
+        self.assertIn("phase=pre_probe", PATCH)
+        self.assertNotIn("nova_raw_open(", PATCH)
+        self.assertNotIn("avio_closep(&probe_source);", PATCH)
         self.assertIn("mp4_tail_moov_safe", PATCH)
-        self.assertIn("avio_open2(", PATCH)
-        self.assertIn("avio_closep(&probe_source);", PATCH)
-        self.assertNotIn("raw->source = fmt->pb;", PATCH)
+
 
     def test_no_post_demux_10x_wall(self):
         self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", PATCH)

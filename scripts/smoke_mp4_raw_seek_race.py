@@ -86,9 +86,9 @@ def main():
 
             base=wait_for(lambda t:
                 'ETYPE_MP4' in t and
-                'NOVA_RAW10X_OPEN: phase=post_probe_reopen' in t and
+                'NOVA_RAW10X_OPEN: phase=pre_probe' in t and
                 'NOVA_STARTUP_TRACE first_frame_sink' in t,
-                35,'MP4 first frame with post-probe RAW10X')
+                35,'MP4 first frame with pre-probe RAW10X')
             if 'moov atom not found' in base or 'error opening parser' in base:
                 raise RuntimeError('MP4 failed before runtime-seek stress')
 

@@ -4,7 +4,7 @@
 The Range server records probe-time seeks. Success requires:
 1) the file really has a late top-level moov,
 2) FFmpeg completes native URL probe without "moov atom not found",
-3) RAW10X is adopted only after probe,
+3) one stable RAW10X AVIO is active before probe and survives tail seeks,
 4) the final APK renders a frame.
 """
 import argparse,http.server,json,re,shlex,subprocess,tempfile,threading,time
@@ -48,7 +48,7 @@ def top_atoms(path):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
     a.reports.mkdir(parents=True,exist_ok=True)
-    report={'status':'FAIL','scope':'final APK late-moov MP4 over local HTTP Range; probe must precede RAW adoption'}
+    report={'status':'FAIL','scope':'final APK late-moov MP4 over one stable pre-probe RAW10X AVIO'}
     server=None;port=None
     try:
         with tempfile.TemporaryDirectory(prefix='nova-tail-moov-') as td:
@@ -106,23 +106,25 @@ def main():
             adb('shell',f'am start -W -n {PLAYER} -a android.intent.action.VIEW -d {shlex.quote(url)} -t video/mp4',timeout=30)
             text=wait_for(lambda t:
                 'ETYPE_MP4' in t and
+                'NOVA_RAW10X_OPEN: phase=pre_probe' in t and
                 'NOVA_STARTUP_TRACE probe_done' in t and
-                'NOVA_RAW10X_OPEN: phase=post_probe' in t and
+                'NOVA_RAW10X_SEEK:' in t and
                 'NOVA_STARTUP_TRACE first_frame_sink' in t,
-                35,'late-moov MP4 probe, post-probe RAW adoption and first frame')
+                35,'late-moov MP4 pre-probe RAW seek, probe completion and first frame')
             if 'moov atom not found' in text:
                 raise RuntimeError('late-moov MP4 still failed probe')
+            raw_i=text.index('NOVA_RAW10X_OPEN: phase=pre_probe')
             probe_i=text.index('NOVA_STARTUP_TRACE probe_done')
-            raw_i=text.index('NOVA_RAW10X_OPEN: phase=post_probe')
-            if raw_i < probe_i:
-                raise RuntimeError('RAW producer started before MP4 probe completed')
+            if raw_i > probe_i:
+                raise RuntimeError('RAW AVIO was not installed before MP4 probe')
             with lock: ranges=list(starts)
             far=[x for x in ranges if x>size*0.60]
             if not far:
                 raise RuntimeError('HTTP server did not observe a far tail Range seek: '+repr(ranges))
             report.update(status='PASS',size=size,moov_offset=moov_off,
                           moov_fraction=moov_off/size,range_starts=ranges,
-                          far_tail_range=True,probe_before_raw=True,first_frame=True)
+                          far_tail_range=True,raw_before_probe=True,
+                          raw_seek_seen=True,first_frame=True)
             (a.reports/'mp4-tail-moov-logcat.txt').write_text(text)
             print('MP4_TAIL_MOOV_SMOKE=PASS '+json.dumps(report))
     except Exception as e:

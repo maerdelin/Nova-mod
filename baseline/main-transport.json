@@ -9,8 +9,8 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "bd60d0271a240015640b23d21814899a06000484",
-      "reason": "Feature test: RAW10X probes with FFmpeg native URL AVIO, then reopens one producer-owned source at the exact logical handoff position; producer generation is serialized with source_mutex for runtime MP4 seeks"
+      "git_blob_sha1": "4bcd9e27032e644d298aa188531187fe5e75f102",
+      "reason": "Feature test: one RAW custom AVIO is installed before avformat_open_input and remains stable through MP4 probe/runtime; producer generation snapshots are serialized with source_mutex so seeks cannot desynchronize source position"
     },
     "scripts/granular_build.py": {
       "git_blob_sha1": "7a4b33f2d102ace675acb98639b21ceaa7feb730",
