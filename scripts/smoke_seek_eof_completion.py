@@ -40,10 +40,9 @@ def seek_after(text,marker):
     at=text.rfind(marker)
     if at<0:return None
     phase=text[at+len(marker):]
-    ms=list(re.finditer(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',phase))
+    ms=list(re.finditer(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=1',phase))
     if not ms:return None
     m=ms[-1];a=int(m[1]);b=int(m[2])
-    if b<=a:return None
     tail=phase[m.end():]
     if 'NOVA_ISO_TIME_SEEK' in tail:return None
     return a,b,phase
@@ -106,14 +105,13 @@ def main():
             seeks=[]
             final_marker=''
             current_target=-1
-            for batch in range(12):
+            for batch in range(40):
                 marker='NOVA_TS_POS_BATCH_'+str(batch)+'_'+str(time.monotonic_ns())
                 final_marker=marker
                 adb('shell','log -p i -t NOVA_TS_EOF_TEST '+marker)
-                # 20 real independent DPAD-right events. Run456 proved one
-                # event moves ordinary MPEG-TS by about 5/1000, so repeated
-                # single events reproduce the production position-seek path.
-                for _ in range(20):
+                # Small batches prevent the driver from racing through the
+                # usable 930..975 tail window into the terminal 990/1000 edge.
+                for _ in range(4):
                     adb('shell','input keyevent 22')
                     time.sleep(.035)
                 time.sleep(.5)
@@ -123,19 +121,19 @@ def main():
                 phase=text[at:]
                 if 'NOVA_ISO_TIME_SEEK' in phase:
                     raise RuntimeError('ISO seek appeared in ordinary TS position test')
-                events=list(re.finditer(r'avos_mp_video_seek current_pos=(\\d+) to pos=(\\d+)',phase))
+                events=list(re.finditer(r'avos_mp_video_seek current_pos=(\\d+) to pos=(\\d+) direction=1',phase))
                 if not events:
                     continue
                 for m in events:
                     a0,b0=int(m[1]),int(m[2])
-                    if b0>a0: seeks.append([a0,b0])
+                    seeks.append([a0,b0])
                 if seeks:
                     current_target=seeks[-1][1]
-                if 900 <= current_target < 995:
+                if 930 <= current_target <= 975:
                     break
-                if current_target >= 995:
+                if current_target > 975:
                     raise RuntimeError('Ordinary TS position seek overshot EOF: '+repr(seeks[-10:]))
-            if not seeks or not (900<=seeks[-1][1]<995):
+            if not seeks or not (930<=seeks[-1][1]<=975):
                 raise RuntimeError('Could not reach near-tail ordinary TS position seek: '+repr(seeks[-20:]))
             phase_start=time.monotonic()
             text=wait_for(lambda t:
