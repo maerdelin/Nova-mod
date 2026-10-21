@@ -27,10 +27,7 @@ def verify_source_baseline(root=ROOT):
 
 def verify(root, before, report=None):
     import webdav_safety_patch as safety
-    import readahead_patch
-    session=safety.session_text(before[FILES[1]])
-    if 'private publishInput(' in session: session=readahead_patch.session_text(session)
-    expected={FILES[0]:before[FILES[0]], FILES[1]:session}
+    expected={FILES[0]:before[FILES[0]], FILES[1]:safety.session_text(before[FILES[1]])}
     entries={}
     for name in FILES:
         original=g.logical_class(before[name],{})
@@ -39,14 +36,10 @@ def verify(root, before, report=None):
         if current!=want: raise RuntimeError('Unexpected change to main transport: '+name)
         changed=[k for k in set(original['methods'])|set(want['methods']) if original['methods'].get(k)!=want['methods'].get(k)]
         if name==FILES[0] and changed: raise RuntimeError('Main byte copy replaced')
-        allowed={'openInputStream()V','publishInput(Ljava/io/InputStream;)V',
-                 'novaResumeUpstreamAt(J)Ljava/io/InputStream;',
-                 'novaAheadInput(Ljava/io/InputStream;J)Ljava/io/InputStream;'}
-        if name==FILES[1] and (not set(changed)<=allowed or 'openInputStream()V' not in changed):
-            raise RuntimeError('Session changes exceed parse-once and owned read-ahead: '+repr(changed))
+        if name==FILES[1] and changed!=['openInputStream()V']: raise RuntimeError('Session changes exceed parse-once fix: '+repr(changed))
         if original['header']!=want['header'] or original['fields']!=want['fields']:
             raise RuntimeError('Extra session interfaces or fields detected')
-        entries[name]={'main_methods':len(original['methods']),'retained_methods':sum(original['methods'][k]==want['methods'].get(k) for k in original['methods']),
+        entries[name]={'main_methods':len(original['methods']),'retained_methods':len(original['methods'])-len(changed),
                        'allowed_changes':changed,'main_logical_sha256':sha(json.dumps(original,sort_keys=True).encode()),
                        'result_logical_sha256':sha(json.dumps(current,sort_keys=True).encode())}
     for path in list(root.glob('smali*/**/*.smali'))+list(root.glob('lib/*/*.so')):
@@ -55,8 +48,8 @@ def verify(root, before, report=None):
             if token in data: raise RuntimeError('Removed transport token in '+str(path)+': '+token.decode())
     result={'status':'PASS','main_commit':verify_source_baseline()['main_commit'],
             'transport_classes':entries,'download_loop_changed':False,
-            'session_changes':'parse-once open, owned read-ahead publication and resumed stream return',
-            'native_capacity_publisher_present':False,'parallel_or_replacement_download_helpers_present':False,'single_response_fifo_present':True,
+            'only_session_exception':'openInputStream parse-once; retries remain in existing retained backend safety policy',
+            'native_capacity_publisher_present':False,'parallel_or_replacement_download_helpers_present':False,
             'real_webdav_throughput_tested':False}
     if report:
         report.parent.mkdir(parents=True,exist_ok=True);report.write_text(json.dumps(result,indent=2)+'\n')
@@ -64,7 +57,7 @@ def verify(root, before, report=None):
     return result
 
 def verify_apk_absence(apk,require_helpers=False):
-    helpers=(b'NovaWebdavOpenPolicy;',b'NovaWebdavSidecarPolicy;',b'NovaIsoSessionGuard;',b'NovaControlbarAutoHide;',b'NovaAheadInputStream;')
+    helpers=(b'NovaWebdavOpenPolicy;',b'NovaWebdavSidecarPolicy;',b'NovaIsoSessionGuard;',b'NovaControlbarAutoHide;')
     found=set(); count=0; native=0
     with zipfile.ZipFile(apk) as z:
         for name in z.namelist():

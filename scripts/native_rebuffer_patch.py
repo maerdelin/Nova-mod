@@ -62,6 +62,7 @@ def patch_stream_h(path: Path) -> None:
         "\tvolatile int\trebuffer_user_paused;\n"
         "\tvolatile int\trebuffer_play_requested;\n"
         "\tvolatile int\trebuffer_frame_seen;\n"
+        "\tvolatile int\treadahead_enabled;\n"
         "\tvolatile int\tstartup_first_sink_logged;\n"
         "\tint\t\trebuffer_low_bytes;\n"
         "\tint\t\trebuffer_resume_bytes;\n"
@@ -110,6 +111,14 @@ static void *_rebuffer_thread( void *data )
                     int used = pst->buffer_used;
                     int eof = _nova_rebuffer_eof( s );
                     int active = __atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE );
+                    static int nova_ahead_last_log = 0;
+                    if( s->paused && __atomic_load_n( &s->readahead_enabled, __ATOMIC_ACQUIRE ) ) {
+                        int now = atime();
+                        if( now - nova_ahead_last_log >= 1000 ) {
+                            nova_ahead_last_log = now;
+                            serprintf("NOVA_10X_READAHEAD: used=%d capacity=%d paused=1\n", used, pst->buffer_size);
+                        }
+                    }
 
                     if( !active ) {
                         int play_requested = __atomic_load_n(
@@ -226,7 +235,8 @@ def patch_stream_video(path: Path) -> None:
         text,
         r"if\s*\(\s*!s->paused\s*\|\|\s*s->play_n_video_frames\s*\|\|\s*"
         r"s->play_n_audio_frames\s*\|\|\s*s->parser_parse_once\s*\)\s*\{",
-        "if( !s->paused || __atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE ) || "
+        "if( !s->paused || __atomic_load_n( &s->readahead_enabled, __ATOMIC_ACQUIRE ) || "
+        "__atomic_load_n( &s->rebuffering, __ATOMIC_ACQUIRE ) || "
         "s->play_n_video_frames || s->play_n_audio_frames || s->parser_parse_once ) {",
         "parser continues during rebuffer",
     )
@@ -292,6 +302,7 @@ def patch_stream_c(path: Path) -> None:
         __atomic_store_n( &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
         __atomic_store_n( &s->rebuffer_play_requested, 0, __ATOMIC_RELEASE );
         __atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );
+        __atomic_store_n( &s->readahead_enabled, 0, __ATOMIC_RELEASE );
         pthread_cond_destroy( &s->rebuffer_tstate._cond );
         pthread_mutex_destroy( &s->rebuffer_tstate._mutex );
 DBGS   serprintf("rebuffer_thread joined\r\n");
@@ -333,6 +344,7 @@ def patch_avos_mp_video(path: Path) -> None:
         "{\n"
         "\t// A real AVOS Start is the first permission for low-water control.\n"
         "\t__atomic_store_n(&video->s->rebuffer_play_requested, 1, __ATOMIC_RELEASE);\n"
+        "\t__atomic_store_n(&video->s->readahead_enabled, 1, __ATOMIC_RELEASE);\n"
         "\t__atomic_store_n(&video->s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE);\n"
         "\tif (__atomic_load_n(&video->s->rebuffering, __ATOMIC_ACQUIRE)) {\n"
         "\t\t// This path is reachable only after prior real playback entered\n"
@@ -429,14 +441,12 @@ static int _add_packet( AVQueue *q, AVPacket *packet )
         """\t// One admitted packet may cross the normal budget. Beyond that, fail
 \t// explicitly instead of silently losing audio or allocating without limit.
 \t//
-\t// Nova INTERNAL rebuffer intentionally freezes consumers until the byte
-\t// resume watermark is reached. In that one state, the independent 8192
-\t// packet-count watermark must not stop the producer first (TrueHD and other
-\t// small access units can hit it well below 64 MiB). Memory is still bounded
-\t// by the existing byte budget. Manual/user pause never sets rebuffering, so
-\t// it keeps the original 8192-packet behavior.
-\tint packet_limit = __atomic_load_n(&s->rebuffering, __ATOMIC_ACQUIRE)
-\t\t? INT_MAX : FF_QUEUE_MAX_PACKETS;
+\t// After the first real Start, playback/decoder state must not create a
+\t// second packet-count wall before the dynamic 10X byte budget.
+\tint nova_fill_to_byte_wall =
+\t\t__atomic_load_n(&s->readahead_enabled, __ATOMIC_ACQUIRE) ||
+\t\t__atomic_load_n(&s->rebuffering, __ATOMIC_ACQUIRE);
+\tint packet_limit = nova_fill_to_byte_wall ? INT_MAX : FF_QUEUE_MAX_PACKETS;
 \tif (used + cost > budget * 2 ||
 \t    _add_packet_limited(q, packet, packet_limit))
 \t\treturn parser_read_error(s, AVERROR(ENOMEM));
@@ -461,20 +471,22 @@ DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d
 \t// block this producer first; the byte budget below remains the hard memory
 \t// bound. Outside internal rebuffer, behavior is byte-for-byte equivalent.
 \tint nova_rebuffering = __atomic_load_n(&s->rebuffering, __ATOMIC_ACQUIRE);
+\tint nova_fill_to_byte_wall =
+\t\t__atomic_load_n(&s->readahead_enabled, __ATOMIC_ACQUIRE) || nova_rebuffering;
 \tint video_packets = queue_packets(&ff_p->vq);
 \tint sub_packets = queue_packets(&ff_p->sq);
-\tif (!nova_rebuffering && !ff_p->seeking && !audio_starved &&
+\tif (!nova_fill_to_byte_wall && !ff_p->seeking && !audio_starved &&
 \t    (audio_packets >= FF_QUEUE_MAX_PACKETS ||
 \t     video_packets >= FF_QUEUE_MAX_PACKETS ||
 \t     sub_packets >= FF_QUEUE_MAX_PACKETS)) {
 DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d)\\n", audio_packets);
 \t\treturn FF_PARSE_WAIT;
 \t}
-\tif (nova_rebuffering &&
+\tif (nova_fill_to_byte_wall &&
 \t    (audio_packets == FF_QUEUE_MAX_PACKETS ||
 \t     video_packets == FF_QUEUE_MAX_PACKETS ||
 \t     sub_packets == FF_QUEUE_MAX_PACKETS)) {
-\t\tserprintf("NOVA_REBUFFER_PACKET_CAP_BYPASS: aq=%d vq=%d sq=%d used=%lld budget=%d\\n",
+\t\tserprintf("NOVA_10X_PACKET_CAP_BYPASS: aq=%d vq=%d sq=%d used=%lld budget=%d\\n",
 \t\t\taudio_packets, video_packets, sub_packets,
 \t\t\t(long long)mem_used, ff_p->buffer_size);
 \t}
@@ -484,8 +496,10 @@ DBGP2\t\tserprintf("FFMPEG: packet queue full, waiting for consumption (audio=%d
 
     if text.count("_add_packet_limited") != 3:
         raise RuntimeError("FFmpeg root-fix postcondition failed: _add_packet_limited count")
-    if text.count("NOVA_REBUFFER_PACKET_CAP_BYPASS") != 1:
-        raise RuntimeError("FFmpeg root-fix postcondition failed: diagnostic count")
+    if text.count("NOVA_10X_PACKET_CAP_BYPASS") != 1:
+        raise RuntimeError("FFmpeg 10X read-ahead postcondition failed: diagnostic count")
+    if text.count("readahead_enabled") < 2:
+        raise RuntimeError("FFmpeg 10X read-ahead flag missing")
 
     path.write_text(text)
 

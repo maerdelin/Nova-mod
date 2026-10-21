@@ -25,7 +25,4 @@ def main():
             if r.returncode or 'MAIN_TRANSPORT_FINAL_APK_PROBE=PASS' not in r.stdout:raise RuntimeError('Actual main-copy APK probe failed')
         report['status']='PASS'
     finally:(a.reports/'main-transport-apk-probe.json').write_text(json.dumps(report,indent=2)+'\n')
-if __name__=='__main__':
-    main()
-    import smoke_readahead
-    smoke_readahead.main()
+if __name__=='__main__':main()
