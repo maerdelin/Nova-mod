@@ -86,11 +86,21 @@ def main():
 
             base=wait_for(lambda t:
                 'ETYPE_MP4' in t and
-                'NOVA_RAW10X_OPEN: phase=post_probe' in t and
+                'NOVA_RAW10X_OPEN: phase=post_probe_reopen' in t and
                 'NOVA_STARTUP_TRACE first_frame_sink' in t,
                 35,'MP4 first frame with post-probe RAW10X')
             if 'moov atom not found' in base or 'error opening parser' in base:
                 raise RuntimeError('MP4 failed before runtime-seek stress')
+
+            # Catch the exact Run466 class of regression before any test input:
+            # the RAW producer must survive beyond first frame without a native
+            # crash or spontaneous PlayerActivity exit.
+            time.sleep(3)
+            stable=logs()
+            if 'Fatal signal 11' in stable or 'SIGSEGV' in stable:
+                raise RuntimeError('MP4 RAW producer crashed before user seek')
+            if PLAYER not in resumed():
+                raise RuntimeError('PlayerActivity exited before MP4 seek stress')
 
             # Establish controller focus without seeking.
             adb('shell','input keyevent 20');time.sleep(.35)

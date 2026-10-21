@@ -13,7 +13,7 @@ class NativeRaw10XTests(unittest.TestCase):
             "nova_raw_read",
             "nova_raw_seek",
             "nova_raw_adopt",
-            "phase=post_probe",
+            "phase=post_probe_reopen",
             "NOVA_RAW10X:",
             "NOVA_RAW_10X_POLICY:",
             "capacity = (int)(10 * nova_x)",
@@ -35,6 +35,9 @@ class NativeRaw10XTests(unittest.TestCase):
         self.assertIn('"\\t\\tint nova_raw_result = nova_raw_adopt(\\n"', PATCH)
         self.assertIn('"adopt native raw producer only after FFmpeg probe"', PATCH)
         self.assertIn("mp4_tail_moov_safe", PATCH)
+        self.assertIn("avio_open2(", PATCH)
+        self.assertIn("avio_closep(&probe_source);", PATCH)
+        self.assertNotIn("raw->source = fmt->pb;", PATCH)
 
     def test_no_post_demux_10x_wall(self):
         self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", PATCH)
