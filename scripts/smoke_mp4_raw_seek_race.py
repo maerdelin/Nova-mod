@@ -117,8 +117,12 @@ def main():
                         if at<0:return False
                         phase=t[at:]
                         m=re.search(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',phase)
-                        return bool(m and 'NOVA_RAW10X_SEEK:' in phase[m.end():])
-                    text=wait_for(done,12,'MP4 '+label+' runtime RAW seek '+str(i))
+                        if not m:return False
+                        tail=phase[m.end():]
+                        raw=tail.find('NOVA_RAW10X_SEEK:')
+                        hide=tail.find('NOVA_CONTROLBAR: HIDE_DONE', raw if raw >= 0 else 0)
+                        return raw >= 0 and hide >= 0
+                    text=wait_for(done,20,'MP4 '+label+' runtime RAW seek and same-action hide '+str(i))
                     phase=text[text.rfind(marker):]
                     m=re.search(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',phase)
                     events.append({'direction':label,'from':int(m[1]),'to':int(m[2])})
@@ -128,7 +132,6 @@ def main():
                         raise RuntimeError('Unexpected completion during MP4 seek stress')
                     if PLAYER not in resumed():
                         raise RuntimeError('PlayerActivity exited during MP4 seek stress')
-                    time.sleep(.2)
 
             final=wait_for(lambda t:'NOVA_RAW10X:' in t and PLAYER in resumed(),
                            5,'MP4 still active after RAW seek stress')
