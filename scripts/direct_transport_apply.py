@@ -316,3 +316,65 @@ def patch_release(text):
         "    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V",
     ]
     return text[:m.start()]+"\n".join(lines)+text[m.end():]
+
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--source",type=Path,required=True)
+    ap.add_argument("--output",type=Path,required=True)
+    ap.add_argument("--apktool",type=Path,required=True)
+    ap.add_argument("--native-root",type=Path,required=True)
+    ap.add_argument("--work",type=Path,required=True)
+    args=ap.parse_args()
+
+    root=args.work/"direct-final"
+    if root.exists():
+        shutil.rmtree(root)
+    run("java","-Xmx4g","-jar",args.apktool,"d","--no-debug-info","-f",
+        args.source,"-o",root)
+
+    mime=one(root.glob("smali*/com/archos/filecorelibrary/MimeUtils.smali"),"MimeUtils")
+    mt=mime.read_text()
+    if '"application/x-iso9660-image"' in mt:
+        mt=mt.replace('"application/x-iso9660-image"','"video/x-bluray-iso"',1)
+    mime.write_text(mt)
+
+    player=one(root.glob("smali*/com/archos/mediacenter/video/player/Player.smali"),"Player")
+    player.write_text(patch_player(player.read_text()))
+    service=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerService.smali"),"PlayerService")
+    service.write_text(patch_service(service.read_text()))
+    avos=one(root.glob("smali*/com/archos/medialib/AvosMediaPlayer.smali"),"AvosMediaPlayer")
+    avos.write_text(patch_release(avos.read_text()))
+
+    smali_dir=next_smali(root)/"com/archos/mediacenter/video/player"
+    smali_dir.mkdir(parents=True,exist_ok=True)
+    (smali_dir/"DirectTransportProxy.smali").write_text(PROXY_HEAD+PROXY_RESOLVE)
+    (smali_dir/"DirectPlayerFactory.smali").write_text(FACTORY)
+
+    for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
+        src=args.native_root/abi/"libnova_transport.so"
+        if not src.is_file():
+            raise RuntimeError("missing transport library for "+abi)
+        dst=root/"lib"/abi/"libnova_transport.so"
+        dst.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(src,dst)
+
+    args.output.parent.mkdir(parents=True,exist_ok=True)
+    run("java","-Xmx4g","-jar",args.apktool,"b",root,"-o",args.output)
+
+    # Hard fail if the new payload accidentally contains the legacy ISO proxy.
+    probe=(root/"smali_classes999"/"never")
+    all_text="\n".join(p.read_text(errors="ignore")
+                       for p in root.glob("smali*/com/archos/mediacenter/video/player/*.smali"))
+    for forbidden in (
+        "BlurayIsoProxy",
+        "NovaIsoSourceClose",
+        "NovaIsoNativeClose",
+    ):
+        if forbidden in all_text:
+            raise RuntimeError("legacy ISO transport residue: "+forbidden)
+
+    print("DIRECT_TRANSPORT_APPLY=PASS")
+
+if __name__=="__main__":
+    main()
