@@ -35,6 +35,17 @@ class AggressiveDownloadArchitectureTests(unittest.TestCase):
         self.assertIn("raw->used_bytes >= raw->capacity_bytes", producer)
         self.assertIn("NOVA_RAW_RETRY:", producer)
 
+    def test_raw_ring_offset_is_sampled_only_after_source_mutex(self):
+        start = PATCH.index("RAW_PRODUCER =")
+        end = PATCH.index("RAW_CONSUMER =", start)
+        producer = PATCH[start:end]
+        lock = producer.index("pthread_mutex_lock(&raw->source_mutex);")
+        sample = producer.index("write_off = raw->write_off;")
+        self.assertGreater(sample, lock)
+        self.assertNotIn("write_off = raw->write_off;", producer[:lock])
+        self.assertIn("generation = raw->generation", producer[lock:sample])
+
+
     def test_download_threads_get_fast_cpu_and_priority_requests(self):
         for token in (
             "NOVA_RAW_SCHED:",

@@ -116,6 +116,25 @@ RAW_PRODUCER = r'''static void *nova_raw_thread(void *opaque)
             break;
         }
 
+        pthread_mutex_unlock(&raw->mutex);
+
+        /*
+         * The ring write offset MUST be sampled after source_mutex is owned.
+         * A seek resets generation/read_off/write_off while also owning
+         * source_mutex. Sampling write_off before this lock lets a producer
+         * carry a pre-seek offset into the post-seek generation and place valid
+         * new bytes at the wrong ring address.
+         */
+        pthread_mutex_lock(&raw->source_mutex);
+        pthread_mutex_lock(&raw->mutex);
+        if( !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||
+            raw->eof || raw->used_bytes >= raw->capacity_bytes ) {
+            pthread_mutex_unlock(&raw->mutex);
+            pthread_mutex_unlock(&raw->source_mutex);
+            continue;
+        }
+
+        generation = raw->generation;
         int64_t room = raw->capacity_bytes - raw->used_bytes;
         int64_t contiguous = raw->capacity_bytes - raw->write_off;
         int64_t ask = room < contiguous ? room : contiguous;
@@ -124,18 +143,11 @@ RAW_PRODUCER = r'''static void *nova_raw_thread(void *opaque)
         write_off = raw->write_off;
         pthread_mutex_unlock(&raw->mutex);
 
-        if( want <= 0 )
+        if( want <= 0 ) {
+            pthread_mutex_unlock(&raw->source_mutex);
             continue;
+        }
 
-        /*
-         * Source ownership remains serialized with seek. Generation is sampled
-         * after owning source_mutex so a runtime seek can never leave source
-         * byte position and the 128 MiB ring generation out of sync.
-         */
-        pthread_mutex_lock(&raw->source_mutex);
-        pthread_mutex_lock(&raw->mutex);
-        generation = raw->generation;
-        pthread_mutex_unlock(&raw->mutex);
         int got = avio_read(raw->source, raw->ring + write_off, want);
         pthread_mutex_unlock(&raw->source_mutex);
 
