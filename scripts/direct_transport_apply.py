@@ -302,6 +302,20 @@ def patch_service(text):
     repl=h.group("indent")+op+" {"+h.group("regs")+"}, "+wrapper
     return text[:m.start()]+body[:h.start()]+repl+body[h.end():]+text[m.end():]
 
+def smali_super_descriptor(text):
+    hits=[]
+    for raw in text.splitlines():
+        line=raw.strip()
+        if not line.startswith(".super "):
+            continue
+        parts=line.split(None,1)
+        if len(parts)==2 and parts[1].startswith("L") and parts[1].endswith(";"):
+            hits.append(parts[1])
+    if len(hits)!=1:
+        raise RuntimeError("PlayerActivity .super descriptor ambiguous: "+repr(hits))
+    return hits[0]
+
+
 def patch_activity_back(text):
     methods=[m for m in METHOD_RE.finditer(text)
              if " onBackPressed()V" in m.group(0).splitlines()[0]]
@@ -322,10 +336,7 @@ def patch_activity_back(text):
             body="\n".join(lines)
             text=text[:m.start()]+body+text[m.end():]
     else:
-        super_hits=re.findall(r'^\\.super\\s+(L[^;]+;)$', text, re.M)
-        if len(super_hits)!=1:
-            raise RuntimeError("PlayerActivity .super descriptor ambiguous")
-        super_desc=super_hits[0]
+        super_desc=smali_super_descriptor(text)
         method=f"""
 .method public onBackPressed()V
     .locals 0
