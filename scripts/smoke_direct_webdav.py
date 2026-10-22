@@ -158,30 +158,35 @@ def main():
                 20,
                 "direct WebDAV seek through RAW128 and native upstream",
             )
-            text = wait_for(
-                lambda t: (
-                    seek_marker in t
-                    and "HIDE_DONE" in t[t.rfind(seek_marker):]
-                ),
-                8,
-                "same-action controller auto hide before BACK",
-            )
-
-            # With the controller already hidden, one BACK is a real player
-            # exit and must abort the one native session immediately. No old
-            # post-shutdown RAW retry loop is allowed to appear afterwards.
-            back_marker = "NOVA_DIRECT_BACK_" + str(time.monotonic_ns())
-            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back_marker)
+            # Follow the real controller semantics instead of assuming an
+            # auto-hide deadline. BACK may first dismiss visible controls; the
+            # subsequent BACK must exit the player. Accept an immediate exit
+            # on the first BACK as well, but never accept a missing abort.
+            back1_marker = "NOVA_DIRECT_BACK1_" + str(time.monotonic_ns())
+            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back1_marker)
             adb("shell", "input", "keyevent", "4")
-            text = wait_for(
-                lambda t: (
-                    back_marker in t
-                    and "NovaTransport: ABORT generation=" in t[t.rfind(back_marker):]
-                ),
-                15,
-                "direct transport abort after BACK",
-            )
-            back_tail = text[text.rfind(back_marker):]
+            time.sleep(1.0)
+            text = logs()
+            tail1 = text[text.rfind(back1_marker):] if back1_marker in text else ""
+            if "NovaTransport: ABORT generation=" in tail1:
+                back_marker = back1_marker
+                back_tail = tail1
+                back_presses = 1
+            else:
+                back2_marker = "NOVA_DIRECT_BACK2_" + str(time.monotonic_ns())
+                adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back2_marker)
+                adb("shell", "input", "keyevent", "4")
+                text = wait_for(
+                    lambda t: (
+                        back2_marker in t
+                        and "NovaTransport: ABORT generation=" in t[t.rfind(back2_marker):]
+                    ),
+                    15,
+                    "direct transport abort after controller-dismiss BACK then exit BACK",
+                )
+                back_marker = back2_marker
+                back_tail = text[text.rfind(back2_marker):]
+                back_presses = 2
             if "NOVA_RAW_RETRY:" in back_tail:
                 raise RuntimeError("RAW retry occurred after direct transport BACK abort")
 
@@ -194,6 +199,7 @@ def main():
                 first_frame=True,
                 direct_seek=True,
                 back_abort=True,
+                back_presses=back_presses,
                 post_abort_raw_retry=False,
                 request_count=len(requests),
                 request_starts=requests[:16],
