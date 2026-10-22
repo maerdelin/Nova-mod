@@ -40,17 +40,19 @@ def seek_after(text,marker):
     at=text.rfind(marker)
     if at<0:return None
     phase=text[at+len(marker):]
-    ms=list(re.finditer(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=1',phase))
+    ms=list(re.finditer(
+        r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=([01])',
+        phase))
     if not ms:return None
-    m=ms[-1];a=int(m[1]);b=int(m[2])
+    m=ms[-1];a=int(m[1]);b=int(m[2]);direction=int(m[3])
     tail=phase[m.end():]
     if 'NOVA_ISO_TIME_SEEK' in tail:return None
-    return a,b,phase
+    return a,b,direction,phase
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
     a.reports.mkdir(parents=True,exist_ok=True)
-    report={'status':'FAIL','scope':'ordinary MPEG-TS position seek near EOF; real audio drain; no ISO path'}
+    report={'status':'FAIL','scope':'ordinary MPEG-TS position seek near EOF; real audio drain; no ISO path; RIGHT no-op events are observed without idle drift'}
     server=None;port=None
     try:
         if adb('shell','getprop ro.kernel.qemu').strip()!='1':raise RuntimeError('Fresh CI emulator required')
@@ -114,16 +116,28 @@ def main():
                 # position seek. Never send another key until this one is
                 # either observed or times out.
                 try:
+                    # A physical RIGHT near the tail can legitimately emit a
+                    # direction=0/no-op event while controls/focus settle. Treat
+                    # that as an observed key result immediately instead of
+                    # sleeping 3 seconds and letting a 42s fixture naturally
+                    # run past the verified 930..975 window.
                     text=wait_for(lambda t:seek_after(t,marker) is not None,
-                                  3,'ordinary TS forward position seek step '+str(step))
+                                  1.0,'ordinary TS seek event step '+str(step))
                 except RuntimeError:
-                    time.sleep(.15)
+                    time.sleep(.05)
                     continue
 
-                before,current_target,phase=seek_after(text,marker)
+                before,current_target,direction,phase=seek_after(text,marker)
                 if 'NOVA_ISO_TIME_SEEK' in phase:
                     raise RuntimeError('ISO seek appeared in ordinary TS position test')
-                seeks.append([before,current_target])
+                seeks.append([before,current_target,direction])
+
+                if direction != 1:
+                    # Do not count a RIGHT-key no-op/backward-classified event
+                    # as progress; retry promptly so natural playback cannot
+                    # carry the short fixture into EOF before verification.
+                    time.sleep(.03)
+                    continue
 
                 # Run463 proved a batched driver could pass through 966 and
                 # race into 990. Stop all input immediately at the first
@@ -152,7 +166,7 @@ def main():
                             r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=0',
                             back_phase))[-1]
                         current_target=int(m[2])
-                        seeks.append([int(m[1]),current_target])
+                        seeks.append([int(m[1]),current_target,0])
                         if 930 <= current_target <= 975:
                             final_marker=back_marker
                             break
