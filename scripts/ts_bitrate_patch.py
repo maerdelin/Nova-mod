@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TS-only rate detection for Run373 native FFmpeg rebuffer thresholds.
+"""TS-only X detection for native FFmpeg 2X/5X playback thresholds.
 
 Applied AFTER native_rebuffer_patch.py and BEFORE compiling libavos.so.
 Uses credible FFmpeg duration when available (upstream discards TS duration
@@ -136,20 +136,20 @@ def apply(root: Path, report: Path | None = None) -> dict:
     source = path.read_text()
     required = (
         "NOVA_TS_BITRATE:",
-        "NOVA_RAW_10X_POLICY:",
+        "NOVA_RAW_FIXED128_POLICY:",
         "nova_raw_set_policy",
         "nova_ts_duration_us",
         "demux-estimate",
     )
     missing = [token for token in required if source.count(token) < 1]
     if missing:
-        raise RuntimeError("Integrated TS raw-10X policy missing: " + repr(missing))
+        raise RuntimeError("Integrated TS fixed-RAW policy missing: " + repr(missing))
     forbidden = "ff_p->buffer_size" + " = s->rebuffer_capacity_bytes"
     if forbidden in source:
-        raise RuntimeError("TS validation found forbidden post-demux 10X assignment")
+        raise RuntimeError("TS validation found forbidden post-demux capacity assignment")
     result = {
         "status": "PASS",
-        "scope": "TS X derivation integrated into the single pre-demux raw 10X policy",
+        "scope": "TS X derivation integrated into the single pre-demux fixed 128MiB RAW policy",
         "priority": ["ISO title metadata", "libavformat/stream duration",
                      "demux bitrate estimate", "24/64/128MiB fallback"],
         "source_mutated_by_this_step": False,

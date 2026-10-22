@@ -17,8 +17,8 @@
       "reason": "Feature test: report dynamic 2X/5X playback thresholds with a fixed 128MiB raw producer wall and fixed packet handoff"
     },
     "scripts/ts_bitrate_patch.py": {
-      "git_blob_sha1": "2f8261df39877a10685f4e588f19c2543b495d92",
-      "reason": "Feature test: TS X derivation is integrated into the single raw-source policy; this step validates only"
+      "git_blob_sha1": "4489f776e8580094082fd61521fdbd7afae05ca1",
+      "reason": "Feature test: TS X derivation feeds playback-only 2X/5X thresholds while the RAW producer wall stays fixed at 128MiB; this step validates only"
     }
   }
 }
