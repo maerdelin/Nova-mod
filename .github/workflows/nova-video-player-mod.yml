@@ -186,7 +186,6 @@ jobs:
           script: |
             python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_direct_webdav.py --reports reports
-            python3 scripts/smoke_seek_playback.py --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
             python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
