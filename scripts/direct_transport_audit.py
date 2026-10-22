@@ -68,6 +68,13 @@ def source_check(require_removed=False):
             raise RuntimeError("legacy data plane referenced by direct APK integration: "+x)
 
     for x in (
+        "def patch_activity_stop", "NOVA_DIRECT_LIFECYCLE",
+        "mLaunchFloatingPlayer:Z", "DirectTransportProxy;->close()V",
+    ):
+        if x not in apply:
+            raise RuntimeError("direct lifecycle invariant missing: "+x)
+
+    for x in (
         "build_iso_native.sh", "iso_finalize.py", "stream_throughput_patch.py",
         "webdav_connect_retry_patch.py", "webdav_midstream_resume_patch.py",
     ):
