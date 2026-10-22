@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nova-video-player-mod-${{ github.ref }}-${{ github.sha }}
+  group: nova-video-player-mod-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
