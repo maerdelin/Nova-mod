@@ -47,8 +47,8 @@ def source_check(require_removed=False):
     base=(ROOT/"scripts/native_rebuffer_patch.py").read_text()
     for x in (
         "const int requested_nice = -8",
-        'nova_playback_yield_sched("decode", 8)',
-        'nova_playback_yield_sched("parser", 5)',
+        'nova_playback_yield_sched(\\"decode\\", 8)',
+        'nova_playback_yield_sched(\\"parser\\", 5)',
     ):
         if x not in base:
             raise RuntimeError("priority baseline changed: "+x)
