@@ -455,9 +455,28 @@ static void *nova_raw_thread(void *opaque)
         }
 
         /*
-         * A transient network read error is not a flow-control state. Below
-         * 128 MiB the producer keeps trying until data resumes, a seek changes
-         * generation, EOF is proven or the stream is closed.
+         * Player/stream shutdown is terminal. stream_stop() marks aborted and
+         * requests RAW stop before parser join. Never spin AVERROR_EXIT in the
+         * transient 50 ms retry loop.
+         */
+        if( !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||
+            (raw->s && stream_abort(raw->s)) ) {
+            __atomic_store_n( &raw->run, 0, __ATOMIC_RELEASE );
+            raw->error = AVERROR_EXIT;
+            unsigned stop_generation = raw->generation;
+            int64_t stop_used = raw->used_bytes;
+            pthread_cond_broadcast(&raw->can_read);
+            pthread_cond_broadcast(&raw->can_write);
+            pthread_mutex_unlock(&raw->mutex);
+            serprintf(
+                "NOVA_RAW_ABORT: reason=source_abort error=%d generation=%u used=%lld\n",
+                got, stop_generation, (long long)stop_used );
+            break;
+        }
+
+        /*
+         * A real transient network read error remains retryable while the
+         * stream is alive and the fixed 128 MiB warehouse has room.
          */
         raw->error = 0;
         serprintf(
@@ -747,6 +766,33 @@ static void nova_raw_close(NOVA_RAW_PREFETCH *raw)
     pthread_mutex_destroy(&raw->source_mutex);
     pthread_mutex_destroy(&raw->mutex);
     raw->enabled = 0;
+}
+
+void nova_raw_request_stop(STREAM *s)
+{
+    if( !s || !s->parser_priv ||
+        !__atomic_load_n( &s->raw_prefetch_enabled, __ATOMIC_ACQUIRE ) )
+        return;
+
+    FF_PRIV *ff_p = (FF_PRIV *)s->parser_priv;
+    NOVA_RAW_PREFETCH *raw = &ff_p->raw;
+    if( !raw->enabled )
+        return;
+
+    int was_running = __atomic_exchange_n(
+        &raw->run, 0, __ATOMIC_ACQ_REL );
+
+    pthread_mutex_lock(&raw->mutex);
+    raw->error = AVERROR_EXIT;
+    unsigned generation = raw->generation;
+    int64_t used = raw->used_bytes;
+    pthread_cond_broadcast(&raw->can_read);
+    pthread_cond_broadcast(&raw->can_write);
+    pthread_mutex_unlock(&raw->mutex);
+
+    serprintf(
+        "NOVA_RAW_ABORT: reason=stream_stop was_running=%d generation=%u used=%lld\n",
+        was_running, generation, (long long)used );
 }
 '''
 
@@ -1104,6 +1150,21 @@ def patch_stream_video(path: Path) -> None:
 
 def patch_stream_c(path: Path) -> None:
     text = path.read_text()
+    text = replace_once(
+        text,
+        "int stream_stop( STREAM *s )\n{",
+        "extern void nova_raw_request_stop(STREAM *s);\n\n"
+        "int stream_stop( STREAM *s )\n{",
+        "declare RAW early-stop hook",
+    )
+    text = replace_once(
+        text,
+        "\t// abort everything\n\ts->aborted = 1;\n",
+        "\t// abort everything\n\ts->aborted = 1;\n"
+        "\t// Stop source I/O before stream_close() waits for parser threads.\n"
+        "\tnova_raw_request_stop( s );\n",
+        "stop RAW before parser join",
+    )
     marker = 'DBGS serprintf("waiting for threads to join\\r\\n");\n'
     block = r'''DBGS serprintf("waiting for threads to join\r\n");
     if( s->rebuffer_thread_started ) {

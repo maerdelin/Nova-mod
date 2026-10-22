@@ -24,8 +24,8 @@
       "reason": "Fail-closed full-repository source audit rejects removed files, legacy RAW chunk/10X semantics, obsolete dynamic-cap sentinels and any old/renamed parallel Range logic across source, build and Android test files"
     },
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "12f472bb7069f7ccf20a19e38bfe619b80e62c01",
-      "reason": "Single final native implementation: exactly one contiguous fixed-128MiB RAW code block holds producer, consumer, seek/open/close and download QoS; exactly one separate playback scheduler helper remains"
+      "git_blob_sha1": "6a70dc8701935687d2a36ccb171f82ee726d5b66",
+      "reason": "Run496 minimal BACK/return hotfix only: stream_stop requests RAW stop before parser join, wakes both RAW condvars, and shutdown/AVERROR_EXIT can never enter transient RAW_RETRY"
     },
     "scripts/granular_build.py": {
       "git_blob_sha1": "a18436e6365801afbef7bc1657e11626be64bf18",

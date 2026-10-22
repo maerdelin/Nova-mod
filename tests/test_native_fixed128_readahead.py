@@ -74,6 +74,26 @@ class NativeRawFixed128Tests(unittest.TestCase):
         self.assertLess(write_off, read)
         self.assertLess(read, unlock)
 
+    def test_return_shutdown_stops_raw_before_parser_join(self):
+        for token in (
+            "void nova_raw_request_stop(STREAM *s)",
+            "NOVA_RAW_ABORT: reason=stream_stop",
+            "NOVA_RAW_ABORT: reason=source_abort",
+            '"stop RAW before parser join"',
+            '"\\tnova_raw_request_stop( s );\\n"',
+        ):
+            self.assertIn(token, PATCH)
+
+        producer_start = PATCH.index("static void *nova_raw_thread")
+        producer_end = PATCH.index("static int nova_raw_read", producer_start)
+        producer = PATCH[producer_start:producer_end]
+        self.assertLess(
+            producer.index("NOVA_RAW_ABORT: reason=source_abort"),
+            producer.index("NOVA_RAW_RETRY:"),
+        )
+        self.assertIn("pthread_cond_broadcast(&raw->can_read);", PATCH)
+        self.assertIn("pthread_cond_broadcast(&raw->can_write);", PATCH)
+
     def test_manual_pause_does_not_need_network_readahead_flag(self):
         self.assertIn("parser continues only during internal rebuffer", PATCH)
         self.assertNotIn("readahead_enabled", PATCH)
