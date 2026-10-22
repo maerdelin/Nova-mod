@@ -16,20 +16,16 @@
       "reason": "Feature test: authenticated Java/OkHttp playback data plane uses 4MiB read-ahead, urgent thread priority and 1MiB localhost copies for the non-root aggressive download architecture"
     },
     "scripts/iso_seek_ui_patch.py": {
-      "git_blob_sha1": "043ddfb453ef7b127d64cd309a189718a745ce50",
-      "reason": "Compatibility update: ISO timestamp seek validation accepts the fixed 128MiB RAW producer wall without changing seek behavior"
-    },
-    "scripts/aggressive_download_patch.py": {
-      "git_blob_sha1": "a3cb593a02d31e73b90ba20e9973f42ea642c3e3",
-      "reason": "Forward-only latest-head architecture: single persistent ISO/WebDAV stream with no parallel Range, plus preallocated 128MiB RAW ring whose write offset and generation are sampled only after source_mutex so rapid seek cannot write post-seek bytes at a stale ring offset"
+      "git_blob_sha1": "e3d7b8bf8d8679f3b3a563677c4ae8a3916a0049",
+      "reason": "ISO timestamp seek validation requires the final fixed-128 buffering architecture only; legacy buffering compatibility tokens removed"
     },
     "scripts/main_transport_audit.py": {
-      "git_blob_sha1": "05fd35f213188d17a3d63a05babf29d32d61c92c",
-      "reason": "Architecture guard: fail closed if old or renamed parallel Range logic reappears in source or the final APK"
+      "git_blob_sha1": "8b11160d7f0ebff49bf4e995d6a1ef299930893e",
+      "reason": "Fail-closed architecture audit rejects removed files, legacy RAW chunk/10X semantics and parallel Range reintroduction"
     },
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "6a5c1b0b2650974907a24c42bf12bf419a93e71e",
-      "reason": "Feature test: one stable RAW AVIO keeps a fixed 128MiB producer warehouse independent of playback state while dynamic 2X/5X remain playback-only thresholds and seek generation safety is preserved"
+      "git_blob_sha1": "811ea9823edfef074e346a999a9fc2157d07e8cc",
+      "reason": "Single final native implementation: fixed 128MiB preallocated RAW ring, playback-only dynamic 2X/5X, seek-generation safety, download fast-core QoS and parser/decode yielding; no legacy chunk-list stage"
     },
     "scripts/granular_build.py": {
       "git_blob_sha1": "a18436e6365801afbef7bc1657e11626be64bf18",
@@ -38,6 +34,10 @@
     "scripts/ts_bitrate_patch.py": {
       "git_blob_sha1": "4489f776e8580094082fd61521fdbd7afae05ca1",
       "reason": "Feature test: TS X derivation feeds playback-only 2X/5X thresholds while the RAW producer wall stays fixed at 128MiB; this step validates only"
+    },
+    "scripts/iso_single_stream_qos_patch.py": {
+      "git_blob_sha1": "1496a0d321cddbb0124c1bd77901a9b86e4e73f8",
+      "reason": "Single persistent ISO stream QoS with no parallel Range: fast-core scheduling, retained-cache preallocation and 4MiB loopback socket buffers"
     }
   }
 }

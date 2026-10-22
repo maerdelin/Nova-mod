@@ -10,11 +10,6 @@ BANNED=(b'NovaParallelRangeInputStream', b'NovaSingleStreamInputStream',
         b'capacityPort', b'NOVA_RANGE4', b'nova_range4_capacity', b'NOVA_SINGLE',
         b'parallel_range=1', b'PREFETCH_BEGIN worker=', b'PREFETCH_READY worker=',
         b'PREFETCH_DISCARD worker=')
-PARALLEL_BANNED_SOURCE=('PREFETCH_WORKERS', 'iso_prefetch_worker',
-                        'prefetch_threads', 'prefetch_generation',
-                        'parallel_range=1', 'PREFETCH_BEGIN worker=',
-                        'PREFETCH_READY worker=', 'PREFETCH_DISCARD worker=')
-
 def sha(data): return hashlib.sha256(data).hexdigest()
 def one(root,name):
     paths=list(root.glob('smali*/com/archos/filecorelibrary/'+name))
@@ -35,12 +30,35 @@ def verify_source_baseline(root=ROOT):
             raise RuntimeError('Intentional native override changed: '+name)
     for name in ['parallel_range4','single_stream']:
         if (root/name).exists(): raise RuntimeError('Removed source directory remains: '+name)
-    aggressive=(root/'scripts/aggressive_download_patch.py').read_text()
-    for token in PARALLEL_BANNED_SOURCE:
-        if token in aggressive:
+    removed_files=(
+        root/'scripts/aggressive_download_patch.py',
+        root/'tests/test_aggressive_download_architecture.py',
+        root/'tests/test_native_10x_readahead.py',
+    )
+    for path in removed_files:
+        if path.exists(): raise RuntimeError('Removed legacy file remains: '+str(path.relative_to(root)))
+    native=(root/'scripts/native_rebuffer_patch.py').read_text()
+    iso=(root/'scripts/iso_single_stream_qos_patch.py').read_text()
+    parallel_tokens=tuple(x.replace('__','') for x in (
+        'PRE__FETCH_WORKERS','iso_prefetch___worker','prefetch___threads',
+        'prefetch___generation','parallel___range=1',
+        'PREFETCH___BEGIN worker=','PREFETCH___READY worker=',
+        'PREFETCH___DISCARD worker=',
+    ))
+    for token in parallel_tokens:
+        if token in native or token in iso:
             raise RuntimeError('Parallel Range architecture reintroduced: '+token)
-    if 'NOVA_ISO_SINGLE_STREAM' not in aggressive or 'parallelRange=0' not in aggressive:
+    legacy_raw=tuple(x.replace('__','') for x in (
+        'NOVA_RAW___CHUNK','NOVA_RAW__10X','NOVA_RAW___10X_POLICY',
+        'dynamic raw __10X','raw producer cap=__10X',
+    ))
+    for token in legacy_raw:
+        if token in native:
+            raise RuntimeError('Legacy RAW architecture remains: '+token)
+    if 'NOVA_ISO_SINGLE_STREAM' not in iso or 'parallelRange=0' not in iso:
         raise RuntimeError('Single persistent ISO stream invariant missing')
+    if 'uint8_t *ring;' not in native or 'NOVA_RAW_FIXED128_POLICY:' not in native:
+        raise RuntimeError('Final fixed-128 RAW ring invariant missing')
     return pin
 
 def verify(root, before, report=None):

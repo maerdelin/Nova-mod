@@ -123,7 +123,7 @@ static void *_rebuffer_thread( void *data )
                             } else {
                                 last_wait_log = atime();
                                 serprintf(
-                                    "NOVA_REBUFFER_ENTER: resident=%d raw=%d packet=%d low=%d resume=%d raw10x=%d\n",
+                                    "NOVA_REBUFFER_ENTER: resident=%d raw=%d packet=%d low=%d resume=%d raw_cap=%d\n",
                                     resident, raw_used, packet_used,
                                     s->rebuffer_low_bytes,
                                     s->rebuffer_resume_bytes,
@@ -139,7 +139,7 @@ static void *_rebuffer_thread( void *data )
                         if( now - last_wait_log >= 1000 ) {
                             last_wait_log = now;
                             serprintf(
-                                "NOVA_REBUFFER_WAIT: resident=%d raw=%d packet=%d resume=%d raw10x=%d source_eof=%d user_paused=%d\n",
+                                "NOVA_REBUFFER_WAIT: resident=%d raw=%d packet=%d resume=%d raw_cap=%d source_eof=%d user_paused=%d\n",
                                 resident, raw_used, packet_used,
                                 s->rebuffer_resume_bytes,
                                 s->rebuffer_capacity_bytes,
@@ -184,17 +184,10 @@ static void *_rebuffer_thread( void *data )
 
 
 RAW_TYPES = r'''
-#define NOVA_RAW_CHUNK_BYTES          (128 * 1024)
+#define NOVA_RAW_IO_BYTES             (128 * 1024)
 #define NOVA_RAW_FALLBACK_LOW_BYTES   (24 * 1024 * 1024)
 #define NOVA_RAW_FALLBACK_RESUME_BYTES (64 * 1024 * 1024)
 #define NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)
-
-typedef struct NOVA_RAW_CHUNK {
-    struct NOVA_RAW_CHUNK *next;
-    int offset;
-    int size;
-    uint8_t data[NOVA_RAW_CHUNK_BYTES];
-} NOVA_RAW_CHUNK;
 
 typedef struct NOVA_RAW_PREFETCH {
     STREAM *s;
@@ -206,8 +199,9 @@ typedef struct NOVA_RAW_PREFETCH {
     pthread_mutex_t source_mutex;
     pthread_cond_t can_read;
     pthread_cond_t can_write;
-    NOVA_RAW_CHUNK *head;
-    NOVA_RAW_CHUNK *tail;
+    uint8_t *ring;
+    int64_t read_off;
+    int64_t write_off;
     volatile int run;
     int enabled;
     int thread_started;
@@ -230,6 +224,74 @@ typedef struct NOVA_RAW_PREFETCH {
 
 
 RAW_CODE = r'''
+
+static long nova_cpu_max_freq_khz(int cpu)
+{
+    char path[160];
+    snprintf(path, sizeof(path),
+             "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
+    FILE *f = fopen(path, "r");
+    if( !f ) return 0;
+    long khz = 0;
+    if( fscanf(f, "%ld", &khz) != 1 ) khz = 0;
+    fclose(f);
+    return khz;
+}
+
+static void nova_pick_fast_cpus(const cpu_set_t *allowed, cpu_set_t *fast,
+                                int *fast0, int *fast1)
+{
+    CPU_ZERO(fast);
+    *fast0 = *fast1 = -1;
+    long score0 = -1, score1 = -1;
+    for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
+        if( !CPU_ISSET(cpu, allowed) ) continue;
+        long score = nova_cpu_max_freq_khz(cpu);
+        if( score <= 0 ) score = cpu + 1;  // deterministic fallback
+        if( score > score0 || (score == score0 && cpu > *fast0) ) {
+            score1 = score0; *fast1 = *fast0;
+            score0 = score;  *fast0 = cpu;
+        } else if( score > score1 || (score == score1 && cpu > *fast1) ) {
+            score1 = score; *fast1 = cpu;
+        }
+    }
+    if( *fast0 >= 0 ) CPU_SET(*fast0, fast);
+    if( *fast1 >= 0 ) CPU_SET(*fast1, fast);
+}
+
+static void nova_raw_boost_thread(void)
+{
+    cpu_set_t allowed, fast, actual_mask;
+    CPU_ZERO(&allowed);
+    CPU_ZERO(&fast);
+    CPU_ZERO(&actual_mask);
+    int fast0 = -1, fast1 = -1;
+    int get_aff_rc = sched_getaffinity(0, sizeof(allowed), &allowed);
+    if( get_aff_rc == 0 )
+        nova_pick_fast_cpus(&allowed, &fast, &fast0, &fast1);
+
+    int affinity_rc = -1;
+    int affinity_errno = 0;
+    if( get_aff_rc == 0 && fast0 >= 0 ) {
+        errno = 0;
+        affinity_rc = sched_setaffinity(0, sizeof(fast), &fast);
+        affinity_errno = affinity_rc ? errno : 0;
+    }
+
+    errno = 0;
+    const int requested_nice = -8;
+    int nice_rc = setpriority(PRIO_PROCESS, 0, requested_nice);
+    int nice_errno = nice_rc ? errno : 0;
+    errno = 0;
+    int actual_nice = getpriority(PRIO_PROCESS, 0);
+    int get_nice_errno = errno;
+    int actual_aff_rc = sched_getaffinity(0, sizeof(actual_mask), &actual_mask);
+
+    serprintf(
+        "NOVA_RAW_SCHED: requestedNice=%d niceRc=%d niceErr=%d actualNice=%d getNiceErr=%d fastCpu0=%d fastCpu1=%d affinityRc=%d affinityErr=%d actualAffinityRc=%d\n",
+        requested_nice, nice_rc, nice_errno, actual_nice, get_nice_errno,
+        fast0, fast1, affinity_rc, affinity_errno, actual_aff_rc );
+}
 static int nova_raw_interrupt(void *opaque)
 {
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
@@ -248,16 +310,10 @@ static int nova_raw_interrupt(void *opaque)
     return raw->s && stream_abort(raw->s) ? 1 : 0;
 }
 
-static void nova_raw_free_chunks_locked(NOVA_RAW_PREFETCH *raw)
+static void nova_raw_reset_locked(NOVA_RAW_PREFETCH *raw)
 {
-    NOVA_RAW_CHUNK *chunk = raw->head;
-    while( chunk ) {
-        NOVA_RAW_CHUNK *next = chunk->next;
-        afree(chunk);
-        chunk = next;
-    }
-    raw->head = NULL;
-    raw->tail = NULL;
+    raw->read_off = 0;
+    raw->write_off = 0;
     raw->used_bytes = 0;
 }
 
@@ -280,7 +336,7 @@ static void nova_raw_log_locked(NOVA_RAW_PREFETCH *raw)
     uint64_t consumer_bps = elapsed > 0 ?
         consumed_delta * 1000000ULL / (uint64_t)elapsed : 0;
     serprintf(
-        "NOVA_RAW10X: produced=%llu consumed=%llu raw_used=%lld capacity=%lld producerBps=%llu consumerBps=%llu eof=%d\n",
+        "NOVA_RAW128: produced=%llu consumed=%llu raw_used=%lld capacity=%lld producerBps=%llu consumerBps=%llu eof=%d\n",
         (unsigned long long)raw->produced_bytes,
         (unsigned long long)raw->consumed_bytes,
         (long long)raw->used_bytes,
@@ -312,9 +368,11 @@ static void nova_raw_set_policy(NOVA_RAW_PREFETCH *raw,
 static void *nova_raw_thread(void *opaque)
 {
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
+    nova_raw_boost_thread();
 
     while( __atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ) {
         int want = 0;
+        int64_t write_off = 0;
         unsigned generation = 0;
 
         pthread_mutex_lock(&raw->mutex);
@@ -327,57 +385,52 @@ static void *nova_raw_thread(void *opaque)
             pthread_mutex_unlock(&raw->mutex);
             break;
         }
-        int64_t room = raw->capacity_bytes - raw->used_bytes;
-        want = room > NOVA_RAW_CHUNK_BYTES ?
-            NOVA_RAW_CHUNK_BYTES : (int)room;
+
         pthread_mutex_unlock(&raw->mutex);
 
-        if( want <= 0 )
-            continue;
-
-        NOVA_RAW_CHUNK *chunk =
-            (NOVA_RAW_CHUNK *)amalloc(sizeof(NOVA_RAW_CHUNK));
-        if( !chunk ) {
-            pthread_mutex_lock(&raw->mutex);
-            raw->error = AVERROR(ENOMEM);
-            pthread_cond_broadcast(&raw->can_read);
-            pthread_mutex_unlock(&raw->mutex);
-            continue;
-        }
-        chunk->next = NULL;
-        chunk->offset = 0;
-        chunk->size = 0;
-
         /*
-         * Capture generation only AFTER owning source_mutex. A seek also owns
-         * source_mutex before advancing generation and repositioning the
-         * underlying AVIO. Capturing generation earlier creates a destructive
-         * race: seek can move source to N, then the producer reads N..N+chunk
-         * under the stale generation and discards it, silently leaving source
-         * at N+chunk while consumer_pos still says N. MOV/MP4 runtime random
-         * access is especially sensitive to that byte-position skew.
+         * The ring write offset MUST be sampled after source_mutex is owned.
+         * A seek resets generation/read_off/write_off while also owning
+         * source_mutex. Sampling write_off before this lock lets a producer
+         * carry a pre-seek offset into the post-seek generation and place valid
+         * new bytes at the wrong ring address.
          */
         pthread_mutex_lock(&raw->source_mutex);
         pthread_mutex_lock(&raw->mutex);
+        if( !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||
+            raw->eof || raw->used_bytes >= raw->capacity_bytes ) {
+            pthread_mutex_unlock(&raw->mutex);
+            pthread_mutex_unlock(&raw->source_mutex);
+            continue;
+        }
+
         generation = raw->generation;
+        int64_t room = raw->capacity_bytes - raw->used_bytes;
+        int64_t contiguous = raw->capacity_bytes - raw->write_off;
+        int64_t ask = room < contiguous ? room : contiguous;
+        if( ask > NOVA_RAW_IO_BYTES ) ask = NOVA_RAW_IO_BYTES;
+        want = ask > 0 ? (int)ask : 0;
+        write_off = raw->write_off;
         pthread_mutex_unlock(&raw->mutex);
-        int got = avio_read(raw->source, chunk->data, want);
+
+        if( want <= 0 ) {
+            pthread_mutex_unlock(&raw->source_mutex);
+            continue;
+        }
+
+        int got = avio_read(raw->source, raw->ring + write_off, want);
         pthread_mutex_unlock(&raw->source_mutex);
 
         pthread_mutex_lock(&raw->mutex);
         if( generation != raw->generation ) {
             pthread_mutex_unlock(&raw->mutex);
-            afree(chunk);
             continue;
         }
 
         if( got > 0 ) {
-            chunk->size = got;
-            if( raw->tail )
-                raw->tail->next = chunk;
-            else
-                raw->head = chunk;
-            raw->tail = chunk;
+            raw->write_off += got;
+            if( raw->write_off >= raw->capacity_bytes )
+                raw->write_off = 0;
             raw->used_bytes += got;
             raw->produced_bytes += got;
             raw->eof = 0;
@@ -390,29 +443,35 @@ static void *nova_raw_thread(void *opaque)
             continue;
         }
 
-        afree(chunk);
         if( got == 0 || got == AVERROR_EOF ) {
             raw->eof = 1;
             raw->error = 0;
             __atomic_store_n(
                 &raw->s->raw_prefetch_eof, 1, __ATOMIC_RELEASE );
-        } else {
-            // A transient source read error is not a producer stop condition.
-            // Publish it to an empty consumer, but keep the producer alive:
-            // below 128 MiB it must retry until data resumes, EOF is proven,
-            // a seek changes generation, or the stream is closed.
-            raw->error = got;
+            nova_raw_log_locked(raw);
+            pthread_cond_broadcast(&raw->can_read);
+            pthread_mutex_unlock(&raw->mutex);
+            continue;
         }
-        nova_raw_log_locked(raw);
-        pthread_cond_broadcast(&raw->can_read);
+
+        /*
+         * A transient network read error is not a flow-control state. Below
+         * 128 MiB the producer keeps trying until data resumes, a seek changes
+         * generation, EOF is proven or the stream is closed.
+         */
+        raw->error = 0;
+        serprintf(
+            "NOVA_RAW_RETRY: error=%d generation=%u used=%lld capacity=%lld\n",
+            got, raw->generation, (long long)raw->used_bytes,
+            (long long)raw->capacity_bytes );
         pthread_mutex_unlock(&raw->mutex);
-        if( got < 0 && got != AVERROR_EOF )
-            av_usleep( 50000 );
+        av_usleep(50000);
     }
     return NULL;
-}
+}'''
 
-static int nova_raw_read(void *opaque, uint8_t *dst, int size)
+
+RAW_CONSUMER = r'''static int nova_raw_read(void *opaque, uint8_t *dst, int size)
 {
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
     if( size <= 0 )
@@ -420,40 +479,98 @@ static int nova_raw_read(void *opaque, uint8_t *dst, int size)
 
     pthread_mutex_lock(&raw->mutex);
     while( __atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) &&
-           !raw->head && !raw->eof && !raw->error ) {
+           raw->used_bytes == 0 && !raw->eof ) {
         pthread_cond_wait(&raw->can_read, &raw->mutex);
     }
 
-    if( !raw->head ) {
-        int ret = raw->error ? raw->error :
-                  raw->eof ? AVERROR_EOF : AVERROR_EXIT;
+    if( raw->used_bytes == 0 ) {
+        int ret = raw->eof ? AVERROR_EOF : AVERROR_EXIT;
         pthread_mutex_unlock(&raw->mutex);
         return ret;
     }
 
     int copied = 0;
-    while( copied < size && raw->head ) {
-        NOVA_RAW_CHUNK *chunk = raw->head;
-        int available = chunk->size - chunk->offset;
-        int take = MIN(size - copied, available);
-        memcpy(dst + copied, chunk->data + chunk->offset, take);
-        chunk->offset += take;
-        copied += take;
+    while( copied < size && raw->used_bytes > 0 ) {
+        int64_t contiguous = raw->capacity_bytes - raw->read_off;
+        int64_t available = raw->used_bytes < contiguous ?
+            raw->used_bytes : contiguous;
+        int take = (int)(available < (size - copied) ?
+            available : (size - copied));
+        if( take <= 0 ) break;
+        memcpy(dst + copied, raw->ring + raw->read_off, take);
+        raw->read_off += take;
+        if( raw->read_off >= raw->capacity_bytes )
+            raw->read_off = 0;
         raw->used_bytes -= take;
         raw->consumed_bytes += take;
         raw->consumer_pos += take;
-
-        if( chunk->offset == chunk->size ) {
-            raw->head = chunk->next;
-            if( !raw->head )
-                raw->tail = NULL;
-            afree(chunk);
-        }
+        copied += take;
     }
+
     nova_raw_log_locked(raw);
     pthread_cond_broadcast(&raw->can_write);
     pthread_mutex_unlock(&raw->mutex);
     return copied;
+}'''
+
+
+PLAYBACK_SCHED = r'''
+static long nova_playback_cpu_max_freq_khz(int cpu)
+{
+    char path[160];
+    snprintf(path, sizeof(path),
+             "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
+    FILE *f = fopen(path, "r");
+    if( !f ) return 0;
+    long khz = 0;
+    if( fscanf(f, "%ld", &khz) != 1 ) khz = 0;
+    fclose(f);
+    return khz;
+}
+
+static void nova_playback_yield_sched(const char *role, int requested_nice)
+{
+    cpu_set_t allowed, playback;
+    CPU_ZERO(&allowed);
+    CPU_ZERO(&playback);
+    int get_aff_rc = sched_getaffinity(0, sizeof(allowed), &allowed);
+
+    int fast0 = -1, fast1 = -1;
+    long score0 = -1, score1 = -1;
+    if( get_aff_rc == 0 ) {
+        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
+            if( !CPU_ISSET(cpu, &allowed) ) continue;
+            long score = nova_playback_cpu_max_freq_khz(cpu);
+            if( score <= 0 ) score = cpu + 1;
+            if( score > score0 || (score == score0 && cpu > fast0) ) {
+                score1 = score0; fast1 = fast0;
+                score0 = score; fast0 = cpu;
+            } else if( score > score1 || (score == score1 && cpu > fast1) ) {
+                score1 = score; fast1 = cpu;
+            }
+        }
+
+        int count = 0;
+        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
+            if( !CPU_ISSET(cpu, &allowed) ) continue;
+            if( cpu == fast0 || cpu == fast1 ) continue;
+            CPU_SET(cpu, &playback);
+            count++;
+        }
+        if( count > 0 )
+            sched_setaffinity(0, sizeof(playback), &playback);
+    }
+
+    errno = 0;
+    int nice_rc = setpriority(PRIO_PROCESS, 0, requested_nice);
+    int nice_errno = nice_rc ? errno : 0;
+    errno = 0;
+    int actual_nice = getpriority(PRIO_PROCESS, 0);
+    int get_nice_errno = errno;
+    serprintf(
+        "NOVA_PLAYBACK_SCHED: role=%s requestedNice=%d niceRc=%d niceErr=%d actualNice=%d getNiceErr=%d reservedFast0=%d reservedFast1=%d\n",
+        role, requested_nice, nice_rc, nice_errno,
+        actual_nice, get_nice_errno, fast0, fast1 );
 }
 
 static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
@@ -489,7 +606,7 @@ static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
         pthread_mutex_lock(&raw->mutex);
         raw->generation++;
         unsigned generation = raw->generation;
-        nova_raw_free_chunks_locked(raw);
+        nova_raw_reset_locked(raw);
         raw->consumer_pos = result;
         raw->eof = 0;
         raw->error = 0;
@@ -498,7 +615,7 @@ static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
         pthread_cond_broadcast(&raw->can_read);
         pthread_cond_broadcast(&raw->can_write);
         serprintf(
-            "NOVA_RAW10X_SEEK: target=%lld result=%lld generation=%u\n",
+            "NOVA_RAW128_SEEK: target=%lld result=%lld generation=%u\n",
             (long long)target, (long long)result, generation );
         pthread_mutex_unlock(&raw->mutex);
     }
@@ -558,6 +675,14 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         goto init_fail;
     can_write_ready = 1;
 
+    raw->ring = av_malloc(NOVA_RAW_FALLBACK_CAP_BYTES);
+    if( !raw->ring ) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+    raw->read_off = 0;
+    raw->write_off = 0;
+
     AVDictionary *io_options = NULL;
     av_dict_copy(&io_options, *options, 0);
     AVIOInterruptCB interrupt = {
@@ -577,13 +702,13 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         goto fail;
     }
 
-    unsigned char *buffer = av_malloc(NOVA_RAW_CHUNK_BYTES);
+    unsigned char *buffer = av_malloc(NOVA_RAW_IO_BYTES);
     if( !buffer ) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
     raw->consumer = avio_alloc_context(
-        buffer, NOVA_RAW_CHUNK_BYTES, 0, raw,
+        buffer, NOVA_RAW_IO_BYTES, 0, raw,
         nova_raw_read, NULL, nova_raw_seek );
     if( !raw->consumer ) {
         av_free(buffer);
@@ -610,7 +735,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     }
     raw->thread_started = 1;
     serprintf(
-        "NOVA_RAW10X_OPEN: phase=pre_probe url=%s fallback_low=%d fallback_resume=%d fallback_capacity=%d source_size=%lld seekable=%d\n",
+        "NOVA_RAW128_OPEN: phase=pre_probe url=%s fallback_low=%d fallback_resume=%d fallback_capacity=%d source_size=%lld seekable=%d\n",
         url, NOVA_RAW_FALLBACK_LOW_BYTES,
         NOVA_RAW_FALLBACK_RESUME_BYTES,
         NOVA_RAW_FALLBACK_CAP_BYTES,
@@ -636,6 +761,7 @@ fail:
     }
     if( raw->source )
         avio_closep(&raw->source);
+    av_freep(&raw->ring);
     raw->enabled = 0;
     __atomic_store_n(&s->raw_prefetch_enabled, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
@@ -664,7 +790,7 @@ static void nova_raw_close(NOVA_RAW_PREFETCH *raw)
     }
 
     pthread_mutex_lock(&raw->mutex);
-    nova_raw_free_chunks_locked(raw);
+    nova_raw_reset_locked(raw);
     pthread_mutex_unlock(&raw->mutex);
 
     if( raw->consumer ) {
@@ -673,6 +799,7 @@ static void nova_raw_close(NOVA_RAW_PREFETCH *raw)
     }
     if( raw->source )
         avio_closep(&raw->source);
+    av_freep(&raw->ring);
 
     __atomic_store_n(&raw->s->raw_prefetch_enabled, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&raw->s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
@@ -846,6 +973,66 @@ DYNAMIC_POLICY = r'''
 '''
 
 
+PLAYBACK_SCHED = r'''
+static long nova_playback_cpu_max_freq_khz(int cpu)
+{
+    char path[160];
+    snprintf(path, sizeof(path),
+             "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
+    FILE *f = fopen(path, "r");
+    if( !f ) return 0;
+    long khz = 0;
+    if( fscanf(f, "%ld", &khz) != 1 ) khz = 0;
+    fclose(f);
+    return khz;
+}
+
+static void nova_playback_yield_sched(const char *role, int requested_nice)
+{
+    cpu_set_t allowed, playback;
+    CPU_ZERO(&allowed);
+    CPU_ZERO(&playback);
+    int get_aff_rc = sched_getaffinity(0, sizeof(allowed), &allowed);
+
+    int fast0 = -1, fast1 = -1;
+    long score0 = -1, score1 = -1;
+    if( get_aff_rc == 0 ) {
+        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
+            if( !CPU_ISSET(cpu, &allowed) ) continue;
+            long score = nova_playback_cpu_max_freq_khz(cpu);
+            if( score <= 0 ) score = cpu + 1;
+            if( score > score0 || (score == score0 && cpu > fast0) ) {
+                score1 = score0; fast1 = fast0;
+                score0 = score; fast0 = cpu;
+            } else if( score > score1 || (score == score1 && cpu > fast1) ) {
+                score1 = score; fast1 = cpu;
+            }
+        }
+
+        int count = 0;
+        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
+            if( !CPU_ISSET(cpu, &allowed) ) continue;
+            if( cpu == fast0 || cpu == fast1 ) continue;
+            CPU_SET(cpu, &playback);
+            count++;
+        }
+        if( count > 0 )
+            sched_setaffinity(0, sizeof(playback), &playback);
+    }
+
+    errno = 0;
+    int nice_rc = setpriority(PRIO_PROCESS, 0, requested_nice);
+    int nice_errno = nice_rc ? errno : 0;
+    errno = 0;
+    int actual_nice = getpriority(PRIO_PROCESS, 0);
+    int get_nice_errno = errno;
+    serprintf(
+        "NOVA_PLAYBACK_SCHED: role=%s requestedNice=%d niceRc=%d niceErr=%d actualNice=%d getNiceErr=%d reservedFast0=%d reservedFast1=%d\n",
+        role, requested_nice, nice_rc, nice_errno,
+        actual_nice, get_nice_errno, fast0, fast1 );
+}'''
+
+
 def patch_stream_h(path: Path) -> None:
     text = path.read_text()
     text = replace_once(
@@ -881,6 +1068,30 @@ def patch_stream_h(path: Path) -> None:
 
 def patch_stream_video(path: Path) -> None:
     text = path.read_text()
+    text = replace_once(text, '#include "global.h"',
+        '#ifndef _GNU_SOURCE\n#define _GNU_SOURCE 1\n#endif\n#include "global.h"',
+        "video GNU feature define")
+    text = replace_once(text, "#include <signal.h>\n",
+        "#include <signal.h>\n#include <sched.h>\n#include <sys/resource.h>\n#include <unistd.h>\n",
+        "video scheduling includes")
+    text = replace_once(text, "static void *_decode_thread( void *data )\n",
+        PLAYBACK_SCHED + "\nstatic void *_decode_thread( void *data )\n",
+        "playback scheduling helper")
+    text = replace_once(
+        text,
+        "\tSTREAM *s = (STREAM *)data;\n\ttimeline_set_local_identity(!!(s->flags & STREAM_THUMB));\nDBGS serprintf(\"PID[%5d] decode_thread::Starting\\r\\n\", getpid() );\t\n\t\n\twhile( s->codec_run ) {",
+        "\tSTREAM *s = (STREAM *)data;\n\ttimeline_set_local_identity(!!(s->flags & STREAM_THUMB));\n\tint nova_sched_done = 0;\nDBGS serprintf(\"PID[%5d] decode_thread::Starting\\r\\n\", getpid() );\t\n\t\n\twhile( s->codec_run ) {\n\t\tif( !nova_sched_done && __atomic_load_n(&s->raw_prefetch_enabled, __ATOMIC_ACQUIRE) ) {\n\t\t\tnova_playback_yield_sched(\"decode\", 8);\n\t\t\tnova_sched_done = 1;\n\t\t}",
+        "decode yields to downloader")
+    text = replace_once(
+        text,
+        "\tSTREAM *s = (STREAM *)data;\n\ttimeline_set_local_identity(!!(s->flags & STREAM_THUMB));\n\tint yield = 1;",
+        "\tSTREAM *s = (STREAM *)data;\n\ttimeline_set_local_identity(!!(s->flags & STREAM_THUMB));\n\tint nova_sched_done = 0;\n\tint yield = 1;",
+        "parser scheduling flag")
+    text = replace_once(
+        text,
+        "\twhile( thread_state_get( &s->parser_tstate ) != THREAD_EXIT ) {\n\t\tthread_state_ack( &s->parser_tstate );",
+        "\twhile( thread_state_get( &s->parser_tstate ) != THREAD_EXIT ) {\n\t\tif( !nova_sched_done && __atomic_load_n(&s->raw_prefetch_enabled, __ATOMIC_ACQUIRE) ) {\n\t\t\tnova_playback_yield_sched(\"parser\", 5);\n\t\t\tnova_sched_done = 1;\n\t\t}\n\t\tthread_state_ack( &s->parser_tstate );",
+        "parser yields to downloader")
     text = replace_once(
         text,
         "#define THREAD_PRIO_SUBTITLE\t0\n",
@@ -1032,6 +1243,16 @@ def patch_avos_mp_video(path: Path) -> None:
 
 def patch_stream_parser_ffmpeg(path: Path) -> None:
     text = path.read_text()
+    text = replace_once(
+        text, '#include "types.h"',
+        '#ifndef _GNU_SOURCE\n#define _GNU_SOURCE 1\n#endif\n#include "types.h"',
+        "parser GNU feature define",
+    )
+    text = replace_once(
+        text, "#include <signal.h>\n",
+        "#include <signal.h>\n#include <sched.h>\n#include <sys/resource.h>\n#include <unistd.h>\n",
+        "parser scheduling includes",
+    )
 
     fd_type = '''typedef struct FD_INPUT {
 \tint fd;
@@ -1117,7 +1338,7 @@ static int ff_force_seek'''
         text,
         "\ts->duration = ff_p->duration;\n\ts->size     = ff_p->size;\n",
         DYNAMIC_POLICY,
-        "install source-layer dynamic 2X/5X/10X policy",
+        "install source-layer dynamic 2X/5X with fixed 128MiB producer wall",
     )
 
     # Custom AVIO is owned by us because AVFMT_FLAG_CUSTOM_IO prevents lavf
@@ -1157,7 +1378,7 @@ static int ff_force_seek'''
 \tstats->buffer_size   = ff_p->buffer_size;
 \tstats->buffer_used   = ff_p->aq.mem_used + ff_p->vq.mem_used;
 \t// buffer2 is the independent PRE-DEMUX raw source queue. Its capacity is
-\t// the only normal 10X network-production wall.
+\t// the single fixed 128 MiB network-production wall.
 \tnova_raw_stats(&ff_p->raw, &stats->buffer2_used, &stats->buffer2_size);
 \t
 \tstats->audio_chunks  = ff_p->aq.packets;
@@ -1169,8 +1390,8 @@ static int ff_force_seek'''
     )
 
     required = (
-        "NOVA_RAW10X_OPEN:",
-        "NOVA_RAW10X:",
+        "NOVA_RAW128_OPEN:",
+        "NOVA_RAW128:",
         "NOVA_RAW_FIXED128_POLICY:",
         "NOVA_TS_BITRATE:",
         "nova_raw_thread",
@@ -1181,12 +1402,11 @@ static int ff_force_seek'''
     if missing:
         raise RuntimeError("raw prefetch postcondition missing: " + repr(missing))
     forbidden = (
-        "NOVA_10X_PACKET" + "_CAP_BYPASS",
         "ff_p->buffer_size" + " = s->rebuffer_capacity_bytes",
     )
     present = [token for token in forbidden if token in text]
     if present:
-        raise RuntimeError("post-demux 10X residue remains: " + repr(present))
+        raise RuntimeError("post-demux producer-wall residue remains: " + repr(present))
 
     path.write_text(text)
 
@@ -1319,21 +1539,21 @@ def apply(
         "aos_avos_commit": head,
         "aos_avos_head_policy": "latest-structural" if allow_unpinned_head else "pinned",
         "architecture": "one independent native raw-source producer before FFmpeg demux; no Java FIFO and no parallel downloader",
-        "network_wall": "dynamic raw 10X only",
-        "raw_chunk_bytes": 128 * 1024,
-        "dynamic_buffer": "X=file bytes/duration seconds; playback low=2X, resume=5X; raw producer cap=10X",
+        "network_wall": "fixed 128MiB raw warehouse only",
+        "raw_io_bytes": 128 * 1024,
+        "dynamic_buffer": "X=file bytes/duration seconds; playback low=2X, resume=5X; raw producer cap=fixed 128MiB",
         "fallback": {
             "low_bytes": LOW_BYTES,
             "resume_bytes": RESUME_BYTES,
             "capacity_bytes": CAPACITY_BYTES,
         },
-        "packet_queue_role": "upstream FFmpeg handoff/safety queue only; never resized to 10X",
-        "packet_queue_10x": False,
-        "manual_pause_policy": "manual pause may stop parser/playback; independent raw producer continues until raw 10X",
+        "packet_queue_role": "upstream FFmpeg handoff/safety queue only; never used as a producer wall",
+        "packet_queue_is_producer_wall": False,
+        "manual_pause_policy": "manual pause may stop parser/playback; independent raw producer continues until the fixed 128MiB warehouse is full",
         "internal_rebuffer_policy": "parser may continue only during automatic rebuffer; raw producer is independent in all states",
         "probe_policy": "one stable RAW custom AVIO is installed before avformat_open_input and remains the demuxer IO through probe, tail-moov discovery and runtime",
         "seek_policy": "single producer-owned source AVIO for probe and playback; seek serializes source, invalidates queued raw generation, no parallel downloader",
-        "telemetry": ["NOVA_RAW10X_OPEN", "NOVA_RAW10X", "NOVA_RAW_10X_POLICY", "NOVA_REBUFFER_ENTER", "NOVA_REBUFFER_WAIT", "NOVA_REBUFFER_EXIT", "NOVA_STARTUP_TRACE"],
+        "telemetry": ["NOVA_RAW128_OPEN", "NOVA_RAW128", "NOVA_RAW_FIXED128_POLICY", "NOVA_REBUFFER_ENTER", "NOVA_REBUFFER_WAIT", "NOVA_REBUFFER_EXIT", "NOVA_STARTUP_TRACE"],
         "mp4_tail_moov_safe": True,
         "mp4_runtime_seek_race_safe": True,
         "events": ["MEDIA_INFO_BUFFERING_START", "MEDIA_INFO_BUFFERING_END"],
