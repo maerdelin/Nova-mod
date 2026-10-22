@@ -122,3 +122,148 @@ static int select_main_title(nova_session *s)
     }
     return s->output_size ? 0 : -1;
 }
+
+
+static nova_session *session_acquire(uint64_t generation)
+{
+    pthread_mutex_lock(&g_lock);
+    nova_session *s = g_session;
+    if (!s || s->generation != generation || s->stopping) {
+        pthread_mutex_unlock(&g_lock);
+        return NULL;
+    }
+    s->active_calls++;
+    pthread_mutex_unlock(&g_lock);
+    return s;
+}
+
+static void session_release(nova_session *s)
+{
+    pthread_mutex_lock(&g_lock);
+    if (s->active_calls > 0)
+        s->active_calls--;
+    if (s->active_calls == 0)
+        pthread_cond_broadcast(&s->idle);
+    pthread_mutex_unlock(&g_lock);
+}
+
+static void session_free(nova_session *s)
+{
+    if (!s)
+        return;
+    s->stopping = 1;
+    pthread_mutex_lock(&g_lock);
+    while (s->active_calls > 0)
+        pthread_cond_wait(&s->idle, &g_lock);
+    pthread_mutex_unlock(&g_lock);
+
+    pthread_mutex_lock(&s->io_lock);
+    if (s->bd) {
+        bd_close(s->bd);
+        s->bd = NULL;
+    }
+    if (s->upstream) {
+        avio_closep(&s->upstream);
+        s->upstream = NULL;
+    }
+    pthread_mutex_unlock(&s->io_lock);
+    pthread_mutex_destroy(&s->io_lock);
+    pthread_cond_destroy(&s->idle);
+    free(s);
+}
+
+static nova_session *session_create(const char *url, const char *headers, int iso)
+{
+    nova_session *s = calloc(1, sizeof(*s));
+    if (!s)
+        return NULL;
+    s->upstream_pos = -1;
+    s->upstream_size = -1;
+    s->mode = iso ? NOVA_MODE_BLURAY_ISO : NOVA_MODE_FILE;
+    pthread_mutex_init(&s->io_lock, NULL);
+    pthread_cond_init(&s->idle, NULL);
+
+    AVDictionary *opts = NULL;
+    if (headers && *headers)
+        av_dict_set(&opts, "headers", headers, 0);
+    av_dict_set(&opts, "reconnect", "1", 0);
+    av_dict_set(&opts, "reconnect_streamed", "1", 0);
+    av_dict_set(&opts, "reconnect_at_eof", "0", 0);
+    av_dict_set(&opts, "reconnect_delay_max", "3", 0);
+    av_dict_set(&opts, "rw_timeout", "15000000", 0);
+
+    AVIOInterruptCB cb = { .callback = transport_interrupt, .opaque = s };
+    int rc = avio_open2(&s->upstream, url, AVIO_FLAG_READ, &cb, &opts);
+    av_dict_free(&opts);
+    if (rc < 0 || !s->upstream) {
+        char err[128] = {0};
+        av_strerror(rc, err, sizeof(err));
+        LOGE("UPSTREAM_OPEN_FAIL rc=%d err=%s", rc, err);
+        session_free(s);
+        return NULL;
+    }
+
+    s->upstream_size = avio_size(s->upstream);
+    int64_t origin = avio_seek(s->upstream, 0, SEEK_SET);
+    if (origin < 0) {
+        LOGE("UPSTREAM_SEEK0_FAIL rc=%" PRId64, origin);
+        session_free(s);
+        return NULL;
+    }
+    s->upstream_pos = origin;
+
+    if (s->mode == NOVA_MODE_BLURAY_ISO) {
+        s->bd = bd_init();
+        if (!s->bd || !bd_open_stream(s->bd, s, upstream_read_blocks)) {
+            LOGE("BLURAY_OPEN_FAIL");
+            session_free(s);
+            return NULL;
+        }
+        const BLURAY_DISC_INFO *di = bd_get_disc_info(s->bd);
+        if (di && di->aacs_detected && !di->aacs_handled) {
+            LOGE("AACS_UNSUPPORTED");
+            session_free(s);
+            return NULL;
+        }
+        if (select_main_title(s) < 0) {
+            LOGE("BLURAY_MAIN_TITLE_FAIL");
+            session_free(s);
+            return NULL;
+        }
+    } else {
+        if (s->upstream_size <= 0) {
+            LOGE("UPSTREAM_SIZE_INVALID size=%" PRId64, s->upstream_size);
+            session_free(s);
+            return NULL;
+        }
+        s->output_size = (uint64_t)s->upstream_size;
+    }
+    return s;
+}
+
+__attribute__((visibility("default")))
+int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
+{
+    if (!dst || size <= 0)
+        return AVERROR(EINVAL);
+    nova_session *s = session_acquire(generation);
+    if (!s)
+        return AVERROR_EXIT;
+
+    pthread_mutex_lock(&s->io_lock);
+    int ret;
+    if (s->stopping) {
+        ret = AVERROR_EXIT;
+    } else if (s->mode == NOVA_MODE_BLURAY_ISO) {
+        ret = bd_read(s->bd, dst, size);
+        if (ret == 0)
+            ret = AVERROR_EOF;
+    } else {
+        ret = avio_read(s->upstream, dst, size);
+        if (ret > 0)
+            s->upstream_pos += ret;
+    }
+    pthread_mutex_unlock(&s->io_lock);
+    session_release(s);
+    return ret;
+}
