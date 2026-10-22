@@ -158,8 +158,17 @@ def main():
                 20,
                 "direct WebDAV seek through RAW128 and native upstream",
             )
+            text = wait_for(
+                lambda t: (
+                    seek_marker in t
+                    and "HIDE_DONE" in t[t.rfind(seek_marker):]
+                ),
+                8,
+                "same-action controller auto hide before BACK",
+            )
 
-            # BACK must abort the one native session immediately. No old
+            # With the controller already hidden, one BACK is a real player
+            # exit and must abort the one native session immediately. No old
             # post-shutdown RAW retry loop is allowed to appear afterwards.
             back_marker = "NOVA_DIRECT_BACK_" + str(time.monotonic_ns())
             adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back_marker)
