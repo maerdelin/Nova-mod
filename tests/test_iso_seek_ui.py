@@ -60,10 +60,10 @@ int main(void) {
  char url[]="http://127.0.0.1:36383/main.m2ts";
  char q[]="?mpegts&nova_iso=1&nova_iso_duration_us=7023049355&nova_iso_clip_count=1&nova_iso_title_size=87096612864&nova_iso_generation=1";
  assert(nova_iso_timeline_us(url,q,87096612864ULL)==7023049355LL);
- IO io={1};Format fmt={&io,11650700,0};FF f={0,11650,1,0,&fmt};Stream s={18,87096612864ULL,{url},q,0,1,124015370};
+ IO io={1};Format fmt={&io,11650700,0};FF f={0,11650,1,0,&fmt};Stream s={18,87096612864ULL,{url},q,0,1,134217728};
  activate(&s,&f);
  assert(s.duration==7023049 && f.duration==7023049 && !s.no_duration && f.nova_iso_time_mode==1);
- assert(fmt.duration==7023049355LL && s.rebuffer_capacity_bytes==124015370);
+ assert(fmt.duration==7023049355LL && s.rebuffer_capacity_bytes==134217728);
  int64_t targetUs=((int64_t)5000+f.start_time)*1000000/1000;
  assert(targetUs==16650000LL);assert(targetUs-(int64_t)f.start_time*1000==5000000LL);
  int64_t backwardUs=((int64_t)15000+f.start_time)*1000000/1000;
@@ -98,7 +98,7 @@ int main(void) {
         self.assertIn('nova_iso_clip_count',after);self.assertIn('nova_iso_title_size',after)
         with self.assertRaises(RuntimeError):patch.iso_text(after)
     def test_native_transform_guards_and_preserves_buffer_block(self):
-        before='NOVA_DYNAMIC_BUFFER:\n\tint\t\tstart_time;\nstatic int _open( STREAM *s, int buffer_size, int flags )\n{\n KEEP_BUFFER_ARITHMETIC\n\ts->parser_open = 1;\n}\n\t\tnew_pos = ((INT64)time + ff_p->start_time) * AV_TIME_BASE / 1000;'
+        before='NOVA_RAW_FIXED128_POLICY:\n\tint\t\tstart_time;\nstatic int _open( STREAM *s, int buffer_size, int flags )\n{\n KEEP_BUFFER_ARITHMETIC\n\ts->parser_open = 1;\n}\n\t\tnew_pos = ((INT64)time + ff_p->start_time) * AV_TIME_BASE / 1000;'
         after=patch.native_text(before)
         self.assertEqual(after.count('KEEP_BUFFER_ARITHMETIC'),1)
         self.assertLess(after.index('KEEP_BUFFER_ARITHMETIC'),after.index('NOVA_ISO_TIMELINE_READY'))

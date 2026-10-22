@@ -5,11 +5,12 @@ import argparse, copy, hashlib, json, re, zipfile
 import granular as g
 ROOT=Path(__file__).resolve().parents[1]
 FILES=('StreamOverHttp.smali','StreamOverHttp$HttpSession.smali')
-BANNED=(b'NovaParallelRangeInputStream', b'NovaSingleStreamInputStream',
-        b'novaWrapRange4', b'publishRange4', b'publishSingle', b'capacityOwner',
-        b'capacityPort', b'NOVA_RANGE4', b'nova_range4_capacity', b'NOVA_SINGLE',
-        b'parallel_range=1', b'PREFETCH_BEGIN worker=', b'PREFETCH_READY worker=',
-        b'PREFETCH_DISCARD worker=')
+BANNED=(b'NovaParallel'+b'RangeInputStream', b'NovaSingle'+b'StreamInputStream',
+        b'novaWrap'+b'Range4', b'publish'+b'Range4', b'publish'+b'Single',
+        b'capacity'+b'Owner', b'capacity'+b'Port', b'NOVA_'+b'RANGE4',
+        b'nova_range4_'+b'capacity', b'NOVA_'+b'SINGLE',
+        b'parallel_'+b'range=1', b'PREFETCH_'+b'BEGIN worker=',
+        b'PREFETCH_'+b'READY worker=', b'PREFETCH_'+b'DISCARD worker=')
 def sha(data): return hashlib.sha256(data).hexdigest()
 def one(root,name):
     paths=list(root.glob('smali*/com/archos/filecorelibrary/'+name))
@@ -17,6 +18,33 @@ def one(root,name):
     return paths[0]
 def capture(root):
     return {name:one(root,name).read_text() for name in FILES}
+SOURCE_SUFFIXES={'.py','.yml','.yaml','.json','.c','.h','.java','.smali'}
+SOURCE_EXCLUDED={'.git','work','reports','dist','inputs','tools','native-src'}
+def verify_repo_no_legacy(root=ROOT):
+    legacy=tuple(x.replace('__','') for x in (
+        'NOVA_RAW__10X','NOVA_RAW___10X_POLICY','NOVA_RAW___CHUNK',
+        'dynamic raw __10X','raw producer cap=__10X','124__015370',
+        'PRE__FETCH_WORKERS','iso_prefetch___worker','prefetch___threads',
+        'prefetch___generation','parallel___range=1',
+        'PREFETCH___BEGIN worker=','PREFETCH___READY worker=',
+        'PREFETCH___DISCARD worker=',
+        'NovaParallel__RangeInputStream','NovaSingle__StreamInputStream',
+        'novaWrap__Range4','publish__Range4','NOVA___RANGE4',
+        'nova_range4___capacity',
+        'aggressive___download_patch.py',
+        'test_aggressive___download_architecture.py',
+        'test_native___10x_readahead.py',
+    ))
+    for path in root.rglob('*'):
+        if not path.is_file() or path.suffix not in SOURCE_SUFFIXES: continue
+        rel=path.relative_to(root)
+        if any(part in SOURCE_EXCLUDED for part in rel.parts): continue
+        text=path.read_text(errors='ignore')
+        for token in legacy:
+            if token in text:
+                raise RuntimeError('Legacy source token remains: '+str(rel)+': '+token)
+    return True
+
 def verify_source_baseline(root=ROOT):
     pin=json.loads((root/'baseline/main-transport.json').read_text())
     for name,expected in pin['source_files'].items():
@@ -28,12 +56,12 @@ def verify_source_baseline(root=ROOT):
         blob=hashlib.sha1(header+data).hexdigest()
         if blob!=meta['git_blob_sha1']:
             raise RuntimeError('Intentional native override changed: '+name)
-    for name in ['parallel_range4','single_stream']:
+    for name in ['parallel_'+'range4','single_'+'stream']:
         if (root/name).exists(): raise RuntimeError('Removed source directory remains: '+name)
     removed_files=(
-        root/'scripts/aggressive_download_patch.py',
-        root/'tests/test_aggressive_download_architecture.py',
-        root/'tests/test_native_10x_readahead.py',
+        root/'scripts'/('aggressive_'+'download_patch.py'),
+        root/'tests'/('test_aggressive_'+'download_architecture.py'),
+        root/'tests'/('test_native_'+'10x_readahead.py'),
     )
     for path in removed_files:
         if path.exists(): raise RuntimeError('Removed legacy file remains: '+str(path.relative_to(root)))
@@ -59,6 +87,7 @@ def verify_source_baseline(root=ROOT):
         raise RuntimeError('Single persistent ISO stream invariant missing')
     if 'uint8_t *ring;' not in native or 'NOVA_RAW_FIXED128_POLICY:' not in native:
         raise RuntimeError('Final fixed-128 RAW ring invariant missing')
+    verify_repo_no_legacy(root)
     return pin
 
 def verify(root, before, report=None):

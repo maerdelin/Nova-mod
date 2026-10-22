@@ -79,7 +79,7 @@ class DownloadArchitectureTests(unittest.TestCase):
     def test_workflow_has_no_second_native_transform(self):
         self.assertIn("python3 scripts/native_rebuffer_patch.py native-src/native/avos", WORKFLOW)
         self.assertIn("python3 scripts/iso_single_stream_qos_patch.py iso/nova_iso.c", WORKFLOW)
-        self.assertNotIn("aggressive_download_patch.py", WORKFLOW)
+        self.assertNotIn("aggressive_" + "download_patch.py", WORKFLOW)
 
 
 if __name__ == "__main__":
