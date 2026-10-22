@@ -1,0 +1,79 @@
+ing;'),
+ 'uri_parse':midx(P1,'Landroid/net/Uri;','parse','(Ljava/lang/String;)Landroid/net/Uri;'),
+ 'qb_init':midx(P1,'Lqj;','<init>','()V'),
+ 'qb_url':midx(P1,'Lqj;','h','(Ljava/lang/String;)V'),
+ 'qb_get':midx(P1,'Lqj;','a','()V'),
+ 'qb_header':midx(P1,'Lqj;','b','(Ljava/lang/String;Ljava/lang/String;)V'),
+ 'req_init':midx(P1,'Lj21;','<init>','(Lqj;)V'),
+ 'call_init':midx(P1,'Ltz0;','<init>','(Lns0;Lj21;)V'),
+ 'execute':midx(P1,'Ltz0;','c','()Ll31;'),
+ 'resp_close':midx(P1,'Ll31;','close','()V'),
+ 'hdr_get':midx(P1,'Lf90;','a','(Ljava/lang/String;)Ljava/lang/String;'),
+ 'sb_init':midx(P1,'Ljava/lang/StringBuilder;','<init>','()V'),
+ 'sb_append_s':midx(P1,'Ljava/lang/StringBuilder;','append','(Ljava/lang/String;)Ljava/lang/StringBuilder;'),
+ 'sb_append_i':midx(P1,'Ljava/lang/StringBuilder;','append','(I)Ljava/lang/StringBuilder;'),
+ 'sb_str':midx(P1,'Ljava/lang/StringBuilder;','toString','()Ljava/lang/String;'),
+}
+F={
+ 'resp_code':fidx(P1,'Ll31;','d','I'),
+ 'resp_req':fidx(P1,'Ll31;','a','Lj21;'),
+ 'req_url':fidx(P1,'Lj21;','f','Lpf;'),
+ 'req_headers':fidx(P1,'Lj21;','c','Lf90;'),
+ 'scratch':23526,
+}
+T={x:tidx(P1,x) for x in ['Lqj;','Lj21;','Ltz0;','Ljava/lang/StringBuilder;']}
+S={x:sidx(P1,x) for x in ['','Range','bytes=','-','Authorization',': ']}
+
+# Assemble helper into existing 178-code-unit slot. regs=15 => p0=v14.
+a=A()
+a.const_string(0,S['']); a.sput_obj(0,F['scratch'])
+a.invoke_static(M['peek'],[]); a.move_result_obj(1); a.if_eqz(1,'fail')
+a.invoke_virtual(M['sardine'],[1,14])
+a.invoke_virtual(M['client'],[1,14]); a.move_result_obj(2); a.if_eqz(2,'fail')
+a.invoke_static(M['tohttp'],[14]); a.move_result_obj(3); a.if_eqz(3,'fail')
+a.invoke_virtual(M['uri_str'],[3]); a.move_result_obj(4); a.if_eqz(4,'fail')
+a.new_instance(5,T['Lqj;']); a.invoke_direct(M['qb_init'],[5]); a.invoke_virtual(M['qb_url'],[5,4]); a.invoke_virtual(M['qb_get'],[5])
+a.new_instance(13,T['Ljava/lang/StringBuilder;']); a.invoke_direct(M['sb_init'],[13])
+a.const_string(0,S['bytes=']); a.invoke_virtual(M['sb_append_s'],[13,0]); a.const4(0,0); a.invoke_virtual(M['sb_append_i'],[13,0])
+a.const_string(0,S['-']); a.invoke_virtual(M['sb_append_s'],[13,0]); a.const4(0,0); a.invoke_virtual(M['sb_append_i'],[13,0])
+a.invoke_virtual(M['sb_str'],[13]); a.move_result_obj(13)
+a.const_string(0,S['Range']); a.invoke_virtual(M['qb_header'],[5,0,13])
+a.new_instance(6,T['Lj21;']); a.invoke_direct(M['req_init'],[6,5])
+a.new_instance(7,T['Ltz0;']); a.invoke_direct(M['call_init'],[7,2,6]); a.invoke_virtual(M['execute'],[7]); a.move_result_obj(8); a.if_eqz(8,'fail')
+a.iget(0,8,F['resp_code']); a.const16(9,200); a.if_eq(0,9,'ok'); a.const16(9,206); a.if_eq(0,9,'ok'); a.goto16('close_fail')
+a.label('ok')
+a.iget_obj(9,8,F['resp_req']); a.if_eqz(9,'close_fail'); a.iget_obj(10,9,F['req_url']); a.if_eqz(10,'close_fail')
+a.invoke_virtual(M['uri_str'],[10]); a.move_result_obj(11); a.if_eqz(11,'close_fail')
+a.iget_obj(12,9,F['req_headers']); a.if_eqz(12,'close_fail'); a.const_string(13,S['Authorization']); a.invoke_virtual(M['hdr_get'],[12,13]); a.move_result_obj(12)
+a.if_eqz(12,'make_uri')
+a.new_instance(13,T['Ljava/lang/StringBuilder;']); a.invoke_direct(M['sb_init'],[13]); a.const_string(0,S['Authorization']); a.invoke_virtual(M['sb_append_s'],[13,0]); a.const_string(0,S[': ']); a.invoke_virtual(M['sb_append_s'],[13,0]); a.invoke_virtual(M['sb_append_s'],[13,12]); a.invoke_virtual(M['sb_str'],[13]); a.move_result_obj(12); a.sput_obj(12,F['scratch'])
+a.label('make_uri'); a.invoke_static(M['uri_parse'],[11]); a.move_result_obj(10); a.invoke_virtual(M['resp_close'],[8]); a.ret_obj(10)
+a.label('close_fail'); a.invoke_virtual(M['resp_close'],[8])
+a.label('fail'); a.const4(0,0); a.ret_obj(0)
+words=a.finish()
+if len(words)>178: raise RuntimeError(f'helper too big {len(words)}')
+words += [0]*(178-len(words))
+print('HELPER_CODE_UNITS_USED',178-words[::-1].index(next((x for x in words[::-1] if x!=0),0)) if any(words) else 0,'assembled',len(a.w),'slot',178)
+create_sid=sidx(P1,'create'); uri_uri_proto=pidx(P1,'(Landroid/net/Uri;)Landroid/net/Uri;')
+mo=P1['mo']; ci,oldpi,oldni=struct.unpack_from('<HHI',c1,mo+8*12476); struct.pack_into('<HHI',c1,mo+8*12476,ci,uri_uri_proto,create_sid)
+I_sid=sidx(P1,'I'); fo=P1['fo']; fci,fti,fni=struct.unpack_from('<HHI',c1,fo+8*23526); struct.pack_into('<HHI',c1,fo+8*23526,fci,fti,I_sid)
+code_off=0x4a6f58
+old=struct.unpack_from('<HHHHII',c1,code_off); assert old[:4]==(9,2,3,0) and old[5]==178
+struct.pack_into('<HHHHII',c1,code_off,15,1,3,0,0,178)
+struct.pack_into('<'+'H'*178,c1,code_off+16,*words)
+fix_dex(c1)
+
+P4=parse(c4); so=P4['so']
+start=P4['SO'][17]; end=(lambda sid: (lambda o: (lambda n,p,l: c4.index(b'\0',p)+1)(*uleb(c4,o)))(P4['SO'][sid]))(20)
+new_strings=[
+ 'Lcom/A;',
+ 'Lcom/archos/filecorelibrary/contentstorage/DocumentUriBuilder;',
+ 'Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;',
+ 'Lcom/archos/mediacenter/video/browser/loader/TvshowsSelectionLoader;',
+]
+blob=bytearray(); newoffs=[]
+for s in new_strings:
+ newoffs.append(start+len(blob)); raw=s.encode('utf8'); blob+=enc_uleb(len(s))+raw+b'\0'
+if len(blob)>end-start: raise RuntimeError(('string block too large',len(blob),end-start))
+blob += b'\0'*(end-start-len(blob)); c4[start:end]=blob
+for i,
