@@ -4,7 +4,7 @@
 The Range server records probe-time seeks. Success requires:
 1) the file really has a late top-level moov,
 2) FFmpeg completes native URL probe without "moov atom not found",
-3) one stable RAW10X AVIO is active before probe and survives tail seeks,
+3) one stable RAW128 AVIO is active before probe and survives tail seeks,
 4) the final APK renders a frame.
 """
 import argparse,http.server,json,re,shlex,subprocess,tempfile,threading,time
@@ -48,7 +48,7 @@ def top_atoms(path):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
     a.reports.mkdir(parents=True,exist_ok=True)
-    report={'status':'FAIL','scope':'final APK late-moov MP4 over one stable pre-probe RAW10X AVIO'}
+    report={'status':'FAIL','scope':'final APK late-moov MP4 over one stable pre-probe RAW128 AVIO'}
     server=None;port=None
     try:
         with tempfile.TemporaryDirectory(prefix='nova-tail-moov-') as td:

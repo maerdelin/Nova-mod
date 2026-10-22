@@ -33,7 +33,7 @@ def wait_for(pred,seconds,label):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
     a.reports.mkdir(parents=True,exist_ok=True)
-    report={'status':'FAIL','scope':'final APK MP4 repeated runtime seeks while RAW10X producer is active over throttled local HTTP Range'}
+    report={'status':'FAIL','scope':'final APK MP4 repeated runtime seeks while RAW128 producer is active over throttled local HTTP Range'}
     server=None;port=None
     try:
         if adb('shell','getprop ro.kernel.qemu').strip()!='1':
@@ -88,7 +88,7 @@ def main():
                 'ETYPE_MP4' in t and
                 'NOVA_RAW128_OPEN: phase=pre_probe' in t and
                 'NOVA_STARTUP_TRACE first_frame_sink' in t,
-                35,'MP4 first frame with pre-probe RAW10X')
+                35,'MP4 first frame with pre-probe RAW128')
             if 'moov atom not found' in base or 'error opening parser' in base:
                 raise RuntimeError('MP4 failed before runtime-seek stress')
 
