@@ -302,6 +302,53 @@ def patch_service(text):
     repl=h.group("indent")+op+" {"+h.group("regs")+"}, "+wrapper
     return text[:m.start()]+body[:h.start()]+repl+body[h.end():]+text[m.end():]
 
+def patch_activity_stop(text):
+    methods=[m for m in METHOD_RE.finditer(text)
+             if " onStop()V" in m.group(0).splitlines()[0]]
+    if len(methods)!=1:
+        raise RuntimeError("PlayerActivity.onStop missing")
+    m=methods[0]
+    body=m.group(0)
+    if "DirectTransportProxy;->close()V" in body:
+        raise RuntimeError("PlayerActivity direct close already present")
+
+    lines=body.splitlines()
+    ri=next((i for i,l in enumerate(lines)
+             if l.strip().startswith(".locals ")), None)
+    if ri is None:
+        raise RuntimeError("PlayerActivity.onStop must use .locals")
+    locals_count=int(lines[ri].strip().split()[1])
+    tmp=f"v{locals_count}"
+    lines[ri]="    .locals "+str(locals_count+1)
+
+    stop_call=("invoke-direct {p0}, "
+               "Lcom/archos/mediacenter/video/player/PlayerActivity;->stop()V")
+    hits=[i for i,l in enumerate(lines) if stop_call in l]
+    if len(hits)!=1:
+        raise RuntimeError("PlayerActivity.onStop stop anchor changed")
+    i=hits[0]
+    inject=[
+        "    # NOVA_DIRECT_LIFECYCLE: activity teardown owns transport close.",
+        f"    iget-boolean {tmp}, p0, Lcom/archos/mediacenter/video/player/PlayerActivity;->mLaunchFloatingPlayer:Z",
+        f"    if-nez {tmp}, :nova_direct_keep_transport_on_stop",
+        "    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V",
+        "    :nova_direct_keep_transport_on_stop",
+    ]
+    lines[i:i]=inject
+    out="\n".join(lines)
+    for token in (
+        "NOVA_DIRECT_LIFECYCLE",
+        "mLaunchFloatingPlayer:Z",
+        "DirectTransportProxy;->close()V",
+        "->stop()V",
+    ):
+        if token not in out:
+            raise RuntimeError("PlayerActivity lifecycle postcondition missing: "+token)
+    if out.index("DirectTransportProxy;->close()V") > out.index(stop_call):
+        raise RuntimeError("direct transport close must precede PlayerActivity.stop")
+    return text[:m.start()]+out+text[m.end():]
+
+
 def patch_release(text):
     methods=[m for m in METHOD_RE.finditer(text)
              if " release()V" in m.group(0).splitlines()[0]]
@@ -343,6 +390,8 @@ def main():
     player.write_text(patch_player(player.read_text()))
     service=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerService.smali"),"PlayerService")
     service.write_text(patch_service(service.read_text()))
+    activity=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity.smali"),"PlayerActivity")
+    activity.write_text(patch_activity_stop(activity.read_text()))
     avos=one(root.glob("smali*/com/archos/medialib/AvosMediaPlayer.smali"),"AvosMediaPlayer")
     avos.write_text(patch_release(avos.read_text()))
 
