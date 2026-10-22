@@ -197,3 +197,122 @@ PROXY_RESOLVE = r'''
 .method public static native nativeClose()V
 .end method
 '''
+
+
+FACTORY = r'''.class public final Lcom/archos/mediacenter/video/player/DirectPlayerFactory;
+.super Ljava/lang/Object;
+.source "DirectPlayerFactory.java"
+
+.method private constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+
+.method public static create(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    .locals 2
+    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->shouldForceAvos()Z
+    move-result v0
+    if-eqz v0, :normal
+    const/4 v0, 0x1
+    invoke-static {p0, v0}, Lcom/archos/medialib/MediaFactory;->createPlayer(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    move-result-object v0
+    instance-of v1, v0, Lcom/archos/medialib/AvosMediaPlayer;
+    if-eqz v1, :return_player
+    if-nez p1, :return_player
+    const/4 v1, 0x0
+    invoke-static {v1}, Lcom/archos/medialib/LibAvos;->setDecoder(I)V
+    :return_player
+    return-object v0
+    :normal
+    invoke-static {p0, p1}, Lcom/archos/medialib/MediaFactory;->createPlayer(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;
+    move-result-object v0
+    return-object v0
+.end method
+
+.method public static seekTo(Lcom/archos/mediacenter/video/player/Player;I)V
+    .locals 1
+    invoke-static {p1}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->shouldSkipInitialZeroSeek(I)Z
+    move-result v0
+    if-nez v0, :done
+    invoke-virtual {p0, p1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V
+    :done
+    return-void
+.end method
+'''
+
+def patch_player(text):
+    methods=[m for m in METHOD_RE.finditer(text)
+             if "NetworkInitialization;->awaitReadyForSmb" in m.group(0)
+             and "IMediaPlayer;->setDataSource" in m.group(0)]
+    if len(methods)!=1:
+        raise RuntimeError("player source method ambiguous")
+    m=methods[0]
+    body=m.group(0)
+    a=AWAIT_RE.search(body)
+    if not a:
+        raise RuntimeError("awaitReadyForSmb anchor missing")
+    uri=a.group("regs").strip().split("..",1)[0].split(",",1)[0].strip()
+    inject=(a.group(0)+"\n\n"+a.group("indent")
+        +f"invoke-static {{{uri}}}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->resolve(Landroid/net/Uri;)Landroid/net/Uri;\n"
+        +a.group("indent")+f"move-result-object {uri}")
+    text=text[:m.start()]+body[:a.start()]+inject+body[a.end():]+text[m.end():]
+
+    targets=[m for m in METHOD_RE.finditer(text)
+             if m.group(0).splitlines()[0].startswith(
+                 ".method public setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V")]
+    if len(targets)!=1:
+        raise RuntimeError("setVideoURI missing")
+    m=targets[0]
+    lines=m.group(0).splitlines()
+    ri=next(i for i,l in enumerate(lines)
+            if l.strip().startswith((".locals ", ".registers ")))
+    lines[ri+1:ri+1]=[
+        "",
+        "    invoke-static {p1}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->armForUri(Landroid/net/Uri;)V",
+    ]
+    text=text[:m.start()]+"\n".join(lines)+text[m.end():]
+
+    old=("Lcom/archos/medialib/MediaFactory;->createPlayer"
+         "(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;")
+    new=("Lcom/archos/mediacenter/video/player/DirectPlayerFactory;->create"
+         "(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;")
+    if text.count(old)!=1:
+        raise RuntimeError("player factory anchor changed")
+    return text.replace(old,new,1)
+
+def patch_service(text):
+    wrapper=("Lcom/archos/mediacenter/video/player/DirectPlayerFactory;->seekTo"
+             "(Lcom/archos/mediacenter/video/player/Player;I)V")
+    methods=[m for m in METHOD_RE.finditer(text)
+             if " postPreparedAndVideoDb()V" in m.group(0).splitlines()[0]]
+    if len(methods)!=1:
+        raise RuntimeError("postPreparedAndVideoDb missing")
+    m=methods[0]
+    body=m.group(0)
+    pat=re.compile(
+        r'(?P<indent>\s*)(?P<op>invoke-virtual(?:/range)?) '
+        r'\{(?P<regs>[^}]+)\}, '
+        r'Lcom/archos/mediacenter/video/player/Player;->seekTo\(I\)V')
+    hits=list(pat.finditer(body))
+    if len(hits)!=1:
+        raise RuntimeError("initial seek anchor changed")
+    h=hits[0]
+    op="invoke-static/range" if h.group("op").endswith("/range") else "invoke-static"
+    repl=h.group("indent")+op+" {"+h.group("regs")+"}, "+wrapper
+    return text[:m.start()]+body[:h.start()]+repl+body[h.end():]+text[m.end():]
+
+def patch_release(text):
+    methods=[m for m in METHOD_RE.finditer(text)
+             if " release()V" in m.group(0).splitlines()[0]]
+    if len(methods)!=1:
+        raise RuntimeError("AvosMediaPlayer.release missing")
+    m=methods[0]
+    lines=m.group(0).splitlines()
+    ri=next(i for i,l in enumerate(lines)
+            if l.strip().startswith((".locals ", ".registers ")))
+    lines[ri+1:ri+1]=[
+        "",
+        "    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V",
+    ]
+    return text[:m.start()]+"\n".join(lines)+text[m.end():]
