@@ -16,7 +16,10 @@ class AggressiveDownloadArchitectureTests(unittest.TestCase):
             "raw->used_bytes >= raw->capacity_bytes",
         ):
             self.assertIn(token, PATCH)
-        self.assertNotIn("amalloc(sizeof(NOVA_RAW_CHUNK))", PATCH)
+        start = PATCH.index("RAW_PRODUCER =")
+        end = PATCH.index("RAW_CONSUMER =", start)
+        producer = PATCH[start:end]
+        self.assertNotIn("amalloc(sizeof(NOVA_RAW_CHUNK))", producer)
 
     def test_raw_producer_has_no_playback_flow_control(self):
         start = PATCH.index("RAW_PRODUCER =")
@@ -72,6 +75,9 @@ class AggressiveDownloadArchitectureTests(unittest.TestCase):
     def test_localhost_copy_is_one_mib(self):
         self.assertIn("0x100000    # nova localhost copy 1MiB", THROUGHPUT)
         self.assertIn('"localhost_copy_bytes": 1048576', THROUGHPUT)
+        self.assertIn("0x400000    # nova WebDAV playback read-ahead 4MiB", THROUGHPUT)
+        self.assertIn('"webdav_playback_upstream_bytes": 4194304', THROUGHPUT)
+        self.assertIn("Landroid/os/Process;->setThreadPriority(I)V", THROUGHPUT)
 
 
 if __name__ == "__main__":

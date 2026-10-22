@@ -657,6 +657,22 @@ static void *iso_prefetch_worker(void *opaque) {
     return NULL;
 }
 
+static void reset_iso_prefetch_for_seek(iso_input *in) {
+    pthread_mutex_lock(&in->lock);
+    in->prefetch_generation++;
+    in->prefetch_focus = -1;
+    for (int i = 0; i < CACHE_SLOTS; i++) {
+        iso_cache_slot *slot = &in->cache[i];
+        if (slot->state != ISO_CACHE_ACTIVE) {
+            slot->state = ISO_CACHE_EMPTY;
+            slot->len = 0;
+        }
+    }
+    LOGI("PREFETCH_SEEK_RESET generation=%" PRIu64, in->prefetch_generation);
+    pthread_cond_broadcast(&in->prefetch_cond);
+    pthread_mutex_unlock(&in->lock);
+}
+
 static int start_iso_prefetch(iso_input *in) {
     if (pthread_cond_init(&in->prefetch_cond, NULL) != 0)
         return -1;
@@ -726,6 +742,16 @@ def patch_iso(path: Path) -> dict:
         "#include <sys/types.h>\n",
         "#include <sys/types.h>\n#include <sched.h>\n#include <sys/resource.h>\n",
         "ISO scheduling includes",
+    )
+    text = once(
+        text,
+        "    if (fd < 0) return -1;\n    struct sockaddr_in sa;",
+        "    if (fd < 0) return -1;\n"
+        "    int nova_sockbuf = 4 * 1024 * 1024;\n"
+        "    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &nova_sockbuf, sizeof(nova_sockbuf));\n"
+        "    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &nova_sockbuf, sizeof(nova_sockbuf));\n"
+        "    struct sockaddr_in sa;",
+        "ISO loopback socket buffers",
     )
     text = once(
         text,
@@ -877,6 +903,15 @@ static int read_request''',
     )
     text = once(
         text,
+        "    LOGI(\"PLAYER_SEEK_BEGIN start=%\" PRIu64, start);\n"
+        "    if (seek_exact(s->bd, start) < 0) {",
+        "    LOGI(\"PLAYER_SEEK_BEGIN start=%\" PRIu64, start);\n"
+        "    reset_iso_prefetch_for_seek(&s->input);\n"
+        "    if (seek_exact(s->bd, start) < 0) {",
+        "ISO prefetch seek generation reset",
+    )
+    text = once(
+        text,
         "    s->input.playback_mode = 1;\n    LOGI(\"CACHE_MODE playback persistent_range=1 window=%d slots=%d\", CACHE_BYTES, CACHE_SLOTS);",
         "    s->input.playback_mode = 1;\n"
         "    if (start_iso_prefetch(&s->input) < 0) {\n"
@@ -921,6 +956,8 @@ static int read_request''',
         "title_thread_nice_requested": -4,
         "cpu_policy": "two highest-frequency allowed CPUs",
         "generation_discard_on_recenter": True,
+        "generation_reset_on_title_seek": True,
+        "loopback_socket_buffer_bytes_requested": 4 * 1024 * 1024,
     }
 
 

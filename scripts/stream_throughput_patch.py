@@ -59,7 +59,7 @@ def patch_upstream(text):
     if-ne {mode}, {tmp}, :nova_webdav_max_throughput_original
     instance-of {tmp}, p1, Lcom/archos/filecorelibrary/webdav/WebdavFileEditor;
     if-eqz {tmp}, :nova_webdav_max_throughput_original
-    const {mode}, 0x100000
+    const {mode}, 0x400000    # nova WebDAV playback read-ahead 4MiB
     return {mode}
 
     :nova_webdav_max_throughput_original
@@ -72,8 +72,97 @@ def patch_copy_buffer(text):
     sig = " handleResponse()V"
     m = method(text, sig)
     block = m.group(0)
-    if "0x100000    # nova localhost copy 1MiB" in block:
+    if ("0x100000    # nova localhost copy 1MiB" in block and
+            "nova WebDAV source priority -8" in block):
         return text, "already"
+
+    block, first = bump_locals(block, 1)
+    prio = f"v{first}"
+    loc = re.search(r'(?m)^    \.locals \d+\s*    pattern = re.compile(
+        r'(?m)^    const/16 (v\d+), 0x2000\s*$'
+        r'(?=(?:\n.*){0,4}\n    new-array v\d+, \1, \[B)'
+    )
+    matches = list(pattern.finditer(block))
+    if len(matches) != 1:
+        # Some baksmali versions insert a move before new-array. Keep the
+        # search inside handleResponse and require exactly one 8 KiB allocation
+        # that feeds a byte-array allocation.
+        fallback = re.compile(
+            r'(?ms)^    const/16 (v\d+), 0x2000\s*\n'
+            r'(?P<middle>.{0,220}?)'
+            r'^    new-array v\d+, \1, \[B'
+        )
+        matches = list(fallback.finditer(block))
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"handleResponse media copy buffer anchor: expected 1, got {len(matches)}"
+            )
+        mm = matches[0]
+        start, end = mm.start(), mm.end()
+        original = mm.group(0)
+        reg = mm.group(1)
+        replacement = original.replace(
+            f"    const/16 {reg}, 0x2000",
+            f"    const {reg}, 0x100000    # nova localhost copy 1MiB",
+            1,
+        )
+        block = block[:start] + replacement + block[end:]
+    else:
+        mm = matches[0]
+        reg = mm.group(1)
+        block = (
+            block[:mm.start()]
+            + f"    const {reg}, 0x100000    # nova localhost copy 1MiB"
+            + block[mm.end():]
+        )
+
+    return text[:m.start()] + block + text[m.end():], "applied"
+
+
+def apply(root: Path, report: Path | None = None):
+    outer = one(
+        root.glob("smali*/com/archos/filecorelibrary/StreamOverHttp.smali"),
+        "StreamOverHttp",
+    )
+    inner = one(
+        root.glob("smali*/com/archos/filecorelibrary/StreamOverHttp$HttpSession.smali"),
+        "StreamOverHttp$HttpSession",
+    )
+
+    outer_text, upstream = patch_upstream(outer.read_text())
+    inner_text, copy = patch_copy_buffer(inner.read_text())
+    outer.write_text(outer_text)
+    inner.write_text(inner_text)
+
+    result = {
+        "status": "PASS",
+        "scope": "WebDAV primary playback only",
+        "webdav_playback_upstream_bytes": 4194304,
+        "localhost_copy_bytes": 1048576,
+        "native_rebuffer_unchanged": True,
+        "upstream_patch": upstream,
+        "copy_patch": copy,
+    }
+    if report:
+        report.write_text(json.dumps(result, indent=2) + "\n")
+    return result
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("root", type=Path)
+    p.add_argument("--report", type=Path)
+    args = p.parse_args()
+    print(json.dumps(apply(args.root, args.report), indent=2))
+, block)
+    if not loc:
+        raise RuntimeError("handleResponse locals missing")
+    priority = f"""
+    # nova WebDAV source priority -8
+    const/16 {prio}, -0x8
+    invoke-static {{{prio}}}, Landroid/os/Process;->setThreadPriority(I)V
+"""
+    block = block[:loc.end()] + priority + block[loc.end():]
 
     pattern = re.compile(
         r'(?m)^    const/16 (v\d+), 0x2000\s*$'

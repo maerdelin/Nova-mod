@@ -8,16 +8,18 @@ BUILD = (ROOT / "scripts" / "granular_build.py").read_text()
 
 
 class StreamThroughputStaticChecks(unittest.TestCase):
-    def test_webdav_playback_upstream_is_one_mib(self):
+    def test_webdav_playback_upstream_is_four_mib(self):
         self.assertIn("WebdavFileEditor", PATCH)
         self.assertIn("->PLAYBACK:", PATCH)
         self.assertIn("if-eqz p2", PATCH)
-        self.assertIn("const {mode}, 0x100000", PATCH)
+        self.assertIn("0x400000    # nova WebDAV playback read-ahead 4MiB", PATCH)
 
     def test_localhost_copy_is_one_mib(self):
         self.assertIn("handleResponse()V", PATCH)
         self.assertIn("0x100000", PATCH)
         self.assertIn("localhost copy 1MiB", PATCH)
+        self.assertIn("nova WebDAV source priority -8", PATCH)
+        self.assertIn("Landroid/os/Process;->setThreadPriority(I)V", PATCH)
 
     def test_transport_tuning_does_not_own_raw_fixed128_policy(self):
         self.assertIn("NOVA_RAW_FALLBACK_LOW_BYTES", NATIVE)

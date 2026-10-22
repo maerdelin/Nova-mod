@@ -8,15 +8,15 @@
   },
   "intentional_overrides": {
     "scripts/stream_throughput_patch.py": {
-      "git_blob_sha1": "92573487f2090d433a9d361d8bfeb4d1ad04c657",
-      "reason": "Feature test: increase retained WebDAV/localhost playback copy windows to 1MiB for the non-root aggressive download architecture"
+      "git_blob_sha1": "470aeeaaa4603c776c7c75c4584a5586cd21d8f2",
+      "reason": "Feature test: authenticated Java/OkHttp playback data plane uses 4MiB read-ahead, urgent thread priority and 1MiB localhost copies for the non-root aggressive download architecture"
     },
     "scripts/iso_seek_ui_patch.py": {
       "git_blob_sha1": "043ddfb453ef7b127d64cd309a189718a745ce50",
       "reason": "Compatibility update: ISO timestamp seek validation accepts the fixed 128MiB RAW producer wall without changing seek behavior"
     },
     "scripts/aggressive_download_patch.py": {
-      "git_blob_sha1": "1e5d592e6729cb7dbfc6c9fdd5fd1ef0fb906d40",
+      "git_blob_sha1": "2a80f362dbb740ff70bc3a7b48306a6d57a8432a",
       "reason": "Feature test: non-root aggressive download architecture adds preallocated RAW ring, fast-core IO scheduling, playback CPU yielding, and four ISO Range workers"
     },
     "scripts/native_rebuffer_patch.py": {
