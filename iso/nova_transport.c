@@ -400,25 +400,36 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
 }
 
 
+/* Detach under the same lock used by session_acquire. No new operation can
+ * acquire this session after ABORT; CLOSE is emitted only after active calls
+ * have drained and the upstream has actually been released. */
+static void transport_close(uint64_t generation, int match_generation)
+{
+    pthread_mutex_lock(&g_lock);
+    nova_session *old = g_session;
+    if (old && (!match_generation ||
+                (generation > 0 && old->generation == generation))) {
+        g_session = NULL;
+        old->stopping = 1;
+        LOGI("ABORT generation=%" PRIu64 " reason=close", old->generation);
+    } else {
+        old = NULL;
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (old) {
+        uint64_t closed_generation = old->generation;
+        session_free(old);
+        LOGI("CLOSE generation=%" PRIu64 " complete=1", closed_generation);
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeCloseGeneration(
         JNIEnv *env, jclass cls, jlong generation)
 {
     (void)env;
     (void)cls;
-    pthread_mutex_lock(&g_lock);
-    nova_session *old = NULL;
-    if (g_session && generation > 0 &&
-        g_session->generation == (uint64_t)generation) {
-        old = g_session;
-        g_session = NULL;
-        old->stopping = 1;
-    }
-    pthread_mutex_unlock(&g_lock);
-    if (old) {
-        LOGI("CLOSE generation=%" PRIu64, old->generation);
-        session_free(old);
-    }
+    transport_close((uint64_t)generation, 1);
 }
 
 JNIEXPORT void JNICALL
@@ -427,14 +438,7 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeClose(
 {
     (void)env;
     (void)cls;
-    pthread_mutex_lock(&g_lock);
-    nova_session *old = g_session;
-    g_session = NULL;
-    if (old)
-        old->stopping = 1;
-    pthread_mutex_unlock(&g_lock);
-    if (old)
-        session_free(old);
+    transport_close(0, 0);
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)

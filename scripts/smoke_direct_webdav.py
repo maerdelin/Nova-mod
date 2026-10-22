@@ -43,6 +43,25 @@ def wait_for(pred, seconds, label):
         time.sleep(0.35)
     raise RuntimeError("Missing " + label + "\n" + last[-12000:])
 
+def action_tail(text, marker):
+    return text[text.rfind(marker):] if marker in text else ""
+
+def back_close_complete(text, marker, generation):
+    tail = action_tail(text, marker)
+    abort = re.search(rf"NovaTransport: ABORT generation={generation}(?!\d)", tail)
+    close = re.search(rf"NovaTransport: CLOSE generation={generation} complete=1", tail)
+    return bool(abort and close and abort.start() < close.start())
+
+def reopened_frame(text, marker, previous_generation):
+    tail = action_tail(text, marker)
+    opened = re.search(r"OPEN_READY mode=file generation=(\d+)", tail)
+    if not opened or int(opened[1]) <= previous_generation:
+        return False
+    tail = tail[opened.end():]
+    return ("NOVA_DIRECT_SOURCE_OPEN:" in tail
+            and "NOVA_RAW128_OPEN: phase=pre_probe" in tail
+            and "first_frame_sink" in tail)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--reports", type=Path, required=True)
@@ -158,37 +177,44 @@ def main():
                 20,
                 "direct WebDAV seek through RAW128 and native upstream",
             )
-            # Follow the real controller semantics instead of assuming an
-            # auto-hide deadline. BACK may first dismiss visible controls; the
-            # subsequent BACK must exit the player. Accept an immediate exit
-            # on the first BACK as well, but never accept a missing abort.
-            back1_marker = "NOVA_DIRECT_BACK1_" + str(time.monotonic_ns())
-            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back1_marker)
-            adb("shell", "input", "keyevent", "4")
-            time.sleep(1.0)
-            text = logs()
-            tail1 = text[text.rfind(back1_marker):] if back1_marker in text else ""
-            if "NovaTransport: ABORT generation=" in tail1:
-                back_marker = back1_marker
-                back_tail = tail1
-                back_presses = 1
-            else:
-                back2_marker = "NOVA_DIRECT_BACK2_" + str(time.monotonic_ns())
-                adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back2_marker)
+            # Scope both BACK presses to one action window: an asynchronous
+            # close from the first press must not be discarded at the second.
+            generation = int(re.findall(
+                r"OPEN_READY mode=file generation=(\d+)", text)[-1])
+            back_marker = "NOVA_DIRECT_BACK_" + str(time.monotonic_ns())
+            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back_marker)
+            back_presses = 0
+            for _ in range(2):
                 adb("shell", "input", "keyevent", "4")
-                text = wait_for(
-                    lambda t: (
-                        back2_marker in t
-                        and "NovaTransport: ABORT generation=" in t[t.rfind(back2_marker):]
-                    ),
-                    15,
-                    "direct transport abort after controller-dismiss BACK then exit BACK",
-                )
-                back_marker = back2_marker
-                back_tail = text[text.rfind(back2_marker):]
-                back_presses = 2
+                back_presses += 1
+                time.sleep(1.0)
+                text = logs()
+                if back_close_complete(text, back_marker, generation):
+                    break
+            text = wait_for(
+                lambda t: back_close_complete(t, back_marker, generation),
+                15, "direct transport abort AND completed close after BACK",
+            )
+            # Observe after close too, rather than passing on the first log.
+            time.sleep(2.0)
+            text = logs()
+            back_tail = text[text.rfind(back_marker):]
             if "NOVA_RAW_RETRY:" in back_tail:
                 raise RuntimeError("RAW retry occurred after direct transport BACK abort")
+            if "FATAL EXCEPTION" in back_tail or "Fatal signal" in back_tail:
+                raise RuntimeError("Player crashed during BACK teardown")
+
+            # A second video open in the same process catches stale closed
+            # generations that a one-shot first-frame smoke cannot detect.
+            reopen_marker = "NOVA_DIRECT_REOPEN_" + str(time.monotonic_ns())
+            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", reopen_marker)
+            adb("shell",
+                f"am start -W -n {PLAYER} -a android.intent.action.VIEW "
+                f"-d {shlex.quote(uri)} -t video/mp2t", timeout=30)
+            text = wait_for(
+                lambda t: reopened_frame(t, reopen_marker, generation),
+                40, "second WebDAV open and first frame after completed close",
+            )
 
             report.update(
                 status="PASS",
@@ -199,6 +225,8 @@ def main():
                 first_frame=True,
                 direct_seek=True,
                 back_abort=True,
+                back_close_complete=True,
+                reopen_first_frame=True,
                 back_presses=back_presses,
                 post_abort_raw_retry=False,
                 request_count=len(requests),

@@ -1,0 +1,119 @@
+"""Exercise production close functions on host and scope final-APK evidence."""
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from smoke_direct_webdav import back_close_complete, reopened_frame
+
+
+class DirectLifecycleTests(unittest.TestCase):
+    def test_close_evidence_is_ordered_scoped_and_generation_specific(self):
+        abort = 'NovaTransport: ABORT generation=7 reason=close\n'
+        close = 'NovaTransport: CLOSE generation=7 complete=1\n'
+        self.assertTrue(back_close_complete('MARK\n' + abort + close, 'MARK', 7))
+        for text in (abort + close + 'MARK', 'MARK\n' + abort,
+                     'MARK\n' + close + abort, 'MARK\n' + abort + close.replace('=7', '=8')):
+            self.assertFalse(back_close_complete(text, 'MARK', 7))
+        self.assertFalse(back_close_complete('MARK\n' + abort + close, 'MARK', 70))
+
+    def test_reopen_requires_new_generation_and_new_frame(self):
+        frame = 'NOVA_DIRECT_SOURCE_OPEN:\nNOVA_RAW128_OPEN: phase=pre_probe\nfirst_frame_sink'
+        opened = 'OPEN_READY mode=file generation=8\n'
+        self.assertTrue(reopened_frame('MARK\n' + opened + frame, 'MARK', 7))
+        for text in (opened + frame + 'MARK', 'MARK\n' + opened,
+                     'MARK\n' + opened.replace('=8', '=7') + frame):
+            self.assertFalse(reopened_frame(text, 'MARK', 7))
+
+    def test_native_close_drains_calls_and_preserves_new_generation(self):
+        source = (ROOT / 'iso/nova_transport.c').read_text()
+        acquire_free = source[source.index('static nova_session *session_acquire'):source.index('static nova_session *session_create')]
+        close = source[source.index('static void transport_close'):source.index('JNIEXPORT void JNICALL', source.index('static void transport_close'))]
+        harness = r'''
+#define _GNU_SOURCE
+#include <assert.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+typedef struct nova_session {
+    uint64_t generation;
+    volatile int stopping;
+    int active_calls;
+    pthread_cond_t idle;
+    pthread_mutex_t io_lock;
+    void *bd, *upstream;
+} nova_session;
+static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+static nova_session *g_session;
+static pthread_mutex_t evidence_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t evidence_ready = PTHREAD_COND_INITIALIZER;
+static int aborted, closed, freed;
+static void log_event(const char *format, ...) {
+    pthread_mutex_lock(&evidence_lock);
+    if (!strncmp(format, "ABORT", 5)) aborted++;
+    if (!strncmp(format, "CLOSE", 5)) { assert(freed > closed); closed++; }
+    pthread_cond_broadcast(&evidence_ready);
+    pthread_mutex_unlock(&evidence_lock);
+}
+#define LOGI(...) log_event(__VA_ARGS__)
+static void bd_close(void *p) { (void)p; }
+static void avio_closep(void **p) {
+    *p = NULL;
+    pthread_mutex_lock(&evidence_lock);
+    freed++;
+    pthread_mutex_unlock(&evidence_lock);
+}
+'''
+        harness += acquire_free + close + r'''
+static nova_session *make_session(uint64_t generation) {
+    nova_session *s = calloc(1, sizeof(*s));
+    s->generation = generation;
+    s->upstream = (void *)1;
+    pthread_mutex_init(&s->io_lock, NULL);
+    pthread_cond_init(&s->idle, NULL);
+    return s;
+}
+static void *closer(void *unused) { (void)unused; transport_close(0, 0); return NULL; }
+int main(void) {
+    g_session = make_session(7);
+    transport_close(6, 1);
+    assert(g_session && !g_session->stopping && !aborted && !closed);
+    nova_session *inflight = session_acquire(7);
+    assert(inflight);
+    pthread_t thread;
+    pthread_create(&thread, NULL, closer, NULL);
+    pthread_mutex_lock(&evidence_lock);
+    while (!aborted) pthread_cond_wait(&evidence_ready, &evidence_lock);
+    assert(!closed && !freed);
+    pthread_mutex_unlock(&evidence_lock);
+    assert(!session_acquire(7));
+    session_release(inflight);
+    pthread_join(thread, NULL);
+    assert(aborted == 1 && closed == 1 && freed == 1);
+    transport_close(0, 0);
+    assert(closed == 1);
+    g_session = make_session(8);
+    transport_close(7, 1);
+    assert(g_session && g_session->generation == 8);
+    transport_close(8, 1);
+    assert(!g_session && aborted == 2 && closed == 2 && freed == 2);
+    puts("native close: drain, detach, idempotence, stale generation PASS");
+}
+'''
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / 'lifecycle.c'
+            binary = Path(td) / 'lifecycle'
+            src.write_text(harness)
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-pthread', '-fsanitize=address,undefined', str(src), '-o', str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=10)
+
+
+if __name__ == '__main__':
+    unittest.main()
