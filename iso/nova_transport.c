@@ -314,6 +314,9 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
                 s->upstream_pos = ret;
         }
     }
+    if (whence != AVSEEK_SIZE)
+        LOGI("SEEK generation=%" PRIu64 " offset=%" PRId64 " whence=%d result=%" PRId64,
+             generation, offset, whence, ret);
     pthread_mutex_unlock(&s->io_lock);
     session_release(s);
     return ret;
