@@ -11,6 +11,14 @@ from smoke_direct_webdav import back_close_complete, reopened_frame
 
 
 class DirectLifecycleTests(unittest.TestCase):
+    def test_old_player_release_cannot_close_global_transport(self):
+        from direct_transport_apply import verify_release_ownership
+        original = ".method public release()V\n    .locals 0\n    return-void\n.end method\n"
+        self.assertEqual(verify_release_ownership(original), original)
+        unsafe = original.replace("    return-void", "    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V\n    return-void")
+        with self.assertRaisesRegex(RuntimeError, "must not close global"):
+            verify_release_ownership(unsafe)
+
     def test_close_evidence_is_ordered_scoped_and_generation_specific(self):
         abort = 'NovaTransport: ABORT generation=7 reason=close\n'
         close = 'NovaTransport: CLOSE generation=7 complete=1\n'

@@ -624,20 +624,18 @@ def patch_activity_stop(text):
     return text[:m.start()]+out+text[m.end():]
 
 
-def patch_release(text):
+def verify_release_ownership(text):
+    # release() is also invoked by finalize() on old player instances. It must
+    # never close the process-global current session: the native AVOS source
+    # already aborts only its own transport_generation during stream_stop.
     methods=[m for m in METHOD_RE.finditer(text)
              if " release()V" in m.group(0).splitlines()[0]]
     if len(methods)!=1:
         raise RuntimeError("AvosMediaPlayer.release missing")
-    m=methods[0]
-    lines=m.group(0).splitlines()
-    ri=next(i for i,l in enumerate(lines)
-            if l.strip().startswith((".locals ", ".registers ")))
-    lines[ri+1:ri+1]=[
-        "",
-        "    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V",
-    ]
-    return text[:m.start()]+"\n".join(lines)+text[m.end():]
+    body=methods[0].group(0)
+    if "DirectTransportProxy;->close()V" in body:
+        raise RuntimeError("AvosMediaPlayer.release must not close global transport")
+    return text
 
 
 def main():
@@ -669,7 +667,7 @@ def main():
     activity_text=patch_activity_back(activity.read_text())
     activity.write_text(patch_activity_stop(activity_text))
     avos=one(root.glob("smali*/com/archos/medialib/AvosMediaPlayer.smali"),"AvosMediaPlayer")
-    avos.write_text(patch_release(avos.read_text()))
+    verify_release_ownership(avos.read_text())
 
     smali_dir=next_smali(root)/"com/archos/mediacenter/video/player"
     smali_dir.mkdir(parents=True,exist_ok=True)
