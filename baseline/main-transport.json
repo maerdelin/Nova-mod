@@ -8,7 +8,7 @@
   },
   "intentional_overrides": {
     "scripts/stream_throughput_patch.py": {
-      "git_blob_sha1": "f1bfc0f246a62897a70b513eff853e44b66b3730",
+      "git_blob_sha1": "3a3237be535015074f17dcf81d38caa68bf8de3b",
       "reason": "Feature test: authenticated Java/OkHttp playback data plane uses 4MiB read-ahead, urgent thread priority and 1MiB localhost copies for the non-root aggressive download architecture"
     },
     "scripts/iso_seek_ui_patch.py": {
