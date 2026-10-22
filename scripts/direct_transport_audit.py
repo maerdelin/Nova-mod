@@ -55,12 +55,13 @@ def source_check(require_removed=False):
 
     base=(ROOT/"scripts/native_rebuffer_patch.py").read_text()
     for x in (
-        "const int requested_nice = -8",
-        'nova_playback_yield_sched(\\"decode\\", 8)',
-        'nova_playback_yield_sched(\\"parser\\", 5)',
+        "nova_raw_boost_thread",
+        "nova_playback_yield_sched",
+        "NOVA_RAW_SCHED",
+        "NOVA_PLAYBACK_SCHED",
     ):
-        if x not in base:
-            raise RuntimeError("priority baseline changed: "+x)
+        if x in base:
+            raise RuntimeError("custom priority policy remains: "+x)
 
 
     for x in ("StreamOverHttp", "BlurayIsoProxy", "libnova_iso.so"):
