@@ -9,12 +9,12 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "a395b9443fd935701485b056e2fa4f0627bc112d",
-      "reason": "Feature test: one RAW custom AVIO remains stable through MP4 probe/runtime; producer generation snapshots serialize with source_mutex and the independent RAW network owner ignores parser-only seek interrupts while still honoring real stream abort"
+      "git_blob_sha1": "c2eee97a747636cfc7160ff49ffd8f1c3817f33c",
+      "reason": "Feature test: one stable RAW AVIO keeps a fixed 128MiB producer warehouse independent of playback state while dynamic 2X/5X remain playback-only thresholds and seek generation safety is preserved"
     },
     "scripts/granular_build.py": {
-      "git_blob_sha1": "7a4b33f2d102ace675acb98639b21ceaa7feb730",
-      "reason": "Feature test: report raw-source 2X/5X/10X architecture and fixed 24MiB packet handoff"
+      "git_blob_sha1": "a18436e6365801afbef7bc1657e11626be64bf18",
+      "reason": "Feature test: report dynamic 2X/5X playback thresholds with a fixed 128MiB raw producer wall and fixed packet handoff"
     },
     "scripts/ts_bitrate_patch.py": {
       "git_blob_sha1": "2f8261df39877a10685f4e588f19c2543b495d92",

@@ -57,10 +57,10 @@ REBUFFER_THREAD = r'''
 //
 //  Raw-source buffering controller
 //
-//  10X belongs only to the pre-demux raw producer. 2X/5X are playback
-//  decisions based on bytes already resident in the two bounded handoff
-//  stages: the raw source queue plus the ordinary FFmpeg packet handoff queue.
-//  Neither threshold controls the network producer; only raw 10X does.
+//  The pre-demux raw producer has one fixed 128 MiB warehouse wall. 2X/5X
+//  are playback pause/resume thresholds only. They never throttle, pause or
+//  accelerate network production. As long as RAW used bytes are below 128 MiB,
+//  the producer keeps pulling regardless of play/pause/rebuffer/decoder state.
 //
 // *****************************************************************************
 static int _nova_rebuffer_eof( STREAM *s )
@@ -294,20 +294,19 @@ static void nova_raw_log_locked(NOVA_RAW_PREFETCH *raw)
 }
 
 static void nova_raw_set_policy(NOVA_RAW_PREFETCH *raw,
-                                int low_bytes, int resume_bytes,
-                                int capacity_bytes)
+                                int low_bytes, int resume_bytes)
 {
     if( !raw->enabled )
         return;
     pthread_mutex_lock(&raw->mutex);
     raw->low_bytes = low_bytes;
     raw->resume_bytes = resume_bytes;
-    raw->capacity_bytes = capacity_bytes;
+    raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;
     pthread_cond_broadcast(&raw->can_write);
     pthread_mutex_unlock(&raw->mutex);
     raw->s->rebuffer_low_bytes = low_bytes;
     raw->s->rebuffer_resume_bytes = resume_bytes;
-    raw->s->rebuffer_capacity_bytes = capacity_bytes;
+    raw->s->rebuffer_capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;
 }
 
 static void *nova_raw_thread(void *opaque)
@@ -685,12 +684,10 @@ DYNAMIC_POLICY = r'''
 	s->duration = ff_p->duration;
 	s->size     = ff_p->size;
 
-    // One buffering policy, at the raw source:
-    // X = average source bytes/second, low=2X, resume=5X, producer wall=10X.
-    // The ordinary FFmpeg packet queue keeps its upstream handoff/safety bound
-    // and is NOT resized to 10X.
+    // X = average source bytes/second. 2X/5X control playback only.
+    // Network production has a separate fixed 128 MiB warehouse wall.
     uint64_t nova_x = 0;
-    const uint64_t nova_max_x = (uint64_t)(INT_MAX / 2) / 10;
+    const uint64_t nova_max_x = (uint64_t)(INT_MAX / 5);
     if (ff_p->size_known && s->size > 0 && s->duration > 0) {
         uint64_t duration_ms = (uint64_t)s->duration;
         uint64_t whole = (uint64_t)s->size / duration_ms;
@@ -796,19 +793,46 @@ DYNAMIC_POLICY = r'''
     if (ff_p->raw.enabled) {
         int low = NOVA_RAW_FALLBACK_LOW_BYTES;
         int resume = NOVA_RAW_FALLBACK_RESUME_BYTES;
-        int capacity = NOVA_RAW_FALLBACK_CAP_BYTES;
+        const int capacity = NOVA_RAW_FALLBACK_CAP_BYTES;
+        int clamped = 0;
+        uint64_t requested_low = low;
+        uint64_t requested_resume = resume;
+
         if (nova_x > 0) {
-            low = (int)(2 * nova_x);
-            resume = (int)(5 * nova_x);
-            capacity = (int)(10 * nova_x);
+            requested_low = 2 * nova_x;
+            requested_resume = 5 * nova_x;
+            low = requested_low > (uint64_t)INT_MAX ?
+                INT_MAX : (int)requested_low;
+            resume = requested_resume > (uint64_t)INT_MAX ?
+                INT_MAX : (int)requested_resume;
         }
-        nova_raw_set_policy(&ff_p->raw, low, resume, capacity);
+
+        // RAW is fixed at 128 MiB. Resident bytes also include the ordinary
+        // packet handoff queue, so clamp only mathematically unreachable
+        // thresholds to prevent an infinite rebuffer wait on extreme media.
+        int64_t max_resident64 = (int64_t)capacity +
+            (ff_p->buffer_size > 0 ? (int64_t)ff_p->buffer_size : 0);
+        int max_resident = max_resident64 > INT_MAX ?
+            INT_MAX : (int)max_resident64;
+        if (resume > max_resident) {
+            resume = max_resident;
+            clamped = 1;
+        }
+        if (low >= resume) {
+            low = resume > 2 ? resume / 2 : 1;
+            clamped = 1;
+        }
+
+        nova_raw_set_policy(&ff_p->raw, low, resume);
         serprintf(
-            "NOVA_RAW_10X_POLICY: mode=%s size=%llu duration_ms=%d x_bytes_per_sec=%llu low=%d resume=%d capacity=%d packet_handoff=%d\n",
+            "NOVA_RAW_FIXED128_POLICY: mode=%s size=%llu duration_ms=%d x_bytes_per_sec=%llu requested_low=%llu requested_resume=%llu low=%d resume=%d capacity=%d packet_handoff=%d max_resident=%d clamped=%d\n",
             nova_x > 0 ? "average" : "fallback",
             (unsigned long long)s->size, s->duration,
-            (unsigned long long)nova_x, low, resume, capacity,
-            ff_p->buffer_size);
+            (unsigned long long)nova_x,
+            (unsigned long long)requested_low,
+            (unsigned long long)requested_resume,
+            low, resume, capacity, ff_p->buffer_size,
+            max_resident, clamped);
     } else {
         s->rebuffer_low_bytes = 0;
         s->rebuffer_resume_bytes = 0;
@@ -1142,7 +1166,7 @@ static int ff_force_seek'''
     required = (
         "NOVA_RAW10X_OPEN:",
         "NOVA_RAW10X:",
-        "NOVA_RAW_10X_POLICY:",
+        "NOVA_RAW_FIXED128_POLICY:",
         "NOVA_TS_BITRATE:",
         "nova_raw_thread",
         "nova_raw_seek",

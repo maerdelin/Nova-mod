@@ -5,8 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PATCH = (ROOT / "scripts/native_rebuffer_patch.py").read_text()
 
 
-class NativeRaw10XTests(unittest.TestCase):
-    def test_10x_is_pre_demux_raw_source_policy(self):
+class NativeRawFixed128Tests(unittest.TestCase):
+    def test_fixed_128m_is_pre_demux_raw_source_policy(self):
         for token in (
             "NOVA_RAW_PREFETCH",
             "nova_raw_thread",
@@ -15,8 +15,9 @@ class NativeRaw10XTests(unittest.TestCase):
             "nova_raw_open",
             "phase=pre_probe",
             "NOVA_RAW10X:",
-            "NOVA_RAW_10X_POLICY:",
-            "capacity = (int)(10 * nova_x)",
+            "NOVA_RAW_FIXED128_POLICY:",
+            "NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)",
+            "raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES",
             "stats->buffer2_used",
             "stats->buffer2_size",
         ):
@@ -34,7 +35,7 @@ class NativeRaw10XTests(unittest.TestCase):
         self.assertIn("mp4_tail_moov_safe", PATCH)
 
 
-    def test_no_post_demux_10x_wall(self):
+    def test_no_post_demux_dynamic_capacity_wall(self):
         self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", PATCH)
         self.assertNotIn("NOVA_10X_PACKET_CAP_BYPASS", PATCH)
         self.assertNotIn("readahead_enabled", PATCH)
@@ -43,14 +44,28 @@ class NativeRaw10XTests(unittest.TestCase):
             PATCH,
         )
 
-    def test_network_producer_does_not_depend_on_pause_or_decoder(self):
+    def test_network_producer_only_uses_fixed_warehouse_fullness_for_flow_control(self):
         start = PATCH.index("static void *nova_raw_thread")
         end = PATCH.index("static int nova_raw_read", start)
         producer = PATCH[start:end]
-        self.assertNotIn("s->paused", producer)
-        self.assertNotIn("video_time", producer)
-        self.assertNotIn("audio_time", producer)
+        for forbidden in (
+            "s->paused", "paused_internal", "rebuffering",
+            "rebuffer_low_bytes", "rebuffer_resume_bytes",
+            "video_time", "audio_time", "play_requested",
+        ):
+            self.assertNotIn(forbidden, producer)
         self.assertIn("raw->used_bytes >= raw->capacity_bytes", producer)
+        self.assertIn("int64_t room = raw->capacity_bytes - raw->used_bytes", producer)
+        self.assertIn("avio_read(raw->source, chunk->data, want)", producer)
+        self.assertIn("raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES", PATCH)
+        self.assertNotIn("capacity = (int)(10 * nova_x)", PATCH)
+
+    def test_2x_5x_remain_playback_thresholds_only(self):
+        self.assertIn("requested_low = 2 * nova_x", PATCH)
+        self.assertIn("requested_resume = 5 * nova_x", PATCH)
+        self.assertIn("resident < s->rebuffer_low_bytes", PATCH)
+        self.assertIn("resident >= s->rebuffer_resume_bytes", PATCH)
+        self.assertIn("NOVA_RAW_FIXED128_POLICY:", PATCH)
 
     def test_raw_network_interrupt_ignores_parser_seek_interrupt(self):
         start = PATCH.index("static int nova_raw_interrupt")
