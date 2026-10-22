@@ -13,10 +13,7 @@ import zipfile
 import granular as g
 import check_upstream as upstream
 import buffer_guard_patch
-import stream_throughput_patch
 import audio_route_no_rebuild_patch
-import webdav_connect_retry_patch
-import webdav_midstream_resume_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -134,10 +131,7 @@ def main():
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
     buffer_guard_patch.apply(candidate, args.reports / 'buffer-guard.json')
-    stream_throughput_patch.apply(candidate, args.reports / 'stream-throughput.json')
     audio_route_no_rebuild_patch.apply(candidate, args.reports / 'audio-route-no-rebuild.json')
-    webdav_connect_retry_patch.apply(candidate, args.reports / 'webdav-connect-retry.json')
-    webdav_midstream_resume_patch.apply(candidate, args.reports / 'webdav-midstream-resume.json')
     overlay_native(candidate, args.native_lib_root, args.reports)
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
@@ -153,7 +147,7 @@ def main():
         'whole_module_replacements': 0, 'native_replacements': ['libavos.so'],
         'native_rebuffer_control': 'pre-demux raw source: dynamic 2X low / 5X resume; fixed 128MiB producer wall independent of playback state',
         'packet_handoff_mib': 24,
-        'webdav_throughput': {'upstream_bytes': 1048576, 'localhost_copy_bytes': 131072},
+        'webdav_transport': 'direct native transport is applied after granular base; no StreamOverHttp playback tuning',
         'spec_bootstrapped': generated,
         'unsigned_output_is_internal_only': True, 'runtime_tested': False})
     print('GRANULAR_BUILD=PASS; unsigned internal output must be signed and install-tested before publication')
