@@ -19,10 +19,12 @@ class StreamThroughputStaticChecks(unittest.TestCase):
         self.assertIn("0x20000", PATCH)
         self.assertIn("localhost copy 128KiB", PATCH)
 
-    def test_transport_tuning_does_not_own_raw_10x_policy(self):
+    def test_transport_tuning_does_not_own_raw_fixed128_policy(self):
         self.assertIn("NOVA_RAW_FALLBACK_LOW_BYTES", NATIVE)
         self.assertIn("NOVA_RAW_FALLBACK_RESUME_BYTES", NATIVE)
-        self.assertIn("NOVA_RAW_10X_POLICY:", NATIVE)
+        self.assertIn("NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)", NATIVE)
+        self.assertIn("NOVA_RAW_FIXED128_POLICY:", NATIVE)
+        self.assertNotIn("capacity = (int)(10 * nova_x)", NATIVE)
         self.assertNotIn("stream_throughput_patch", NATIVE)
 
     def test_build_applies_throughput_after_webdav_marker(self):

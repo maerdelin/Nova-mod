@@ -14,15 +14,17 @@ class RawBufferArchitectureChecks(unittest.TestCase):
         self.assertNotIn("0x80", PLAYER_PATCH)
         self.assertIn("setStreamBufferSize(I)V", PLAYER_PATCH)
 
-    def test_raw_source_owns_dynamic_2x_5x_10x(self):
+    def test_raw_source_owns_dynamic_2x_5x_with_fixed_128m_producer_wall(self):
         for token in (
-            "low = (int)(2 * nova_x)",
-            "resume = (int)(5 * nova_x)",
-            "capacity = (int)(10 * nova_x)",
+            "requested_low = 2 * nova_x",
+            "requested_resume = 5 * nova_x",
+            "NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)",
+            "raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES",
             "nova_raw_set_policy",
-            "NOVA_RAW_10X_POLICY:",
+            "NOVA_RAW_FIXED128_POLICY:",
         ):
             self.assertIn(token, NATIVE_PATCH)
+        self.assertNotIn("capacity = (int)(10 * nova_x)", NATIVE_PATCH)
         self.assertNotIn("ff_p->buffer_size" + " = s->rebuffer_capacity_bytes", NATIVE_PATCH)
 
     def test_buffering_events_remain_standard_media_info(self):

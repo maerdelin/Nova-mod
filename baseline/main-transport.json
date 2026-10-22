@@ -9,7 +9,7 @@
   },
   "intentional_overrides": {
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "c2eee97a747636cfc7160ff49ffd8f1c3817f33c",
+      "git_blob_sha1": "6a5c1b0b2650974907a24c42bf12bf419a93e71e",
       "reason": "Feature test: one stable RAW AVIO keeps a fixed 128MiB producer warehouse independent of playback state while dynamic 2X/5X remain playback-only thresholds and seek generation safety is preserved"
     },
     "scripts/granular_build.py": {

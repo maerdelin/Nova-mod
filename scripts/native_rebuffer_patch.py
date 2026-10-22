@@ -319,8 +319,7 @@ static void *nova_raw_thread(void *opaque)
 
         pthread_mutex_lock(&raw->mutex);
         while( __atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) &&
-               (raw->eof || raw->error ||
-                raw->used_bytes >= raw->capacity_bytes) ) {
+               (raw->eof || raw->used_bytes >= raw->capacity_bytes) ) {
             nova_raw_log_locked(raw);
             pthread_cond_wait(&raw->can_write, &raw->mutex);
         }
@@ -398,11 +397,17 @@ static void *nova_raw_thread(void *opaque)
             __atomic_store_n(
                 &raw->s->raw_prefetch_eof, 1, __ATOMIC_RELEASE );
         } else {
+            // A transient source read error is not a producer stop condition.
+            // Publish it to an empty consumer, but keep the producer alive:
+            // below 128 MiB it must retry until data resumes, EOF is proven,
+            // a seek changes generation, or the stream is closed.
             raw->error = got;
         }
         nova_raw_log_locked(raw);
         pthread_cond_broadcast(&raw->can_read);
         pthread_mutex_unlock(&raw->mutex);
+        if( got < 0 && got != AVERROR_EOF )
+            av_usleep( 50000 );
     }
     return NULL;
 }
