@@ -15,6 +15,14 @@ REMOVED_RUNTIME_SOURCES=(
     "scripts/webdav_connect_retry_patch.py",
     "scripts/webdav_midstream_resume_patch.py",
     "scripts/main_transport_audit.py",
+    "webdav_fixes/src/com/archos/filecorelibrary/NovaIsoSessionGuard.java",
+    "webdav_fixes/src/com/archos/filecorelibrary/NovaWebdavErrors.java",
+    "webdav_fixes/src/com/archos/filecorelibrary/NovaWebdavOpenPolicy.java",
+    "webdav_fixes/src/com/archos/filecorelibrary/NovaWebdavSidecarPolicy.java",
+    "tests/android/MainTransportApkProbe.java",
+    "tests/test_webdav_header_order.py",
+    "tests/test_iso_title_duration.py",
+    "tests/test_iso_seek_ui.py",
 )
 
 def source_check(require_removed=False):
