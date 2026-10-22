@@ -51,6 +51,21 @@ jobs:
           SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
           "$SIGNER" verify --verbose --print-certs inputs/official.apk > reports/official-signature.txt
 
+      - name: Probe official WebDAV control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf work/probe-decoded
+          java -jar tools/apktool.jar d -f -o work/probe-decoded inputs/official.apk >/dev/null
+          {
+            echo "===== WebdavFileEditor ====="
+            cat work/probe-decoded/smali*/com/archos/filecorelibrary/webdav/WebdavFileEditor.smali
+            echo "===== WebdavFile2 ====="
+            cat work/probe-decoded/smali*/com/archos/filecorelibrary/webdav/WebdavFile2.smali
+            echo "===== FileEditor fields ====="
+            grep -nE '^\\.field|mUri|credential|user|pass|sardine|Sardine|uriToHttp|getInputStream' work/probe-decoded/smali*/com/archos/filecorelibrary/FileEditor.smali || true
+          } | tee reports/direct-transport-webdav-probe.txt
+
       - name: Build patched AVOS native rebuffer core
         shell: bash
         run: |
