@@ -78,15 +78,22 @@ def patch_copy_buffer(text):
 
     block, first = bump_locals(block, 1)
     prio = f"v{first}"
-    loc = re.search(r'(?m)^    \.locals \d+\s*    pattern = re.compile(
+    loc = re.search(r'(?m)^    \.locals \d+\s*$', block)
+    if not loc:
+        raise RuntimeError("handleResponse locals missing")
+    priority = f"""
+    # nova WebDAV source priority -8
+    const/16 {prio}, -0x8
+    invoke-static {{{prio}}}, Landroid/os/Process;->setThreadPriority(I)V
+"""
+    block = block[:loc.end()] + priority + block[loc.end():]
+
+    pattern = re.compile(
         r'(?m)^    const/16 (v\d+), 0x2000\s*$'
         r'(?=(?:\n.*){0,4}\n    new-array v\d+, \1, \[B)'
     )
     matches = list(pattern.finditer(block))
     if len(matches) != 1:
-        # Some baksmali versions insert a move before new-array. Keep the
-        # search inside handleResponse and require exactly one 8 KiB allocation
-        # that feeds a byte-array allocation.
         fallback = re.compile(
             r'(?ms)^    const/16 (v\d+), 0x2000\s*\n'
             r'(?P<middle>.{0,220}?)'
@@ -101,12 +108,12 @@ def patch_copy_buffer(text):
         start, end = mm.start(), mm.end()
         original = mm.group(0)
         reg = mm.group(1)
-        replacement = original.replace(
+        patched = original.replace(
             f"    const/16 {reg}, 0x2000",
             f"    const {reg}, 0x100000    # nova localhost copy 1MiB",
             1,
         )
-        block = block[:start] + replacement + block[end:]
+        block = block[:start] + patched + block[end:]
     else:
         mm = matches[0]
         reg = mm.group(1)
