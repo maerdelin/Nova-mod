@@ -52,3 +52,77 @@ def source_check(require_removed=False):
     ):
         if x not in base:
             raise RuntimeError("priority baseline changed: "+x)
+
+
+    for x in ("StreamOverHttp", "BlurayIsoProxy", "libnova_iso.so"):
+        if x in apply:
+            raise RuntimeError("legacy data plane referenced by direct APK integration: "+x)
+
+    for x in (
+        "build_iso_native.sh", "iso_finalize.py", "stream_throughput_patch.py",
+        "webdav_connect_retry_patch.py", "webdav_midstream_resume_patch.py",
+    ):
+        if x in workflow:
+            raise RuntimeError("legacy data plane still wired into workflow: "+x)
+
+    if require_removed:
+        remains=[p for p in REMOVED_RUNTIME_SOURCES if (ROOT/p).exists()]
+        if remains:
+            raise RuntimeError("legacy runtime sources remain: "+repr(remains))
+
+    return {
+        "status":"PASS",
+        "localhost_media_proxies":0,
+        "parallel_range_workers":0,
+        "large_playback_warehouses":1,
+        "raw_capacity_bytes":128*1024*1024,
+        "priority_policy_changed":False,
+    }
+
+def apk_check(apk: Path):
+    with zipfile.ZipFile(apk) as z:
+        names=set(z.namelist())
+        for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
+            if f"lib/{abi}/libnova_transport.so" not in names:
+                raise RuntimeError("missing direct transport library: "+abi)
+            if f"lib/{abi}/libnova_iso.so" in names:
+                raise RuntimeError("legacy libnova_iso remains: "+abi)
+
+        payload=b""
+        for n in names:
+            if n.endswith(".dex") or (
+                n.startswith("lib/") and n.endswith("/libavos.so")
+            ):
+                payload += z.read(n)
+
+        for token in (
+            b"DirectTransportProxy", b"novatransport://",
+            b"NOVA_DIRECT_SOURCE_OPEN",
+        ):
+            if token not in payload:
+                raise RuntimeError(
+                    "final APK direct token missing: "+token.decode())
+
+        for token in (
+            b"BlurayIsoProxy", b"NovaIsoSourceClose", b"NovaIsoNativeClose",
+        ):
+            if token in payload:
+                raise RuntimeError(
+                    "legacy transport token remains: "+token.decode())
+
+    return {
+        "status":"PASS",
+        "legacy_iso_library":False,
+        "direct_transport_abis":4,
+    }
+
+if __name__=="__main__":
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--source",action="store_true")
+    ap.add_argument("--require-removed",action="store_true")
+    ap.add_argument("--apk",type=Path)
+    args=ap.parse_args()
+    if args.source:
+        print(json.dumps(source_check(args.require_removed),indent=2))
+    if args.apk:
+        print(json.dumps(apk_check(args.apk),indent=2))
