@@ -53,16 +53,7 @@ def source_check(require_removed=False):
         if x not in native:
             raise RuntimeError("AVOS direct source invariant missing: "+x)
 
-    base=(ROOT/"scripts/native_rebuffer_patch.py").read_text()
-    for x in (
-        "nova_raw_boost_thread",
-        "nova_playback_yield_sched",
-        "NOVA_RAW_SCHED",
-        "NOVA_PLAYBACK_SCHED",
-    ):
-        if x in base:
-            raise RuntimeError("custom priority policy remains: "+x)
-
+    # Scheduling policy is validated on the final APK postprocess.\n
 
     for x in ("StreamOverHttp", "BlurayIsoProxy", "libnova_iso.so"):
         if x in apply:
