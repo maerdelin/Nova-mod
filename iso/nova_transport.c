@@ -267,3 +267,131 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
     session_release(s);
     return ret;
 }
+
+
+__attribute__((visibility("default")))
+int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
+{
+    nova_session *s = session_acquire(generation);
+    if (!s)
+        return AVERROR_EXIT;
+
+    pthread_mutex_lock(&s->io_lock);
+    int64_t ret = AVERROR(EINVAL);
+    if (whence == AVSEEK_SIZE) {
+        ret = (int64_t)s->output_size;
+    } else if (!s->stopping) {
+        whence &= ~AVSEEK_FORCE;
+        if (s->mode == NOVA_MODE_BLURAY_ISO) {
+            int64_t current = bd_tell(s->bd);
+            int64_t target = offset;
+            if (whence == SEEK_CUR)
+                target = current + offset;
+            else if (whence == SEEK_END)
+                target = (int64_t)s->output_size + offset;
+            else if (whence != SEEK_SET)
+                target = -1;
+
+            if (target >= 0 && (uint64_t)target <= s->output_size) {
+                ret = bd_seek(s->bd, (uint64_t)target);
+                if (ret >= 0 && ret < target) {
+                    uint8_t discard[64 * 1024];
+                    while (ret < target) {
+                        int ask = (int)((target - ret) < (int64_t)sizeof(discard)
+                                        ? (target - ret) : (int64_t)sizeof(discard));
+                        int got = bd_read(s->bd, discard, ask);
+                        if (got <= 0) {
+                            ret = AVERROR(EIO);
+                            break;
+                        }
+                        ret += got;
+                    }
+                }
+            }
+        } else {
+            ret = avio_seek(s->upstream, offset, whence);
+            if (ret >= 0)
+                s->upstream_pos = ret;
+        }
+    }
+    pthread_mutex_unlock(&s->io_lock);
+    session_release(s);
+    return ret;
+}
+
+__attribute__((visibility("default")))
+int64_t nova_transport_size(uint64_t generation)
+{
+    nova_session *s = session_acquire(generation);
+    if (!s)
+        return AVERROR_EXIT;
+    int64_t size = (int64_t)s->output_size;
+    session_release(s);
+    return size;
+}
+
+__attribute__((visibility("default")))
+int nova_transport_abort(uint64_t generation)
+{
+    pthread_mutex_lock(&g_lock);
+    nova_session *s = g_session;
+    if (!s || s->generation != generation) {
+        pthread_mutex_unlock(&g_lock);
+        return 0;
+    }
+    s->stopping = 1;
+    pthread_mutex_unlock(&g_lock);
+    LOGI("ABORT generation=%" PRIu64, generation);
+    return 1;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
+        JNIEnv *env, jclass cls, jstring jurl, jstring jheaders, jboolean jiso)
+{
+    (void)cls;
+    if (!jurl)
+        return NULL;
+
+    const char *url = (*env)->GetStringUTFChars(env, jurl, NULL);
+    const char *headers = jheaders
+        ? (*env)->GetStringUTFChars(env, jheaders, NULL) : NULL;
+
+    nova_session *fresh = session_create(url, headers ? headers : "", jiso ? 1 : 0);
+
+    if (headers)
+        (*env)->ReleaseStringUTFChars(env, jheaders, headers);
+    (*env)->ReleaseStringUTFChars(env, jurl, url);
+    if (!fresh)
+        return NULL;
+
+    pthread_mutex_lock(&g_lock);
+    nova_session *old = g_session;
+    fresh->generation = ++g_generation;
+    g_session = fresh;
+    pthread_mutex_unlock(&g_lock);
+
+    if (old)
+        session_free(old);
+
+    char out[512];
+    if (fresh->mode == NOVA_MODE_BLURAY_ISO) {
+        snprintf(out, sizeof(out),
+            "novatransport://%" PRIu64 "/main.m2ts?mpegts&nova_direct=1"
+            "&nova_iso=1&nova_iso_duration_us=%" PRIu64
+            "&nova_iso_generation=%" PRIu64
+            "&nova_iso_clip_count=%u&nova_iso_title_size=%" PRIu64,
+            fresh->generation, fresh->duration_us, fresh->generation,
+            fresh->clip_count, fresh->output_size);
+    } else {
+        snprintf(out, sizeof(out),
+            "novatransport://%" PRIu64 "/stream?nova_direct=1"
+            "&nova_generation=%" PRIu64 "&nova_source_size=%" PRIu64,
+            fresh->generation, fresh->generation, fresh->output_size);
+    }
+
+    LOGI("OPEN_READY mode=%s generation=%" PRIu64 " size=%" PRIu64,
+         fresh->mode == NOVA_MODE_BLURAY_ISO ? "iso" : "file",
+         fresh->generation, fresh->output_size);
+    return (*env)->NewStringUTF(env, out);
+}
