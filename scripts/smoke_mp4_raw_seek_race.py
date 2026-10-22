@@ -30,6 +30,33 @@ def wait_for(pred,seconds,label):
         time.sleep(.25)
     raise RuntimeError('Missing '+label)
 
+def seek_action_result(text, marker, direction):
+    """Require scoped seek, successful RAW seek, restart and subsequent reads."""
+    at = text.rfind(marker)
+    if at < 0:
+        return None
+    phase = text[at:]
+    m = re.search(r'avos_mp_video_seek current_pos=(-?\d+) to pos=(-?\d+)', phase)
+    if not m:
+        return None
+    prior, target = int(m[1]), int(m[2])
+    if (direction > 0 and target <= prior) or (direction < 0 and target >= prior):
+        return None
+    tail = phase[m.end():]
+    raw = re.search(r'NOVA_RAW128_SEEK: target=(\d+) result=(-?\d+) generation=(\d+)', tail)
+    if not raw or raw[1] != raw[2]:
+        return None
+    post = tail[raw.end():]
+    started = post.find('avos_mp_start:')
+    if started < 0:
+        return None
+    consumed = [int(x) for x in re.findall(r'NOVA_RAW128: produced=\d+ consumed=(\d+)', post[started:])]
+    if len(consumed) < 2 or consumed[-1] <= consumed[0]:
+        return None
+    return {'from': prior, 'to': target, 'raw_generation': int(raw[3]),
+            'post_seek_consumed_delta': consumed[-1] - consumed[0]}
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
     a.reports.mkdir(parents=True,exist_ok=True)
@@ -74,7 +101,7 @@ def main():
                                 b=f.read(min(left,32768))
                                 if not b:break
                                 self.wfile.write(b);self.wfile.flush();left-=len(b)
-                                time.sleep(.002)
+                                time.sleep(.012)  # Keep producer in flight during first seek.
                     except (BrokenPipeError,ConnectionResetError): pass
 
             server=http.server.ThreadingHTTPServer(('127.0.0.1',0),H);port=server.server_port
@@ -101,6 +128,10 @@ def main():
                 raise RuntimeError('MP4 RAW producer crashed before user seek')
             if PLAYER not in resumed():
                 raise RuntimeError('PlayerActivity exited before MP4 seek stress')
+            # Fail if the fixture fully downloaded before we exercised any seek.
+            metrics = re.findall(r'NOVA_RAW128: produced=(\d+) consumed=(\d+)[^\n]*eof=(\d+)', stable)
+            if not metrics or metrics[-1][2] != '0':
+                raise RuntimeError('RAW producer reached EOF before first seek; throttle fixture more')
 
             # Establish controller focus without seeking.
             adb('shell','input keyevent 20');time.sleep(.35)
@@ -112,20 +143,14 @@ def main():
                     marker='NOVA_MP4_RAW_SEEK_'+str(i)+'_'+label+'_'+str(time.monotonic_ns())
                     adb('shell','log -p i -t NOVA_MP4_RAW_SEEK_TEST '+marker)
                     adb('shell','input keyevent '+str(key))
-                    def done(t):
-                        at=t.rfind(marker)
-                        if at<0:return False
-                        phase=t[at:]
-                        m=re.search(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',phase)
-                        if not m:return False
-                        tail=phase[m.end():]
-                        raw=tail.find('NOVA_RAW128_SEEK:')
-                        hide=tail.find('NOVA_CONTROLBAR: HIDE_DONE', raw if raw >= 0 else 0)
-                        return raw >= 0 and hide >= 0
-                    text=wait_for(done,20,'MP4 '+label+' runtime RAW seek and same-action hide '+str(i))
+                    # Direct-transport APK does not contain the optional
+                    # controlbar timer; require real RAW reads after each seek.
+                    text=wait_for(lambda t: seek_action_result(t,marker,direction) is not None,
+                                  20,'MP4 '+label+' native RAW seek and resumed reads '+str(i))
                     phase=text[text.rfind(marker):]
-                    m=re.search(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',phase)
-                    events.append({'direction':label,'from':int(m[1]),'to':int(m[2])})
+                    event=seek_action_result(text,marker,direction)
+                    if event is None:raise RuntimeError('Scoped seek evidence lost')
+                    events.append({'direction':label,**event})
                     if 'moov atom not found' in phase or 'error opening parser' in phase:
                         raise RuntimeError('MP4 parser failed during runtime seek stress')
                     if 'NOVA_PLAYBACK_COMPLETE' in phase:

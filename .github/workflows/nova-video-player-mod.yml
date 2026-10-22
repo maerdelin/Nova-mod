@@ -33,6 +33,7 @@ jobs:
           mkdir -p inputs dist tools work reports
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
+          python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
           python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py
           curl -fL --retry 4 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
