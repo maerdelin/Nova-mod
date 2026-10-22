@@ -170,6 +170,17 @@ jobs:
           printf '{"signing_mode":"%s"}\n' "$SIGNING_MODE" > reports/signing.json
           (cd dist && sha256sum Nova_Video_Player_mod_SIGNED.apk > SHA256SUMS.txt)
 
+      - name: Upload runnable direct-transport test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-direct-transport-runnable-${{ github.run_number }}
+          path: |
+            dist/Nova_Video_Player_mod_SIGNED.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
       - name: Enable emulator hardware acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
