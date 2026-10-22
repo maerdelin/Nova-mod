@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PATCH = (ROOT / "scripts/aggressive_download_patch.py").read_text()
 WORKFLOW = (ROOT / ".github/workflows/nova-video-player-mod.yml").read_text()
 THROUGHPUT = (ROOT / "scripts/stream_throughput_patch.py").read_text()
+AUDIT = (ROOT / "scripts/main_transport_audit.py").read_text()
 
 
 class AggressiveDownloadArchitectureTests(unittest.TestCase):
