@@ -302,6 +302,44 @@ def patch_service(text):
     repl=h.group("indent")+op+" {"+h.group("regs")+"}, "+wrapper
     return text[:m.start()]+body[:h.start()]+repl+body[h.end():]+text[m.end():]
 
+def patch_activity_back(text):
+    methods=[m for m in METHOD_RE.finditer(text)
+             if " onBackPressed()V" in m.group(0).splitlines()[0]]
+    if methods:
+        if len(methods)!=1:
+            raise RuntimeError("PlayerActivity.onBackPressed ambiguous")
+        m=methods[0]
+        body=m.group(0)
+        if "DirectTransportProxy;->close()V" not in body:
+            lines=body.splitlines()
+            ri=next(i for i,l in enumerate(lines)
+                    if l.strip().startswith((".locals ", ".registers ")))
+            lines[ri+1:ri+1]=[
+                "",
+                "    # NOVA_DIRECT_BACK_EXIT: only reached when controller did not consume BACK.",
+                "    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V",
+            ]
+            body="\n".join(lines)
+            text=text[:m.start()]+body+text[m.end():]
+    else:
+        method=r'''
+.method public onBackPressed()V
+    .locals 0
+    # NOVA_DIRECT_BACK_EXIT: only reached when controller did not consume BACK.
+    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V
+    invoke-super {p0}, Landroid/support/v7/app/AppCompatActivity;->onBackPressed()V
+    return-void
+.end method
+'''
+        text=text.rstrip()+"\n\n"+method.strip()+"\n"
+
+    if "NOVA_DIRECT_BACK_EXIT" not in text:
+        raise RuntimeError("PlayerActivity back exit hook missing")
+    if "DirectTransportProxy;->close()V" not in text:
+        raise RuntimeError("PlayerActivity back close missing")
+    return text
+
+
 def patch_activity_stop(text):
     methods=[m for m in METHOD_RE.finditer(text)
              if " onStop()V" in m.group(0).splitlines()[0]]
@@ -391,7 +429,8 @@ def main():
     service=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerService.smali"),"PlayerService")
     service.write_text(patch_service(service.read_text()))
     activity=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity.smali"),"PlayerActivity")
-    activity.write_text(patch_activity_stop(activity.read_text()))
+    activity_text=patch_activity_back(activity.read_text())
+    activity.write_text(patch_activity_stop(activity_text))
     avos=one(root.glob("smali*/com/archos/medialib/AvosMediaPlayer.smali"),"AvosMediaPlayer")
     avos.write_text(patch_release(avos.read_text()))
 
