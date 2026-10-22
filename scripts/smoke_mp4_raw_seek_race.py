@@ -86,7 +86,7 @@ def main():
 
             base=wait_for(lambda t:
                 'ETYPE_MP4' in t and
-                'NOVA_RAW10X_OPEN: phase=pre_probe' in t and
+                'NOVA_RAW128_OPEN: phase=pre_probe' in t and
                 'NOVA_STARTUP_TRACE first_frame_sink' in t,
                 35,'MP4 first frame with pre-probe RAW10X')
             if 'moov atom not found' in base or 'error opening parser' in base:
@@ -119,7 +119,7 @@ def main():
                         m=re.search(r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+)',phase)
                         if not m:return False
                         tail=phase[m.end():]
-                        raw=tail.find('NOVA_RAW10X_SEEK:')
+                        raw=tail.find('NOVA_RAW128_SEEK:')
                         hide=tail.find('NOVA_CONTROLBAR: HIDE_DONE', raw if raw >= 0 else 0)
                         return raw >= 0 and hide >= 0
                     text=wait_for(done,20,'MP4 '+label+' runtime RAW seek and same-action hide '+str(i))
@@ -133,11 +133,11 @@ def main():
                     if PLAYER not in resumed():
                         raise RuntimeError('PlayerActivity exited during MP4 seek stress')
 
-            final=wait_for(lambda t:'NOVA_RAW10X:' in t and PLAYER in resumed(),
+            final=wait_for(lambda t:'NOVA_RAW128:' in t and PLAYER in resumed(),
                            5,'MP4 still active after RAW seek stress')
             if 'error opening parser' in final or 'moov atom not found' in final:
                 raise RuntimeError('MP4 parser failure after seek stress')
-            raw_seek_count=final.count('NOVA_RAW10X_SEEK:')
+            raw_seek_count=final.count('NOVA_RAW128_SEEK:')
             if raw_seek_count < 8:
                 raise RuntimeError('Too few RAW seeks observed: '+str(raw_seek_count))
             with lock:ranges=list(starts)

@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 class PlaybackCompletionIsolationTests(unittest.TestCase):
     def test_patch_has_no_download_or_rebuffer_dependency(self):
         text=(ROOT/'scripts/playback_completion_patch.py').read_text()
-        for forbidden in ('raw_prefetch','NOVA_RAW10X','NOVA_RAW_10X_POLICY',
+        for forbidden in ('raw_prefetch','NOVA_RAW128','NOVA_RAW_FIXED128_POLICY',
                           'rebuffer_low','rebuffer_resume','NovaWebdavOpenPolicy',
                           'StreamOverHttp','source_size','raw_prefetch_eof',
                           'rebuffer_capacity_bytes'):

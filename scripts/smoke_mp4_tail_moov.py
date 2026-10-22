@@ -106,14 +106,14 @@ def main():
             adb('shell',f'am start -W -n {PLAYER} -a android.intent.action.VIEW -d {shlex.quote(url)} -t video/mp4',timeout=30)
             text=wait_for(lambda t:
                 'ETYPE_MP4' in t and
-                'NOVA_RAW10X_OPEN: phase=pre_probe' in t and
+                'NOVA_RAW128_OPEN: phase=pre_probe' in t and
                 'NOVA_STARTUP_TRACE probe_done' in t and
-                'NOVA_RAW10X_SEEK:' in t and
+                'NOVA_RAW128_SEEK:' in t and
                 'NOVA_STARTUP_TRACE first_frame_sink' in t,
                 35,'late-moov MP4 pre-probe RAW seek, probe completion and first frame')
             if 'moov atom not found' in text:
                 raise RuntimeError('late-moov MP4 still failed probe')
-            raw_i=text.index('NOVA_RAW10X_OPEN: phase=pre_probe')
+            raw_i=text.index('NOVA_RAW128_OPEN: phase=pre_probe')
             probe_i=text.index('NOVA_STARTUP_TRACE probe_done')
             if raw_i > probe_i:
                 raise RuntimeError('RAW AVIO was not installed before MP4 probe')
