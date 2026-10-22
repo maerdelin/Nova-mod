@@ -52,6 +52,28 @@ class DownloadArchitectureTests(unittest.TestCase):
         self.assertLess(lock, write_off)
         self.assertLess(write_off, read)
 
+    def test_raw_code_is_one_contiguous_final_implementation(self):
+        self.assertEqual(NATIVE.count("RAW_CODE = r'''"), 1)
+        self.assertEqual(NATIVE.count("PLAYBACK_SCHED = r'''"), 1)
+        self.assertNotIn("RAW_CONSUMER =", NATIVE)
+        start = NATIVE.index("RAW_CODE =")
+        end = NATIVE.index("DYNAMIC_POLICY =", start)
+        raw = NATIVE[start:end]
+        for token in (
+            "static void *nova_raw_thread",
+            "static int nova_raw_read",
+            "static int64_t nova_raw_seek",
+            "static int nova_raw_open",
+            "static void nova_raw_close",
+        ):
+            self.assertIn(token, raw)
+        ps = NATIVE.index("PLAYBACK_SCHED =")
+        pe = NATIVE.index("def patch_stream_h", ps)
+        playback = NATIVE[ps:pe]
+        self.assertNotIn("nova_raw_seek", playback)
+        self.assertNotIn("nova_raw_open", playback)
+        self.assertNotIn("nova_raw_close", playback)
+
     def test_download_qos_and_playback_yield_live_in_native_patch(self):
         for token in (
             "NOVA_RAW_SCHED:",

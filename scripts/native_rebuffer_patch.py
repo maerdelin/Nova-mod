@@ -468,10 +468,9 @@ static void *nova_raw_thread(void *opaque)
         av_usleep(50000);
     }
     return NULL;
-}'''
+}
 
-
-RAW_CONSUMER = r'''static int nova_raw_read(void *opaque, uint8_t *dst, int size)
+static int nova_raw_read(void *opaque, uint8_t *dst, int size)
 {
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
     if( size <= 0 )
@@ -511,66 +510,6 @@ RAW_CONSUMER = r'''static int nova_raw_read(void *opaque, uint8_t *dst, int size
     pthread_cond_broadcast(&raw->can_write);
     pthread_mutex_unlock(&raw->mutex);
     return copied;
-}'''
-
-
-PLAYBACK_SCHED = r'''
-static long nova_playback_cpu_max_freq_khz(int cpu)
-{
-    char path[160];
-    snprintf(path, sizeof(path),
-             "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
-    FILE *f = fopen(path, "r");
-    if( !f ) return 0;
-    long khz = 0;
-    if( fscanf(f, "%ld", &khz) != 1 ) khz = 0;
-    fclose(f);
-    return khz;
-}
-
-static void nova_playback_yield_sched(const char *role, int requested_nice)
-{
-    cpu_set_t allowed, playback;
-    CPU_ZERO(&allowed);
-    CPU_ZERO(&playback);
-    int get_aff_rc = sched_getaffinity(0, sizeof(allowed), &allowed);
-
-    int fast0 = -1, fast1 = -1;
-    long score0 = -1, score1 = -1;
-    if( get_aff_rc == 0 ) {
-        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
-            if( !CPU_ISSET(cpu, &allowed) ) continue;
-            long score = nova_playback_cpu_max_freq_khz(cpu);
-            if( score <= 0 ) score = cpu + 1;
-            if( score > score0 || (score == score0 && cpu > fast0) ) {
-                score1 = score0; fast1 = fast0;
-                score0 = score; fast0 = cpu;
-            } else if( score > score1 || (score == score1 && cpu > fast1) ) {
-                score1 = score; fast1 = cpu;
-            }
-        }
-
-        int count = 0;
-        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
-            if( !CPU_ISSET(cpu, &allowed) ) continue;
-            if( cpu == fast0 || cpu == fast1 ) continue;
-            CPU_SET(cpu, &playback);
-            count++;
-        }
-        if( count > 0 )
-            sched_setaffinity(0, sizeof(playback), &playback);
-    }
-
-    errno = 0;
-    int nice_rc = setpriority(PRIO_PROCESS, 0, requested_nice);
-    int nice_errno = nice_rc ? errno : 0;
-    errno = 0;
-    int actual_nice = getpriority(PRIO_PROCESS, 0);
-    int get_nice_errno = errno;
-    serprintf(
-        "NOVA_PLAYBACK_SCHED: role=%s requestedNice=%d niceRc=%d niceErr=%d actualNice=%d getNiceErr=%d reservedFast0=%d reservedFast1=%d\n",
-        role, requested_nice, nice_rc, nice_errno,
-        actual_nice, get_nice_errno, fast0, fast1 );
 }
 
 static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
