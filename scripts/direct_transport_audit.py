@@ -23,6 +23,7 @@ REMOVED_RUNTIME_SOURCES=(
     "tests/test_webdav_header_order.py",
     "tests/test_iso_title_duration.py",
     "tests/test_iso_seek_ui.py",
+    "scripts/smoke_seek_playback.py",
 )
 
 def source_check(require_removed=False):
