@@ -12,7 +12,7 @@ class AggressiveDownloadArchitectureTests(unittest.TestCase):
         for token in (
             "NOVA_AGGRESSIVE_RAW_RING",
             "raw->ring = av_malloc(NOVA_RAW_FALLBACK_CAP_BYTES)",
-            "NOVA_RAW_IO_BYTES             (256 * 1024)",
+            "NOVA_RAW_IO_BYTES             (128 * 1024)",
             "raw->used_bytes >= raw->capacity_bytes",
         ):
             self.assertIn(token, PATCH)
