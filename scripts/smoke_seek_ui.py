@@ -9,8 +9,11 @@ from pathlib import Path
 import subprocess
 import tempfile
 import zipfile
-from webdav_fixes_dex import latest
 ROOT=Path(__file__).resolve().parents[1]
+def latest(root, pattern):
+    items=sorted(root.glob(pattern))
+    if not items: raise RuntimeError('SDK path missing')
+    return items[-1]
 def run(args,**kwargs):return subprocess.run(list(map(str,args)),check=True,**kwargs)
 def main():
     p=argparse.ArgumentParser();p.add_argument('apk',type=Path);p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
