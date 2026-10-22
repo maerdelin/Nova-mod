@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+import hashlib, struct, zipfile, zlib, sys
+from pathlib import Path
+
+SRC=Path(sys.argv[1]); DST=Path(sys.argv[2])
+
+# ---------- dex parsing ----------
+def uleb(data, off):
+    v=0;s=0;start=off
+    while True:
+        b=data[off];off+=1;v|=(b&0x7f)<<s
+        if not b&0x80:return v,off,off-start
+        s+=7
+
+def parse(data):
+    ns,so=struct.unpack_from('<II',data,0x38); S=[]; SO=[]
+    for i in range(ns):
+        o=struct.unpack_from('<I',data,so+4*i)[0];n,p,_=uleb(data,o);e=data.index(b'\0',p)
+        S.append(data[p:e].decode('utf8','replace')); SO.append(o)
+    nt,to=struct.unpack_from('<II',data,0x40); T=[S[struct.unpack_from('<I',data,to+4*i)[0]] for i in range(nt)]
+    np,po=struct.unpack_from('<II',data,0x48); P=[]
+    for i in range(np):
+        sh,ret,params=struct.unpack_from('<III',data,po+12*i); ps=[]
+        if params:
+            sz=struct.unpack_from('<I',data,params)[0]
+            for j in range(sz):ps.append(T[struct.unpack_from('<H',data,params+4+2*j)[0]])
+        P.append('('+''.join(ps)+')'+T[ret])
+    nf,fo=struct.unpack_from('<II',data,0x50); F=[]
+    for i in range(nf):
+        ci,ti,ni=struct.unpack_from('<HHI',data,fo+8*i);F.append((T[ci],S[ni],T[ti]))
+    nm,mo=struct.unpack_from('<II',data,0x58); M=[]
+    for i in range(nm):
+        ci,pi,ni=struct.unpack_from('<HHI',data,mo+8*i);M.append((T[ci],S[ni],P[pi]))
+    return dict(S=S,SO=SO,T=T,P=P,F=F,M=M, so=so,to=to,po=po,fo=fo,mo=mo)
+
+def midx(P, cls,name,proto):
+    q=(cls,name,proto); hits=[i for i,x in enumerate(P['M']) if x==q]
+    if len(hits)!=1: raise RuntimeError(f'method {q} hits={hits}')
+    return hits[0]
+def fidx(P, cls,name,typ):
+    q=(cls,name,typ);hits=[i for i,x in enumerate(P['F']) if x==q]
+    if len(hits)!=1: raise RuntimeError(f'field {q} hits={hits}')
+    return hits[0]
+def tidx(P, desc):
+    hits=[i for i,x in enumerate(P['T']) if x==desc]
+    if len(hits)!=1: raise RuntimeError(f'type {desc} hits={hits}')
+    return hits[0]
+def sidx(P,s):
+    hits=[i for i,x in enumerate(P['S']) if x==s]
+    if len(hits)!=1: raise RuntimeError(f'string {s!r} hits={hits}')
+    return hits[0]
+def pidx(P,proto):
+    hits=[i for i,x in enumerate(P['P']) if x==proto]
+    if len(hits)!=1: raise RuntimeError(f'proto {proto} hits={hits}')
+    return hits[0]
+
+def fix_dex(b):
+    b[12:32]=hashlib.sha1(b[32:]).digest()
+    b[8:12]=struct.pack('<I',zlib.adler32(b[12:])&0xffffffff)
+
+def enc_uleb(v):
+    out=[]
+    while True:
+        x=v&0x7f;v>>=7
+        if v:x|=0x80
+        out.append(x)
+        if not v:return bytes(out)
+
+# ---------- tiny assembler ----------
+class A:
+    def __init__(self): self.w=[]; self.labels={}; self.br=[]
+    @property
+    def pc(self): return len(self.w)
+    def emit(self,*ws): self.w.extend([x&0xffff for x in ws])
+    def label(self,n):
+        if n in self.labels: raise RuntimeError('duplicate label '+n)
+        self.labels[n]=self.pc
+    def nop(self,n=1): self.emit(*([0]*n))
+    def const_string(self,r,idx): self.emit(0x1a|(r<<8),idx)
+    def const4(self,r,val): self.emit(0x12|(r<<8)|((val&0xf)<<12))
+    def const16(self,r,val): self.emit(0x13|(r<<8),val)
+    def new_instance(self,r,t): self.emit(0x22|(r<<8),t)
+    def move_result_obj(self,r): self.emit(0x0c|(r<<8))
+    def invoke(self,op,mid,regs):
+        if len(regs)>5 or any(r>15 for r in regs): raise RuntimeError(('invoke regs',regs))
+        rs=list(regs)+[0]*(5-len(regs));c,d,e,f,g=rs[0],rs[1],rs[2],rs[3],rs[4]
+        self.emit(op|(len(regs)<<12)|(g<<8),mid,c|(d<<4)|(e<<8)|(f<<12))
+    def invoke_static(self,m,regs):self.invoke(0x71,m,regs)
+    def invoke_virtual(self,m,regs):self.invoke(0x6e,m,regs)
+    def invoke_direct(self,m,regs):self.invoke(0x70,m,regs)
+    def iget(self,d,o,f):self.emit(0x52|(d<<8)|(o<<12),f)
+    def iget_obj(self,d,o,f):self.emit(0x54|(d<<8)|(o<<12),f)
+    def sput_obj(self,s,f):self.emit(0x69|(s<<8),f)
+    def if_eqz(self,r,l):
+        at=self.pc;self.emit(0x38|(r<<8),0);self.br.append((at+1,at,l))
+    def if_eq(self,a,b,l):
+        at=self.pc;self.emit(0x32|(a<<8)|(b<<12),0);self.br.append((at+1,at,l))
+    def goto16(self,l):
+        at=self.pc;self.emit(0x29,0);self.br.append((at+1,at,l))
+    def ret_obj(self,r):self.emit(0x11|(r<<8))
+    def finish(self):
+        for pos,base,l in self.br:
+            if l not in self.labels:raise RuntimeError('missing label '+l)
+            off=self.labels[l]-base
+            if not -32768<=off<=32767:raise RuntimeError('branch range')
+            self.w[pos]=off&0xffff
+        return self.w
+
+with zipfile.ZipFile(SRC) as z:
+    c1=bytearray(z.read('classes.dex')); c4=bytearray(z.read('classes4.dex'))
+
+P1=parse(c1);P4=parse(c4)
+# Run579 exact guards
+assert len(c1)==9520548, len(c1)
+assert len(c4)==3528, len(c4)
+assert P1['M'][12476][0]=='Lcom/archos/filecorelibrary/contentstorage/DocumentUriBuilder;'
+assert P1['M'][12476][1]=='convertFileUriToContentUri'
+assert P1['M'][12476][2]=='(Landroid/content/Context;Landroid/net/Uri;)Landroid/net/Uri;'
+assert P1['F'][23526]==('Lcom/archos/mediacenter/video/browser/loader/TvshowsSelectionLoader;','DEFAULT_SORT','Ljava/lang/String;')
+assert P4['M'][5][0]=='Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;'
+assert P4['M'][5][1]=='getPassword'
+assert P4['M'][9]==('Lcom/archos/filecorelibrary/webdav/WebdavFile2;','uriToHttp','(Landroid/net/Uri;)Landroid/net/Uri;')
+
+# Symbol indexes classes.dex
+M={
+ 'peek':midx(P1,'Lcom/archos/filecorelibrary/webdav/WebdavUtils;','peekInstance','()Lcom/archos/filecorelibrary/webdav/WebdavUtils;'),
+ 'sardine':midx(P1,'Lcom/archos/filecorelibrary/webdav/WebdavUtils;','getSardine','(Landroid/net/Uri;)Lcom/thegrizzlylabs/sardineandroid/impl/OkHttpSardine;'),
+ 'client':midx(P1,'Lcom/archos/filecorelibrary/webdav/WebdavUtils;','getHttpClient','(Landroid/net/Uri;)Lns0;'),
+ 'tohttp':midx(P1,'Lcom/archos/filecorelibrary/webdav/WebdavFile2;','uriToHttp','(Landroid/net/Uri;)Landroid/net/Uri;'),
+ 'uri_str':midx(P1,'Landroid/net/Uri;','toString','()Ljava/lang/Str
