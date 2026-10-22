@@ -165,17 +165,41 @@ PROXY_RESOLVE = r'''
     move-result-object v9
     new-instance v10, Ljava/lang/StringBuilder;
     invoke-direct {v10}, Ljava/lang/StringBuilder;-><init>()V
-    const-string v11, "Authorization: Basic "
+    const-string v11, "Basic "
     invoke-virtual {v10, v11}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     move-result-object v10
     invoke-virtual {v10, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v10
+    invoke-virtual {v10}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v3
+    :open
+    invoke-static {v2, v3}, Lcom/archos/mediacenter/video/player/DirectRedirectResolver;->resolve(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;
+    move-result-object v12
+    if-eqz v12, :fail
+    const/4 v13, 0x0
+    aget-object v2, v12, v13
+    const/4 v13, 0x1
+    aget-object v3, v12, v13
+    if-eqz v3, :no_final_auth
+    invoke-virtual {v3}, Ljava/lang/String;->isEmpty()Z
+    move-result v13
+    if-nez v13, :no_final_auth
+    new-instance v10, Ljava/lang/StringBuilder;
+    invoke-direct {v10}, Ljava/lang/StringBuilder;-><init>()V
+    const-string v11, "Authorization: "
+    invoke-virtual {v10, v11}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v10
+    invoke-virtual {v10, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     move-result-object v10
     const-string v11, "\r\n"
     invoke-virtual {v10, v11}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     move-result-object v10
     invoke-virtual {v10}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v3
-    :open
+    goto :native_open
+    :no_final_auth
+    const-string v3, ""
+    :native_open
     sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
     invoke-static {v2, v3, v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
     move-result-object v2
@@ -238,6 +262,153 @@ FACTORY = r'''.class public final Lcom/archos/mediacenter/video/player/DirectPla
     invoke-virtual {p0, p1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V
     :done
     return-void
+.end method
+'''
+
+REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player/DirectRedirectResolver;
+.super Ljava/lang/Object;
+.source "DirectRedirectResolver.java"
+
+.method private constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+
+.method private static sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
+    .locals 4
+    if-eqz p0, :no
+    if-eqz p1, :no
+    invoke-virtual {p0}, Ljava/net/URL;->getProtocol()Ljava/lang/String;
+    move-result-object v0
+    invoke-virtual {p1}, Ljava/net/URL;->getProtocol()Ljava/lang/String;
+    move-result-object v1
+    if-eqz v0, :no
+    if-eqz v1, :no
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-eqz v2, :no
+    invoke-virtual {p0}, Ljava/net/URL;->getHost()Ljava/lang/String;
+    move-result-object v0
+    invoke-virtual {p1}, Ljava/net/URL;->getHost()Ljava/lang/String;
+    move-result-object v1
+    if-eqz v0, :no
+    if-eqz v1, :no
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-eqz v2, :no
+    invoke-virtual {p0}, Ljava/net/URL;->getPort()I
+    move-result v0
+    if-ltz v0, :p0_default
+    goto :p0_done
+    :p0_default
+    invoke-virtual {p0}, Ljava/net/URL;->getDefaultPort()I
+    move-result v0
+    :p0_done
+    invoke-virtual {p1}, Ljava/net/URL;->getPort()I
+    move-result v1
+    if-ltz v1, :p1_default
+    goto :p1_done
+    :p1_default
+    invoke-virtual {p1}, Ljava/net/URL;->getDefaultPort()I
+    move-result v1
+    :p1_done
+    if-ne v0, v1, :no
+    const/4 v0, 0x1
+    return v0
+    :no
+    const/4 v0, 0x0
+    return v0
+.end method
+
+.method public static resolve(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;
+    .locals 10
+    if-eqz p0, :fail
+    new-instance v0, Ljava/net/URL;
+    invoke-direct {v0, p0}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
+    move-object v1, v0
+    move-object v2, p1
+    const/4 v3, 0x0
+    :loop
+    const/4 v4, 0x6
+    if-ge v3, v4, :fail
+    invoke-virtual {v1}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
+    move-result-object v4
+    check-cast v4, Ljava/net/HttpURLConnection;
+    const/4 v5, 0x0
+    invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setInstanceFollowRedirects(Z)V
+    const/16 v5, 0x2710
+    invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
+    invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setReadTimeout(I)V
+    const-string v5, "GET"
+    invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
+    const-string v5, "Range"
+    const-string v6, "bytes=0-0"
+    invoke-virtual {v4, v5, v6}, Ljava/net/URLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
+    if-eqz v2, :response
+    invoke-virtual {v2}, Ljava/lang/String;->isEmpty()Z
+    move-result v5
+    if-nez v5, :response
+    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/DirectRedirectResolver;->sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
+    move-result v5
+    if-eqz v5, :drop_auth
+    const-string v5, "Authorization"
+    invoke-virtual {v4, v5, v2}, Ljava/net/URLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
+    goto :response
+    :drop_auth
+    const-string v2, ""
+    :response
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I
+    move-result v5
+    const/16 v6, 0xc8
+    if-eq v5, v6, :success
+    const/16 v6, 0xce
+    if-eq v5, v6, :success
+    const/16 v6, 0x12d
+    if-eq v5, v6, :redirect
+    const/16 v6, 0x12e
+    if-eq v5, v6, :redirect
+    const/16 v6, 0x12f
+    if-eq v5, v6, :redirect
+    const/16 v6, 0x133
+    if-eq v5, v6, :redirect
+    const/16 v6, 0x134
+    if-eq v5, v6, :redirect
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
+    goto :fail
+    :redirect
+    const-string v6, "Location"
+    invoke-virtual {v4, v6}, Ljava/net/URLConnection;->getHeaderField(Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v6
+    if-eqz v6, :redirect_fail
+    new-instance v7, Ljava/net/URL;
+    invoke-direct {v7, v1, v6}, Ljava/net/URL;-><init>(Ljava/net/URL;Ljava/lang/String;)V
+    invoke-static {v0, v7}, Lcom/archos/mediacenter/video/player/DirectRedirectResolver;->sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
+    move-result v8
+    if-nez v8, :keep_auth
+    const-string v2, ""
+    :keep_auth
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
+    move-object v1, v7
+    add-int/lit8 v3, v3, 0x1
+    goto :loop
+    :redirect_fail
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
+    goto :fail
+    :success
+    const/4 v5, 0x2
+    new-array v5, v5, [Ljava/lang/String;
+    const/4 v6, 0x0
+    invoke-virtual {v1}, Ljava/net/URL;->toString()Ljava/lang/String;
+    move-result-object v7
+    aput-object v7, v5, v6
+    const/4 v6, 0x1
+    aput-object v2, v5, v6
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
+    return-object v5
+    :fail
+    const/4 v0, 0x0
+    return-object v0
 .end method
 '''
 
@@ -452,6 +623,7 @@ def main():
     smali_dir.mkdir(parents=True,exist_ok=True)
     (smali_dir/"DirectTransportProxy.smali").write_text(PROXY_HEAD+PROXY_RESOLVE)
     (smali_dir/"DirectPlayerFactory.smali").write_text(FACTORY)
+    (smali_dir/"DirectRedirectResolver.smali").write_text(REDIRECT_RESOLVER)
 
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
         src=args.native_root/abi/"libnova_transport.so"
