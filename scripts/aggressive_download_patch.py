@@ -317,7 +317,7 @@ def patch_native(root: Path) -> dict:
     p = once(
         p,
         "#define NOVA_RAW_CHUNK_BYTES          (128 * 1024)\n",
-        "#define NOVA_RAW_IO_BYTES             (256 * 1024)\n#define NOVA_AGGRESSIVE_RAW_RING       1\n",
+        "#define NOVA_RAW_IO_BYTES             (128 * 1024)\n#define NOVA_AGGRESSIVE_RAW_RING       1\n",
         "raw IO constant",
     )
     p = sub_once(
@@ -465,7 +465,7 @@ def patch_native(root: Path) -> dict:
         "status": "PASS",
         "raw_warehouse_bytes": 128 * 1024 * 1024,
         "raw_storage": "single preallocated ring",
-        "raw_io_bytes": 256 * 1024,
+        "raw_io_bytes": 128 * 1024,
         "download_nice_requested": -8,
         "playback_parser_nice": 5,
         "playback_decode_nice": 8,

@@ -128,7 +128,13 @@ def main():
             (a.reports/'mp4-tail-moov-logcat.txt').write_text(text)
             print('MP4_TAIL_MOOV_SMOKE=PASS '+json.dumps(report))
     except Exception as e:
-        report['error']=str(e);raise
+        report['error']=str(e)
+        try:
+            with lock:
+                report['range_starts']=list(starts)
+        except Exception:
+            pass
+        raise
     finally:
         try:(a.reports/'mp4-tail-moov-last-logcat.txt').write_text(logs())
         except Exception:pass
