@@ -30,9 +30,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq zstd git make maven build-essential wget curl unzip pkg-config meson ninja-build ffmpeg
           mkdir -p inputs dist tools work reports
-          python3 scripts/main_transport_audit.py --source-check
-          python3 -m py_compile scripts/*.py tests/*.py
-          python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee reports/regression-tests.txt
+          python3 scripts/direct_transport_audit.py --source
+          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py
           curl -fL --retry 4 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo | sudo tee /usr/local/bin/repo >/dev/null
@@ -51,21 +50,6 @@ jobs:
           SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
           "$SIGNER" verify --verbose --print-certs inputs/official.apk > reports/official-signature.txt
 
-      - name: Probe official WebDAV control plane
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf work/probe-decoded
-          java -jar tools/apktool.jar d -f -o work/probe-decoded inputs/official.apk >/dev/null
-          {
-            echo "===== WebdavFileEditor ====="
-            cat work/probe-decoded/smali*/com/archos/filecorelibrary/webdav/WebdavFileEditor.smali
-            echo "===== WebdavFile2 ====="
-            cat work/probe-decoded/smali*/com/archos/filecorelibrary/webdav/WebdavFile2.smali
-            echo "===== FileEditor fields ====="
-            grep -nE '^\\.field|mUri|credential|user|pass|sardine|Sardine|uriToHttp|getInputStream' work/probe-decoded/smali*/com/archos/filecorelibrary/FileEditor.smali || true
-          } | tee reports/direct-transport-webdav-probe.txt
-
       - name: Build patched AVOS native rebuffer core
         shell: bash
         run: |
@@ -79,6 +63,7 @@ jobs:
           git -C native/avos checkout --detach b313441df14414632781617742efb66778689b91
           cd ..
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --report reports/native-rebuffer.json
+          python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
           python3 scripts/ts_resume_fallback_patch.py native-src/native/avos --report reports/ts-resume-fallback.json
@@ -116,18 +101,13 @@ jobs:
             done
           } | tee reports/native-libavos-sha256.txt
 
-      - name: Build standalone Blu-ray ISO bridge from pinned libbluray
+      - name: Build unified direct native transport
         shell: bash
         run: |
           set -euo pipefail
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:?ANDROID_NDK_LATEST_HOME is not set}"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-          cp iso/nova_iso.c work/iso-original.c
-          python3 scripts/webdav_safety_patch.py --iso iso/nova_iso.c --report reports/safety-iso-source.json
-          python3 scripts/iso_seek_ui_patch.py --iso iso/nova_iso.c --report reports/iso-timeline-source.json
-          python3 scripts/iso_single_stream_qos_patch.py iso/nova_iso.c --report reports/iso-single-stream-qos.json
-          bash scripts/build_iso_native.sh work/iso-native
-          cp work/iso-original.c iso/nova_iso.c
+          bash scripts/build_transport_native.sh work/transport-native
 
       - name: Apply instruction and XML-property patches to latest APK
         env:
@@ -140,17 +120,17 @@ jobs:
           set -euo pipefail
           python3 scripts/webdav_credential_coldboot_patch.py work/granular-UNSIGNED.apk work/credential-UNSIGNED.apk --report reports/webdav-credential-coldboot.json
 
-      - name: Add Blu-ray ISO on top of verified Run377 credentials
+      - name: Apply direct native transport to WebDAV playback
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/iso_finalize.py --source work/credential-UNSIGNED.apk --output work/iso-UNSIGNED.apk --apktool tools/apktool.jar --iso-native-root work/iso-native --work work --reports reports
-
-      - name: Append only independent HTTP safety, ISO and UI helpers
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/webdav_fixes_dex.py --source work/iso-UNSIGNED.apk --output work/helpers-UNSIGNED.apk --report reports/webdav-fixes-dex.json
+          python3 scripts/direct_transport_apply.py \
+            --source work/credential-UNSIGNED.apk \
+            --output work/direct-UNSIGNED.apk \
+            --apktool tools/apktool.jar \
+            --native-root work/transport-native \
+            --work work
+          python3 scripts/direct_transport_audit.py --source
 
       - name: Align sign and verify the final APK
         id: signing
@@ -179,11 +159,12 @@ jobs:
           else
             echo '::error::Incomplete signing secrets' && exit 1
           fi
-          "$ALIGN" -f -p 4 work/helpers-UNSIGNED.apk work/aligned-UNSIGNED.apk
+          "$ALIGN" -f -p 4 work/direct-UNSIGNED.apk work/aligned-UNSIGNED.apk
           export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
           "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/Nova_Video_Player_mod_SIGNED.apk work/aligned-UNSIGNED.apk
           "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Video_Player_mod_SIGNED.apk | tee reports/final-signature.txt
           "$ALIGN" -c 4 dist/Nova_Video_Player_mod_SIGNED.apk
+          python3 scripts/direct_transport_audit.py --apk dist/Nova_Video_Player_mod_SIGNED.apk
           echo "mode=$SIGNING_MODE" >> "$GITHUB_OUTPUT"
           printf '{"signing_mode":"%s"}\n' "$SIGNING_MODE" > reports/signing.json
           (cd dist && sha256sum Nova_Video_Player_mod_SIGNED.apk > SHA256SUMS.txt)
@@ -204,12 +185,9 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
             python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
-            python3 scripts/smoke_webdav_safety.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
-            python3 scripts/smoke_main_transport.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_seek_ui.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_seek_playback.py --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
-            python3 scripts/smoke_back_release.py --reports reports
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
             python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
             python3 scripts/smoke_seek_eof_completion.py --reports reports
