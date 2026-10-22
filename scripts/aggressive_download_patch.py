@@ -790,11 +790,14 @@ def patch_iso(path: Path) -> dict:
         ISO_HELPERS + "\nstatic int64_t mono_ms(void) {",
         "ISO scheduling helper",
     )
-    text = once(
-        text,
-        "    uint64_t req_id = ++in->range_requests;",
+    range_counter = "    uint64_t req_id = ++in->range_requests;"
+    if text.count(range_counter) != 2:
+        raise RuntimeError(
+            f"atomic range request counter: expected two anchors, got {text.count(range_counter)}"
+        )
+    text = text.replace(
+        range_counter,
         "    uint64_t req_id = __atomic_add_fetch(&in->range_requests, 1, __ATOMIC_RELAXED);",
-        "atomic range request counter",
     )
     text = once(
         text,
