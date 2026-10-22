@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT="\${1:?output directory required}"
+OUT="$1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/work/transport-third-party"
 SRC="$WORK/libbluray"
@@ -15,7 +15,8 @@ git clone --quiet https://github.com/zhongflyTeam/libbluray.git "$SRC"
 git -C "$SRC" checkout --quiet "$PIN"
 git -C "$SRC" submodule update --init --recursive --quiet
 
-NDK_ROOT="\${ANDROID_NDK_ROOT:-\${ANDROID_NDK_HOME:-}}"
+NDK_ROOT="$ANDROID_NDK_ROOT"
+if [[ -z "$NDK_ROOT" ]]; then NDK_ROOT="$ANDROID_NDK_HOME"; fi
 if [[ -z "$NDK_ROOT" || ! -d "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64" ]]; then
   NDK_ROOT="$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | sort -V | tail -n 1)"
 fi
@@ -26,7 +27,7 @@ build_one() {
   local abi="$1" triple="$2" family="$3" cpu="$4"
   local b="$WORK/build-$abi"
   local cross="$WORK/cross-$abi.ini"
-  local cc="$TOOL/bin/\${triple}\${API}-clang"
+  local cc="$TOOL/bin/$triple$API-clang"
   local ff="$ROOT/native-src/native/prebuilt/ffmpeg/dist-full-$abi"
 
   [[ -f "$ff/include/libavformat/avio.h" ]] || {
