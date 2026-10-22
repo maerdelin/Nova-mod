@@ -38,8 +38,8 @@ class AggressiveDownloadArchitectureTests(unittest.TestCase):
         for token in (
             "NOVA_RAW_SCHED:",
             "requested_nice = -8",
-            'nova_iso_boost_thread("iso-range", -8)',
-            'nova_iso_boost_thread("iso-title", -4)',
+            'nova_iso_boost_thread("iso-title", -8)',
+            'nova_iso_boost_thread("iso-server", -4)',
             "sched_setaffinity",
             "cpuinfo_max_freq",
         ):
@@ -51,20 +51,29 @@ class AggressiveDownloadArchitectureTests(unittest.TestCase):
         self.assertIn("reservedFast0", PATCH)
         self.assertIn("reservedFast1", PATCH)
 
-    def test_four_parallel_iso_ranges_exist(self):
-        for token in (
-            "#define PREFETCH_WORKERS 4",
-            "PREFETCH_BEGIN worker=%d",
-            "PREFETCH_READY worker=%d",
-            "cache_schedule_window_locked",
-            "PREFETCH_WORKERS * CACHE_BYTES",
-        ):
-            self.assertIn(token, PATCH)
+    def test_parallel_range_is_hard_banned_and_single_stream_is_required(self):
+        forbidden = (
+            "PREFETCH_WORKERS",
+            "iso_prefetch_worker",
+            "prefetch_threads",
+            "prefetch_generation",
+            "parallel_range=1",
+            "PREFETCH_BEGIN worker=",
+            "PREFETCH_READY worker=",
+            "PREFETCH_DISCARD worker=",
+        )
+        for token in forbidden:
+            self.assertNotIn(token, PATCH)
+        self.assertIn("NOVA_ISO_SINGLE_STREAM", PATCH)
+        self.assertIn("parallelRange=0", PATCH)
+        self.assertIn("persistentRange=1", PATCH)
+        self.assertIn('nova_iso_boost_thread("iso-title", -8)', PATCH)
+        self.assertIn("PARALLEL_BANNED_SOURCE", AUDIT)
 
     def test_seek_generation_safety_is_preserved(self):
         self.assertIn("generation = raw->generation", PATCH)
         self.assertIn("generation != raw->generation", PATCH)
-        self.assertIn("prefetch_generation", PATCH)
+        self.assertNotIn("prefetch_generation", PATCH)
 
     def test_workflow_applies_aggressive_patch_before_builds(self):
         native = "python3 scripts/aggressive_download_patch.py --native native-src/native/avos"

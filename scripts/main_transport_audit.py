@@ -7,7 +7,13 @@ ROOT=Path(__file__).resolve().parents[1]
 FILES=('StreamOverHttp.smali','StreamOverHttp$HttpSession.smali')
 BANNED=(b'NovaParallelRangeInputStream', b'NovaSingleStreamInputStream',
         b'novaWrapRange4', b'publishRange4', b'publishSingle', b'capacityOwner',
-        b'capacityPort', b'NOVA_RANGE4', b'nova_range4_capacity', b'NOVA_SINGLE')
+        b'capacityPort', b'NOVA_RANGE4', b'nova_range4_capacity', b'NOVA_SINGLE',
+        b'parallel_range=1', b'PREFETCH_BEGIN worker=', b'PREFETCH_READY worker=',
+        b'PREFETCH_DISCARD worker=')
+PARALLEL_BANNED_SOURCE=('PREFETCH_WORKERS', 'iso_prefetch_worker',
+                        'prefetch_threads', 'prefetch_generation',
+                        'parallel_range=1', 'PREFETCH_BEGIN worker=',
+                        'PREFETCH_READY worker=', 'PREFETCH_DISCARD worker=')
 
 def sha(data): return hashlib.sha256(data).hexdigest()
 def one(root,name):
@@ -29,6 +35,12 @@ def verify_source_baseline(root=ROOT):
             raise RuntimeError('Intentional native override changed: '+name)
     for name in ['parallel_range4','single_stream']:
         if (root/name).exists(): raise RuntimeError('Removed source directory remains: '+name)
+    aggressive=(root/'scripts/aggressive_download_patch.py').read_text()
+    for token in PARALLEL_BANNED_SOURCE:
+        if token in aggressive:
+            raise RuntimeError('Parallel Range architecture reintroduced: '+token)
+    if 'NOVA_ISO_SINGLE_STREAM' not in aggressive or 'parallelRange=0' not in aggressive:
+        raise RuntimeError('Single persistent ISO stream invariant missing')
     return pin
 
 def verify(root, before, report=None):

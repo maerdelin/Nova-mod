@@ -20,8 +20,12 @@
       "reason": "Compatibility update: ISO timestamp seek validation accepts the fixed 128MiB RAW producer wall without changing seek behavior"
     },
     "scripts/aggressive_download_patch.py": {
-      "git_blob_sha1": "fd4b7988d6f51d345888663765cfb806db3b2359",
-      "reason": "Feature test: non-root aggressive download architecture adds preallocated RAW ring, fast-core IO scheduling, playback CPU yielding, and four ISO Range workers"
+      "git_blob_sha1": "ba96dcb1dbc5914861202a2ca919e92c46299729",
+      "reason": "Forward-only fix on latest head: remove the newly-added parallel Range subsystem completely while retaining the preallocated 128MiB RAW ring, single persistent ISO/WebDAV stream, fast-core IO scheduling, playback CPU yielding, 4MiB read-ahead and 1MiB copy"
+    },
+    "scripts/main_transport_audit.py": {
+      "git_blob_sha1": "05fd35f213188d17a3d63a05babf29d32d61c92c",
+      "reason": "Architecture guard: fail closed if old or renamed parallel Range logic reappears in source or the final APK"
     },
     "scripts/native_rebuffer_patch.py": {
       "git_blob_sha1": "6a5c1b0b2650974907a24c42bf12bf419a93e71e",

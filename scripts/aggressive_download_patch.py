@@ -531,215 +531,11 @@ static void nova_iso_boost_thread(const char *role, int requested_nice) {
 '''
 
 
-ISO_PREFETCH = r'''
-typedef struct {
-    iso_input *in;
-    int worker;
-} iso_prefetch_task;
-
-static iso_cache_slot *cache_find_any_locked(iso_input *in, int64_t aligned) {
-    for (int i = 0; i < CACHE_SLOTS; i++) {
-        iso_cache_slot *slot = &in->cache[i];
-        if (slot->state != ISO_CACHE_EMPTY && slot->start == aligned)
-            return slot;
-    }
-    return NULL;
-}
-
-static iso_cache_slot *cache_reserve_locked(iso_input *in, int64_t aligned) {
-    iso_cache_slot *existing = cache_find_any_locked(in, aligned);
-    if (existing) return existing;
-
-    iso_cache_slot *victim = NULL;
-    for (int i = 0; i < CACHE_SLOTS; i++) {
-        iso_cache_slot *slot = &in->cache[i];
-        if (slot->state == ISO_CACHE_EMPTY) {
-            victim = slot;
-            break;
-        }
-        if (slot->state == ISO_CACHE_READY &&
-            (!victim || slot->last_use < victim->last_use))
-            victim = slot;
-    }
-    if (!victim) return NULL;
-
-    victim->start = aligned;
-    victim->len = 0;
-    victim->generation = in->prefetch_generation;
-    victim->state = ISO_CACHE_QUEUED;
-    victim->last_use = ++in->cache_clock;
-    return victim;
-}
-
-static void cache_schedule_window_locked(iso_input *in, int64_t byte_pos) {
-    int64_t aligned = (byte_pos / CACHE_BYTES) * CACHE_BYTES;
-    if (in->prefetch_focus < 0 ||
-        llabs(aligned - in->prefetch_focus) >
-            (int64_t)CACHE_BYTES * CACHE_SLOTS * 2) {
-        in->prefetch_generation++;
-        for (int i = 0; i < CACHE_SLOTS; i++) {
-            if (in->cache[i].state == ISO_CACHE_QUEUED)
-                in->cache[i].state = ISO_CACHE_EMPTY;
-        }
-        LOGI("PREFETCH_RECENTER generation=%" PRIu64 " aligned=%" PRId64,
-             in->prefetch_generation, aligned);
-    }
-    in->prefetch_focus = aligned;
-
-    for (int i = 0; i < CACHE_SLOTS; i++) {
-        int64_t pos = aligned + (int64_t)i * CACHE_BYTES;
-        cache_reserve_locked(in, pos);
-    }
-    pthread_cond_broadcast(&in->prefetch_cond);
-}
-
-static void *iso_prefetch_worker(void *opaque) {
-    iso_prefetch_task *task = (iso_prefetch_task *)opaque;
-    iso_input *in = task->in;
-    int worker = task->worker;
-    free(task);
-    nova_iso_boost_thread("iso-range", -8);
-
-    while (1) {
-        pthread_mutex_lock(&in->lock);
-        iso_cache_slot *slot = NULL;
-        while (in->prefetch_run && !slot) {
-            for (int i = 0; i < CACHE_SLOTS; i++) {
-                if (in->cache[i].state == ISO_CACHE_QUEUED) {
-                    slot = &in->cache[i];
-                    slot->state = ISO_CACHE_ACTIVE;
-                    break;
-                }
-            }
-            if (!slot)
-                pthread_cond_wait(&in->prefetch_cond, &in->lock);
-        }
-        if (!in->prefetch_run) {
-            pthread_mutex_unlock(&in->lock);
-            break;
-        }
-
-        int64_t start = slot->start;
-        uint64_t generation = slot->generation;
-        pthread_mutex_unlock(&in->lock);
-
-        int64_t t0 = mono_ms();
-        LOGI("PREFETCH_BEGIN worker=%d generation=%" PRIu64 " start=%" PRId64,
-             worker, generation, start);
-        ssize_t got = fetch_range(in, start, CACHE_BYTES, slot->data);
-
-        pthread_mutex_lock(&in->lock);
-        if (slot->state == ISO_CACHE_ACTIVE &&
-            slot->start == start &&
-            slot->generation == generation &&
-            generation == in->prefetch_generation &&
-            got >= UDF_BLOCK) {
-            slot->len = (size_t)got;
-            slot->state = ISO_CACHE_READY;
-            slot->last_use = ++in->cache_clock;
-            LOGI("PREFETCH_READY worker=%d generation=%" PRIu64
-                 " start=%" PRId64 " got=%zd ms=%" PRId64,
-                 worker, generation, start, got, mono_ms() - t0);
-        } else if (slot->state == ISO_CACHE_ACTIVE &&
-                   slot->start == start &&
-                   slot->generation == generation) {
-            slot->len = 0;
-            slot->state = ISO_CACHE_EMPTY;
-            LOGI("PREFETCH_DISCARD worker=%d generation=%" PRIu64
-                 " currentGeneration=%" PRIu64 " start=%" PRId64 " got=%zd",
-                 worker, generation, in->prefetch_generation, start, got);
-        }
-        pthread_cond_broadcast(&in->prefetch_cond);
-        pthread_mutex_unlock(&in->lock);
-
-        if (got < UDF_BLOCK)
-            usleep(50000);
-    }
-
-    LOGI("PREFETCH_WORKER_EXIT worker=%d", worker);
-    return NULL;
-}
-
-static void reset_iso_prefetch_for_seek(iso_input *in) {
-    pthread_mutex_lock(&in->lock);
-    in->prefetch_generation++;
-    in->prefetch_focus = -1;
-    for (int i = 0; i < CACHE_SLOTS; i++) {
-        iso_cache_slot *slot = &in->cache[i];
-        if (slot->state != ISO_CACHE_ACTIVE) {
-            slot->state = ISO_CACHE_EMPTY;
-            slot->len = 0;
-        }
-    }
-    LOGI("PREFETCH_SEEK_RESET generation=%" PRIu64, in->prefetch_generation);
-    pthread_cond_broadcast(&in->prefetch_cond);
-    pthread_mutex_unlock(&in->lock);
-}
-
-static int start_iso_prefetch(iso_input *in) {
-    if (pthread_cond_init(&in->prefetch_cond, NULL) != 0)
-        return -1;
-    in->prefetch_cond_ready = 1;
-    in->prefetch_run = 1;
-    in->prefetch_generation = 1;
-    in->prefetch_focus = -1;
-
-    for (int i = 0; i < CACHE_SLOTS; i++) {
-        if (!in->cache[i].data) {
-            in->cache[i].data = malloc(CACHE_BYTES);
-            if (!in->cache[i].data) return -1;
-        }
-        in->cache[i].state =
-            in->cache[i].len >= UDF_BLOCK ? ISO_CACHE_READY : ISO_CACHE_EMPTY;
-    }
-
-    for (int i = 0; i < PREFETCH_WORKERS; i++) {
-        iso_prefetch_task *task = calloc(1, sizeof(*task));
-        if (!task) return -1;
-        task->in = in;
-        task->worker = i;
-        if (pthread_create(&in->prefetch_threads[i], NULL,
-                           iso_prefetch_worker, task) != 0) {
-            free(task);
-            return -1;
-        }
-        in->prefetch_started[i] = 1;
-    }
-    LOGI("PREFETCH_START workers=%d cacheBytes=%d slots=%d inFlightMax=%d",
-         PREFETCH_WORKERS, CACHE_BYTES, CACHE_SLOTS,
-         PREFETCH_WORKERS * CACHE_BYTES);
-    return 0;
-}
-
-static void stop_iso_prefetch(iso_input *in) {
-    if (!in->prefetch_cond_ready) return;
-    pthread_mutex_lock(&in->lock);
-    in->prefetch_run = 0;
-    pthread_cond_broadcast(&in->prefetch_cond);
-    pthread_mutex_unlock(&in->lock);
-    for (int i = 0; i < PREFETCH_WORKERS; i++) {
-        if (in->prefetch_started[i]) {
-            pthread_join(in->prefetch_threads[i], NULL);
-            in->prefetch_started[i] = 0;
-        }
-    }
-    pthread_cond_destroy(&in->prefetch_cond);
-    in->prefetch_cond_ready = 0;
-}
-'''
-
-
 def patch_iso(path: Path) -> dict:
     text = path.read_text()
-    if "PREFETCH_WORKERS" in text:
-        raise RuntimeError("aggressive ISO patch already applied")
+    if "NOVA_ISO_SINGLE_STREAM" in text:
+        raise RuntimeError("aggressive ISO single-stream patch already applied")
 
-    text = once(
-        text,
-        "#define _GNU_SOURCE\n",
-        "#define _GNU_SOURCE\n",
-        "ISO GNU feature define",
-    )
     text = once(
         text,
         "#include <sys/types.h>\n",
@@ -758,211 +554,69 @@ def patch_iso(path: Path) -> dict:
     )
     text = once(
         text,
-        "#define HEADER_MAX 32768\n",
-        "#define HEADER_MAX 32768\n#define PREFETCH_WORKERS 4\n"
-        "#define ISO_CACHE_EMPTY 0\n#define ISO_CACHE_QUEUED 1\n"
-        "#define ISO_CACHE_ACTIVE 2\n#define ISO_CACHE_READY 3\n",
-        "ISO prefetch constants",
-    )
-    text = once(
-        text,
-        "    uint64_t last_use;\n} iso_cache_slot;",
-        "    uint64_t last_use;\n    uint64_t generation;\n    int state;\n} iso_cache_slot;",
-        "ISO cache slot state",
-    )
-    text = once(
-        text,
-        "    pthread_mutex_t lock;\n} iso_input;",
-        "    pthread_mutex_t lock;\n"
-        "    pthread_cond_t prefetch_cond;\n"
-        "    int prefetch_cond_ready;\n"
-        "    volatile int prefetch_run;\n"
-        "    pthread_t prefetch_threads[PREFETCH_WORKERS];\n"
-        "    int prefetch_started[PREFETCH_WORKERS];\n"
-        "    uint64_t prefetch_generation;\n"
-        "    int64_t prefetch_focus;\n"
-        "} iso_input;",
-        "ISO prefetch state",
-    )
-    text = once(
-        text,
         "static int64_t mono_ms(void) {",
         ISO_HELPERS + "\nstatic int64_t mono_ms(void) {",
         "ISO scheduling helper",
-    )
-    range_counter = "    uint64_t req_id = ++in->range_requests;"
-    if text.count(range_counter) != 2:
-        raise RuntimeError(
-            f"atomic range request counter: expected two anchors, got {text.count(range_counter)}"
-        )
-    text = text.replace(
-        range_counter,
-        "    uint64_t req_id = __atomic_add_fetch(&in->range_requests, 1, __ATOMIC_RELAXED);",
-    )
-    text = once(
-        text,
-        "    in->fetched_bytes += copied;\n    LOGI(\"RANGE_END id=%\" PRIu64 \" start=%\" PRId64 \" got=%zu ms=%\" PRId64 \" totalFetched=%\" PRIu64,\n         req_id, start, copied, mono_ms() - t0, in->fetched_bytes);",
-        "    uint64_t total_fetched = __atomic_add_fetch(\n"
-        "        &in->fetched_bytes, copied, __ATOMIC_RELAXED);\n"
-        "    LOGI(\"RANGE_END id=%\" PRIu64 \" start=%\" PRId64 \" got=%zu ms=%\" PRId64 \" totalFetched=%\" PRIu64,\n"
-        "         req_id, start, copied, mono_ms() - t0, total_fetched);",
-        "atomic fetched byte counter",
-    )
-    text = once(
-        text,
-        "        if (slot->data && slot->len > 0 &&\n",
-        "        if (slot->state == ISO_CACHE_READY && slot->data && slot->len > 0 &&\n",
-        "cache reads only ready slots",
-    )
-    text = sub_once(
-        text,
-        r"static iso_cache_slot \*cache_victim\(iso_input \*in\) \{.*?\n\}",
-        """static iso_cache_slot *cache_victim(iso_input *in) {
-    iso_cache_slot *victim = NULL;
-    for (int i = 0; i < CACHE_SLOTS; i++) {
-        iso_cache_slot *slot = &in->cache[i];
-        if (slot->state == ISO_CACHE_EMPTY) return slot;
-        if (slot->state == ISO_CACHE_READY &&
-            (!victim || slot->last_use < victim->last_use))
-            victim = slot;
-    }
-    return victim;
-}""",
-        "cache victim ignores in-flight slots",
-    )
-    text = once(
-        text,
-        "    iso_cache_slot *slot = cache_victim(in);\n    if (!slot->data) {",
-        "    iso_cache_slot *slot = cache_victim(in);\n    if (!slot) return -1;\n    if (!slot->data) {",
-        "sync cache victim nullable",
-    )
-    text = once(
-        text,
-        "    slot->start = aligned;\n    slot->len = (size_t)got;\n    slot->last_use = ++in->cache_clock;",
-        "    slot->start = aligned;\n    slot->len = (size_t)got;\n"
-        "    slot->generation = in->prefetch_generation;\n"
-        "    slot->state = ISO_CACHE_READY;\n"
-        "    slot->last_use = ++in->cache_clock;",
-        "sync cache fill state",
-    )
-    text = once(
-        text,
-        "static int iso_read_blocks(void *handle, void *buf, int lba, int num_blocks) {",
-        ISO_PREFETCH + "\nstatic int iso_read_blocks(void *handle, void *buf, int lba, int num_blocks) {",
-        "ISO async prefetch implementation",
-    )
-    text = sub_once(
-        text,
-        r"static int iso_read_blocks\(void \*handle, void \*buf, int lba, int num_blocks\) \{.*?\n\}\n\nstatic int read_request",
-        r'''static int iso_read_blocks(void *handle, void *buf, int lba, int num_blocks) {
-    iso_input *in = (iso_input *)handle;
-    if (!in || !buf || lba < 0 || num_blocks <= 0) return -1;
-
-    pthread_mutex_lock(&in->lock);
-    uint8_t *dst = (uint8_t *)buf;
-    int done = 0;
-
-    while (done < num_blocks) {
-        int64_t byte_pos = (int64_t)(lba + done) * UDF_BLOCK;
-        iso_cache_slot *slot = cache_find(in, byte_pos);
-
-        if (!slot && !in->playback_mode) {
-            if (cache_fill(in, byte_pos, &slot) < 0) break;
-        } else if (!slot) {
-            while (in->prefetch_run && !(slot = cache_find(in, byte_pos))) {
-                cache_schedule_window_locked(in, byte_pos);
-                pthread_cond_wait(&in->prefetch_cond, &in->lock);
-            }
-            if (!slot) break;
-        }
-
-        size_t off = (size_t)(byte_pos - slot->start);
-        size_t avail = slot->len - off;
-        int blocks = (int)(avail / UDF_BLOCK);
-        int need = num_blocks - done;
-        if (blocks > need) blocks = need;
-        if (blocks <= 0) break;
-
-        memcpy(dst + (size_t)done * UDF_BLOCK,
-               slot->data + off,
-               (size_t)blocks * UDF_BLOCK);
-        done += blocks;
-
-        if (in->playback_mode)
-            cache_schedule_window_locked(in, byte_pos + (int64_t)blocks * UDF_BLOCK);
-    }
-
-    pthread_mutex_unlock(&in->lock);
-    return done > 0 ? done : -1;
-}
-
-static int read_request''',
-        "async ISO read path",
     )
     text = once(
         text,
         "static void *client_main(void *opaque) {\n    client_task *task = (client_task *)opaque;",
         "static void *client_main(void *opaque) {\n"
-        "    nova_iso_boost_thread(\"iso-title\", -4);\n"
+        "    nova_iso_boost_thread(\"iso-title\", -8);\n"
         "    client_task *task = (client_task *)opaque;",
-        "title server scheduling",
+        "single continuous title stream scheduling",
     )
     text = once(
         text,
-        "    LOGI(\"PLAYER_SEEK_BEGIN start=%\" PRIu64, start);\n"
-        "    if (seek_exact(s->bd, start) < 0) {",
-        "    LOGI(\"PLAYER_SEEK_BEGIN start=%\" PRIu64, start);\n"
-        "    reset_iso_prefetch_for_seek(&s->input);\n"
-        "    if (seek_exact(s->bd, start) < 0) {",
-        "ISO prefetch seek generation reset",
+        "static void *server_main(void *opaque) {\n    iso_session *s = (iso_session *)opaque;",
+        "static void *server_main(void *opaque) {\n"
+        "    nova_iso_boost_thread(\"iso-server\", -4);\n"
+        "    iso_session *s = (iso_session *)opaque;",
+        "ISO accept thread scheduling",
     )
     text = once(
         text,
         "    s->input.playback_mode = 1;\n    LOGI(\"CACHE_MODE playback persistent_range=1 window=%d slots=%d\", CACHE_BYTES, CACHE_SLOTS);",
-        "    s->input.playback_mode = 1;\n"
-        "    if (start_iso_prefetch(&s->input) < 0) {\n"
-        "        LOGE(\"PREFETCH_START_FAIL\");\n"
-        "        session_destroy(s);\n"
-        "        return NULL;\n"
+        "    for (int i = 0; i < CACHE_SLOTS; i++) {\n"
+        "        if (!s->input.cache[i].data) {\n"
+        "            s->input.cache[i].data = malloc(CACHE_BYTES);\n"
+        "            if (!s->input.cache[i].data) {\n"
+        "                LOGE(\"CACHE_PREALLOC_FAIL slot=%d\", i);\n"
+        "                session_destroy(s);\n"
+        "                return NULL;\n"
+        "            }\n"
+        "        }\n"
         "    }\n"
-        "    LOGI(\"CACHE_MODE playback parallel_range=1 window=%d slots=%d workers=%d\", CACHE_BYTES, CACHE_SLOTS, PREFETCH_WORKERS);",
-        "start aggressive ISO prefetch",
-    )
-    text = once(
-        text,
-        "    if (s->thread_started) pthread_join(s->thread, NULL);\n    close_playback_stream(&s->input);",
-        "    if (s->thread_started) pthread_join(s->thread, NULL);\n"
-        "    stop_iso_prefetch(&s->input);\n"
-        "    close_playback_stream(&s->input);",
-        "stop aggressive ISO prefetch",
+        "    s->input.playback_mode = 1;\n"
+        "    LOGI(\"NOVA_ISO_SINGLE_STREAM parallelRange=0 persistentRange=1 cachePrealloc=1 cacheBytes=%d slots=%d\", CACHE_BYTES, CACHE_SLOTS);\n"
+        "    LOGI(\"CACHE_MODE playback persistent_range=1 window=%d slots=%d\", CACHE_BYTES, CACHE_SLOTS);",
+        "preallocate retained ISO cache without parallel prefetch",
     )
 
     required = (
-        "#define PREFETCH_WORKERS 4",
-        "PREFETCH_START workers=%d",
-        'nova_iso_boost_thread("iso-range", -8)',
-        'nova_iso_boost_thread("iso-title", -4)',
-        "cache_schedule_window_locked",
-        "ISO_CACHE_ACTIVE",
-        "prefetch_generation",
+        'nova_iso_boost_thread("iso-title", -8)',
+        'nova_iso_boost_thread("iso-server", -4)',
+        "NOVA_ISO_SINGLE_STREAM",
+        "parallelRange=0",
+        "persistentRange=1",
+        "CACHE_PREALLOC_FAIL",
+        "sched_setaffinity",
+        "cpuinfo_max_freq",
     )
     missing = [x for x in required if x not in text]
     if missing:
-        raise RuntimeError("aggressive ISO postcondition missing: " + repr(missing))
+        raise RuntimeError("aggressive ISO single-stream postcondition missing: " + repr(missing))
 
     path.write_text(text)
     return {
         "status": "PASS",
-        "range_workers": 4,
-        "range_bytes_each": 4 * 1024 * 1024,
-        "max_simultaneous_range_bytes": 16 * 1024 * 1024,
+        "parallel_range_workers": 0,
+        "single_persistent_upstream": True,
         "cache_bytes_existing_ceiling": 8 * 4 * 1024 * 1024,
         "cache_preallocated_before_playback": True,
-        "range_worker_nice_requested": -8,
-        "title_thread_nice_requested": -4,
+        "title_thread_nice_requested": -8,
+        "server_thread_nice_requested": -4,
         "cpu_policy": "two highest-frequency allowed CPUs",
-        "generation_discard_on_recenter": True,
-        "generation_reset_on_title_seek": True,
         "loopback_socket_buffer_bytes_requested": 4 * 1024 * 1024,
     }
 
