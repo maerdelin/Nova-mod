@@ -7,6 +7,10 @@
     "patches/v982-granular.json": "9ae0fc9773374db7b108478bd48b6f756e2f2f24a4a105360ca13aa9a5a38a8e"
   },
   "intentional_overrides": {
+    "scripts/webdav_credential_coldboot_patch.py": {
+      "git_blob_sha1": "db3768585dab61784d93ad24a6ca57bb02dfaf04",
+      "reason": "Compatibility hardening: locate the reviewed WebdavUtils.getSardine DEX method structurally and resolve credential method ids dynamically after unrelated smali layout changes"
+    },
     "scripts/stream_throughput_patch.py": {
       "git_blob_sha1": "3a3237be535015074f17dcf81d38caa68bf8de3b",
       "reason": "Feature test: authenticated Java/OkHttp playback data plane uses 4MiB read-ahead, urgent thread priority and 1MiB localhost copies for the non-root aggressive download architecture"
