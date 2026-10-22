@@ -170,7 +170,7 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
 
 PROXY_RESOLVE = r'''
 .method public static declared-synchronized resolve(Landroid/net/Uri;)Landroid/net/Uri;
-    .locals 12
+    .locals 14
     if-eqz p0, :return_original
     sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
     if-eqz v0, :return_original
