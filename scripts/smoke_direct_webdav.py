@@ -64,7 +64,7 @@ def main():
                 "ffmpeg","-v","error",
                 "-f","lavfi","-i","testsrc2=size=640x360:rate=25",
                 "-f","lavfi","-i","sine=frequency=550:sample_rate=48000",
-                "-t","20","-c:v","libx264","-preset","ultrafast",
+                "-t","60","-c:v","libx264","-preset","ultrafast",
                 "-pix_fmt","yuv420p","-g","25","-b:v","3M",
                 "-c:a","aac","-b:a","128k","-f","mpegts",media
             ], timeout=90)
@@ -138,6 +138,44 @@ def main():
                 raise RuntimeError("Legacy ISO transport appeared at runtime")
             if "http://localhost:" in text:
                 raise RuntimeError("Legacy localhost media proxy appeared at runtime")
+
+            # Exercise the new data plane itself, not the removed localhost ISO
+            # bridge. Establish DPAD focus, then require an actual player seek
+            # to reach both RAW generation invalidation and native upstream seek.
+            adb("shell", "input", "keyevent", "20")
+            time.sleep(0.4)
+            adb("shell", "input", "keyevent", "20")
+            time.sleep(0.4)
+            seek_marker = "NOVA_DIRECT_SEEK_" + str(time.monotonic_ns())
+            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", seek_marker)
+            adb("shell", "input", "keyevent", "22")
+            text = wait_for(
+                lambda t: (
+                    seek_marker in t
+                    and "NOVA_RAW128_SEEK:" in t[t.rfind(seek_marker):]
+                    and "NovaTransport: SEEK generation=" in t[t.rfind(seek_marker):]
+                ),
+                20,
+                "direct WebDAV seek through RAW128 and native upstream",
+            )
+
+            # BACK must abort the one native session immediately. No old
+            # post-shutdown RAW retry loop is allowed to appear afterwards.
+            back_marker = "NOVA_DIRECT_BACK_" + str(time.monotonic_ns())
+            adb("shell", "log", "-p", "i", "-t", "NOVA_DIRECT_TEST", back_marker)
+            adb("shell", "input", "keyevent", "4")
+            text = wait_for(
+                lambda t: (
+                    back_marker in t
+                    and "NovaTransport: ABORT generation=" in t[t.rfind(back_marker):]
+                ),
+                15,
+                "direct transport abort after BACK",
+            )
+            back_tail = text[text.rfind(back_marker):]
+            if "NOVA_RAW_RETRY:" in back_tail:
+                raise RuntimeError("RAW retry occurred after direct transport BACK abort")
+
             report.update(
                 status="PASS",
                 webdav_uri=True,
@@ -145,6 +183,9 @@ def main():
                 direct_avio=True,
                 raw128=True,
                 first_frame=True,
+                direct_seek=True,
+                back_abort=True,
+                post_abort_raw_retry=False,
                 request_count=len(requests),
                 request_starts=requests[:16],
             )
