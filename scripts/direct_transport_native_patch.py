@@ -103,6 +103,68 @@ static void nova_direct_source_close(NOVA_RAW_PREFETCH *raw)
 }
 '''
 
+
+def patch_avos_mp(root: Path) -> dict:
+    path = root / "Source" / "avos_mp.c"
+    text = path.read_text()
+    marker = 'NOVA_DIRECT_DATASOURCE'
+    if marker in text:
+        raise RuntimeError("direct datasource patch already applied")
+
+    set_old = '''\tif (mp->type == TYPE_NONE || mp->type == TYPE_UNKNOWN) {
+\t\t// Allow HTTP/HTTPS URLs without file extensions to proceed.
+\t\t// FFmpeg will probe the stream format when it opens.
+\t\tif (!strncmp(mp->src.url, "http://", 7) || !strncmp(mp->src.url, "https://", 8)) {
+\t\t\tMPLOG("Unknown file type for HTTP URL, allowing FFmpeg to probe: %s", mp->src.url);
+\t\t} else {
+\t\t\tavos_mp_sendevent(mp, MEDIA_ERROR, MEDIA_ERROR_VE_FILE_ERROR, 0);
+\t\t}
+\t}
+'''
+    set_new = '''\tif (mp->type == TYPE_NONE || mp->type == TYPE_UNKNOWN) {
+\t\t/*
+\t\t * NOVA_DIRECT_DATASOURCE: novatransport is an in-process media
+\t\t * source backed by libnova_transport, not a network URL. Route it
+\t\t * through the normal video/FFmpeg pipeline so the custom AVIO source
+\t\t * can be installed before probe.
+\t\t */
+\t\tif (!strncmp(mp->src.url, "novatransport://", 16)) {
+\t\t\tmp->type = TYPE_VID;
+\t\t\tmp->etype = ETYPE_MKV;
+\t\t\tMPLOG("NOVA_DIRECT_DATASOURCE video probe: %s", mp->src.url);
+\t\t} else if (!strncmp(mp->src.url, "http://", 7) ||
+\t\t           !strncmp(mp->src.url, "https://", 8)) {
+\t\t\tMPLOG("Unknown file type for HTTP URL, allowing FFmpeg to probe: %s", mp->src.url);
+\t\t} else {
+\t\t\tavos_mp_sendevent(mp, MEDIA_ERROR, MEDIA_ERROR_VE_FILE_ERROR, 0);
+\t\t}
+\t}
+'''
+    text = once(text, set_old, set_new, "direct datasource type")
+
+    open_old = '''\tif ((mp->type == TYPE_NONE || mp->type == TYPE_UNKNOWN) &&
+\t    (!strncmp(mp->src.url, "http://", 7) || !strncmp(mp->src.url, "https://", 8))) {
+\t\tmp->type = TYPE_VID;
+\t\tmp->etype = ETYPE_MKV;
+\t}
+'''
+    open_new = '''\tif ((mp->type == TYPE_NONE || mp->type == TYPE_UNKNOWN) &&
+\t    (!strncmp(mp->src.url, "http://", 7) ||
+\t     !strncmp(mp->src.url, "https://", 8) ||
+\t     !strncmp(mp->src.url, "novatransport://", 16))) {
+\t\tmp->type = TYPE_VID;
+\t\tmp->etype = ETYPE_MKV;
+\t}
+'''
+    text = once(text, open_old, open_new, "direct open type")
+    path.write_text(text)
+    return {
+        "status":"PASS",
+        "scheme":"novatransport",
+        "classified_as_video":True,
+        "ffmpeg_probe":True,
+    }
+
 def apply(root: Path, report: Path|None=None):
     path = root / "Source" / "stream_parser_ffmpeg.c"
     text = path.read_text()
@@ -200,6 +262,7 @@ typedef int (*nova_transport_abort_fn)(uint64_t);
         raise RuntimeError("postcondition missing: " + repr(missing))
 
     path.write_text(text)
+    datasource = patch_avos_mp(root)
     result = {
         "status":"PASS",
         "direct_scheme":"novatransport",
@@ -207,6 +270,7 @@ typedef int (*nova_transport_abort_fn)(uint64_t);
         "raw_capacity_bytes":128*1024*1024,
         "priority_policy_changed":False,
         "transport_symbols":["read","seek","size","abort"],
+        "datasource_scheme_registered":datasource["scheme"],
     }
     if report:
         report.write_text(json.dumps(result, indent=2)+"\n")
