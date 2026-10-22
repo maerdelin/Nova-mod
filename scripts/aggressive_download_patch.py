@@ -15,7 +15,10 @@ def once(text: str, old: str, new: str, label: str) -> str:
 
 
 def sub_once(text: str, pattern: str, repl: str, label: str) -> str:
-    out, count = re.subn(pattern, repl, text, count=1, flags=re.M | re.S)
+    # repl is generated C source; callable replacement preserves C escapes verbatim.
+    out, count = re.subn(
+        pattern, lambda _match: repl, text, count=1, flags=re.M | re.S
+    )
     if count != 1:
         raise RuntimeError(f"{label}: expected one regex anchor, got {count}")
     return out

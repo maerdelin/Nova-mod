@@ -16,7 +16,7 @@
       "reason": "Compatibility update: ISO timestamp seek validation accepts the fixed 128MiB RAW producer wall without changing seek behavior"
     },
     "scripts/aggressive_download_patch.py": {
-      "git_blob_sha1": "2a80f362dbb740ff70bc3a7b48306a6d57a8432a",
+      "git_blob_sha1": "f3970599338c22d4549ebbe2352e945d553e7474",
       "reason": "Feature test: non-root aggressive download architecture adds preallocated RAW ring, fast-core IO scheduling, playback CPU yielding, and four ISO Range workers"
     },
     "scripts/native_rebuffer_patch.py": {
