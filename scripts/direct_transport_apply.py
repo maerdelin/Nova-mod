@@ -367,9 +367,9 @@ def main():
     all_text="\n".join(p.read_text(errors="ignore")
                        for p in root.glob("smali*/com/archos/mediacenter/video/player/*.smali"))
     for forbidden in (
-        "BlurayIsoProxy",
-        "NovaIsoSourceClose",
-        "NovaIsoNativeClose",
+        "Bluray" + "IsoProxy",
+        "NovaIso" + "SourceClose",
+        "NovaIso" + "NativeClose",
     ):
         if forbidden in all_text:
             raise RuntimeError("legacy ISO transport residue: "+forbidden)
