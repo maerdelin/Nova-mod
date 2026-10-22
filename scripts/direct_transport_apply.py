@@ -114,3 +114,86 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
     return-void
 .end method
 '''
+
+
+PROXY_RESOLVE = r'''
+.method public static declared-synchronized resolve(Landroid/net/Uri;)Landroid/net/Uri;
+    .locals 12
+    if-eqz p0, :return_original
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
+    if-eqz v0, :return_original
+    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeClose()V
+    invoke-static {p0}, Lcom/archos/filecorelibrary/webdav/WebdavFile2;->uriToHttp(Landroid/net/Uri;)Landroid/net/Uri;
+    move-result-object v1
+    if-eqz v1, :fail
+    invoke-virtual {v1}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-result-object v2
+    const-string v3, ""
+    invoke-static {}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getInstance()Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;
+    move-result-object v4
+    invoke-virtual {p0}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-result-object v5
+    invoke-virtual {v4, v5}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getCredential(Ljava/lang/String;)Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;
+    move-result-object v6
+    if-nez v6, :cred_ready
+    invoke-virtual {v4, v2}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getCredential(Ljava/lang/String;)Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;
+    move-result-object v6
+    :cred_ready
+    if-eqz v6, :open
+    invoke-virtual {v6}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;->getUsername()Ljava/lang/String;
+    move-result-object v7
+    invoke-virtual {v6}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;->getPassword()Ljava/lang/String;
+    move-result-object v8
+    if-eqz v7, :open
+    if-eqz v8, :open
+    new-instance v9, Ljava/lang/StringBuilder;
+    invoke-direct {v9}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v9, v7}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v9
+    const-string v10, ":"
+    invoke-virtual {v9, v10}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v9
+    invoke-virtual {v9, v8}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v9
+    invoke-virtual {v9}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v9
+    sget-object v10, Ljava/nio/charset/StandardCharsets;->UTF_8:Ljava/nio/charset/Charset;
+    invoke-virtual {v9, v10}, Ljava/lang/String;->getBytes(Ljava/nio/charset/Charset;)[B
+    move-result-object v9
+    const/4 v10, 0x2
+    invoke-static {v9, v10}, Landroid/util/Base64;->encodeToString([BI)Ljava/lang/String;
+    move-result-object v9
+    new-instance v10, Ljava/lang/StringBuilder;
+    invoke-direct {v10}, Ljava/lang/StringBuilder;-><init>()V
+    const-string v11, "Authorization: Basic "
+    invoke-virtual {v10, v11}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v10
+    invoke-virtual {v10, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v10
+    const-string v11, "\r\n"
+    invoke-virtual {v10, v11}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    move-result-object v10
+    invoke-virtual {v10}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v3
+    :open
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
+    invoke-static {v2, v3, v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
+    move-result-object v2
+    if-eqz v2, :fail
+    invoke-static {v2}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
+    move-result-object p0
+    return-object p0
+    :fail
+    new-instance v0, Ljava/lang/RuntimeException;
+    const-string v1, "Unable to open direct native transport"
+    invoke-direct {v0, v1}, Ljava/lang/RuntimeException;-><init>(Ljava/lang/String;)V
+    throw v0
+    :return_original
+    return-object p0
+.end method
+
+.method private static native nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
+.end method
+.method public static native nativeClose()V
+.end method
+'''
