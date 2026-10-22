@@ -1079,6 +1079,22 @@ def patch_stream_video(path: Path) -> None:
         "parser yields to downloader")
     text = replace_once(
         text,
+        "int stream_stop( STREAM *s )\n{",
+        "extern void nova_raw_request_stop(STREAM *s);\n\n"
+        "int stream_stop( STREAM *s )\n{",
+        "declare RAW early-stop hook",
+    )
+    text = replace_once(
+        text,
+        "\t// abort everything\n\ts->aborted = 1;\n",
+        "\t// abort everything\n\ts->aborted = 1;\n"
+        "\t// Stop source I/O before stream_close() waits for parser threads.\n"
+        "\tnova_raw_request_stop( s );\n",
+        "stop RAW before parser join",
+    )
+
+    text = replace_once(
+        text,
         "#define THREAD_PRIO_SUBTITLE\t0\n",
         "#define THREAD_PRIO_SUBTITLE\t0\n\n"
         "#define NOVA_REBUFFER_POLL_MS      50\n",
@@ -1150,21 +1166,6 @@ def patch_stream_video(path: Path) -> None:
 
 def patch_stream_c(path: Path) -> None:
     text = path.read_text()
-    text = replace_once(
-        text,
-        "int stream_stop( STREAM *s )\n{",
-        "extern void nova_raw_request_stop(STREAM *s);\n\n"
-        "int stream_stop( STREAM *s )\n{",
-        "declare RAW early-stop hook",
-    )
-    text = replace_once(
-        text,
-        "\t// abort everything\n\ts->aborted = 1;\n",
-        "\t// abort everything\n\ts->aborted = 1;\n"
-        "\t// Stop source I/O before stream_close() waits for parser threads.\n"
-        "\tnova_raw_request_stop( s );\n",
-        "stop RAW before parser join",
-    )
     marker = 'DBGS serprintf("waiting for threads to join\\r\\n");\n'
     block = r'''DBGS serprintf("waiting for threads to join\r\n");
     if( s->rebuffer_thread_started ) {

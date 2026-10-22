@@ -24,8 +24,8 @@
       "reason": "Fail-closed full-repository source audit rejects removed files, legacy RAW chunk/10X semantics, obsolete dynamic-cap sentinels and any old/renamed parallel Range logic across source, build and Android test files"
     },
     "scripts/native_rebuffer_patch.py": {
-      "git_blob_sha1": "6a70dc8701935687d2a36ccb171f82ee726d5b66",
-      "reason": "Run496 minimal BACK/return hotfix only: stream_stop requests RAW stop before parser join, wakes both RAW condvars, and shutdown/AVERROR_EXIT can never enter transient RAW_RETRY"
+      "git_blob_sha1": "bef360cf3d60b098790ff5409a2fc177472a8296",
+      "reason": "Run496 minimal BACK/return hotfix only: stream_video::stream_stop requests RAW stop immediately after s->aborted=1 and before stream_close joins parser; shutdown/AVERROR_EXIT cannot enter transient RAW_RETRY"
     },
     "scripts/granular_build.py": {
       "git_blob_sha1": "a18436e6365801afbef7bc1657e11626be64bf18",
