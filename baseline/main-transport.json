@@ -3,11 +3,19 @@
   "source_files": {
     "scripts/webdav_midstream_resume_patch.py": "626e15fd330faf132f308879610e1e817815e141e21e5f44fde2bdd869ba02f8",
     "scripts/webdav_connect_retry_patch.py": "12f2d1d32e85f0a1e0e2f912fa10e4a78f0331819cfed2c246801b6069a1e162",
-    "scripts/stream_throughput_patch.py": "ce3f35aec0dcdb833d659c0e950b6779702912fca985eccb2788d3b6437a71bc",
+    "scripts/stream_throughput_patch.py": "92573487f2090d433a9d361d8bfeb4d1ad04c657",
     "scripts/iso_patch.py": "6acde4e04179d33d85d4d8f0874da6a482dfd32b9f38d8c1f4f5bf606176acb9",
     "patches/v982-granular.json": "9ae0fc9773374db7b108478bd48b6f756e2f2f24a4a105360ca13aa9a5a38a8e"
   },
   "intentional_overrides": {
+    "scripts/iso_seek_ui_patch.py": {
+      "git_blob_sha1": "043ddfb453ef7b127d64cd309a189718a745ce50",
+      "reason": "Compatibility update: ISO timestamp seek validation accepts the fixed 128MiB RAW producer wall without changing seek behavior"
+    },
+    "scripts/aggressive_download_patch.py": {
+      "git_blob_sha1": "1e5d592e6729cb7dbfc6c9fdd5fd1ef0fb906d40",
+      "reason": "Feature test: non-root aggressive download architecture adds preallocated RAW ring, fast-core IO scheduling, playback CPU yielding, and four ISO Range workers"
+    },
     "scripts/native_rebuffer_patch.py": {
       "git_blob_sha1": "6a5c1b0b2650974907a24c42bf12bf419a93e71e",
       "reason": "Feature test: one stable RAW AVIO keeps a fixed 128MiB producer warehouse independent of playback state while dynamic 2X/5X remain playback-only thresholds and seek generation safety is preserved"

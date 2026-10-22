@@ -14,10 +14,10 @@ class StreamThroughputStaticChecks(unittest.TestCase):
         self.assertIn("if-eqz p2", PATCH)
         self.assertIn("const {mode}, 0x100000", PATCH)
 
-    def test_localhost_copy_is_128_kib(self):
+    def test_localhost_copy_is_one_mib(self):
         self.assertIn("handleResponse()V", PATCH)
-        self.assertIn("0x20000", PATCH)
-        self.assertIn("localhost copy 128KiB", PATCH)
+        self.assertIn("0x100000", PATCH)
+        self.assertIn("localhost copy 1MiB", PATCH)
 
     def test_transport_tuning_does_not_own_raw_fixed128_policy(self):
         self.assertIn("NOVA_RAW_FALLBACK_LOW_BYTES", NATIVE)

@@ -72,7 +72,7 @@ def patch_copy_buffer(text):
     sig = " handleResponse()V"
     m = method(text, sig)
     block = m.group(0)
-    if "0x20000    # nova localhost copy 128KiB" in block:
+    if "0x100000    # nova localhost copy 1MiB" in block:
         return text, "already"
 
     pattern = re.compile(
@@ -100,7 +100,7 @@ def patch_copy_buffer(text):
         reg = mm.group(1)
         replacement = original.replace(
             f"    const/16 {reg}, 0x2000",
-            f"    const {reg}, 0x20000    # nova localhost copy 128KiB",
+            f"    const {reg}, 0x100000    # nova localhost copy 1MiB",
             1,
         )
         block = block[:start] + replacement + block[end:]
@@ -109,7 +109,7 @@ def patch_copy_buffer(text):
         reg = mm.group(1)
         block = (
             block[:mm.start()]
-            + f"    const {reg}, 0x20000    # nova localhost copy 128KiB"
+            + f"    const {reg}, 0x100000    # nova localhost copy 1MiB"
             + block[mm.end():]
         )
 
@@ -135,7 +135,7 @@ def apply(root: Path, report: Path | None = None):
         "status": "PASS",
         "scope": "WebDAV primary playback only",
         "webdav_playback_upstream_bytes": 1048576,
-        "localhost_copy_bytes": 131072,
+        "localhost_copy_bytes": 1048576,
         "native_rebuffer_unchanged": True,
         "upstream_patch": upstream,
         "copy_patch": copy,

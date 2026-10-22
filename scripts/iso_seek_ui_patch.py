@@ -5,7 +5,7 @@ The current ISO bridge emits title bytes. Single-clip titles with validated
 metadata and a known FFmpeg start timestamp use the existing FFmpeg timestamp
 seek path. No average-byte-ratio is used. Multi-clip/unknown timelines retain
 the prior relative fallback, rather than pretending their PTS are continuous.
-Apply native AFTER all buffer patches: 2X/5X/10X arithmetic stays byte-identical.
+Apply native AFTER all buffer patches: dynamic 2X/5X playback thresholds and the fixed 128MiB RAW producer wall stay byte-identical.
 """
 from __future__ import annotations
 import argparse
@@ -65,7 +65,8 @@ static int64_t nova_iso_timeline_us(const char *url, const char *query, uint64_t
 '''
 
 C_ACTIVATE = r'''
-    /* Publish presentation time AFTER the untouched 2X/5X/10X calculation.
+    /* Publish presentation time AFTER the untouched 2X/5X calculation and
+     * fixed 128 MiB RAW producer-wall setup.
      * Existing _get_*_time normalizes PTS against start_time, getduration uses
      * s->duration, and stream_seek_pos now routes milliseconds to _seek_time.
      * The existing timestamp/keyframe seek is used, not a bytes/size estimate.
@@ -207,7 +208,9 @@ def entry(body: str, instructions: str) -> str:
 
 def native_text(text: str) -> str:
     if 'nova_iso_time_mode' in text: raise RuntimeError('ISO timeline already installed')
-    if 'NOVA_RAW_10X_POLICY:' not in text and 'NOVA_DYNAMIC_BUFFER:' not in text:
+    if ('NOVA_RAW_FIXED128_POLICY:' not in text and
+            'NOVA_RAW_10X_POLICY:' not in text and
+            'NOVA_DYNAMIC_BUFFER:' not in text):
         raise RuntimeError('Expected native buffering base')
     text = once(text, '\tint\t\tstart_time;\n', '\tint\t\tstart_time;\n\tint nova_iso_time_mode;\n','private parser time mode')
     text = once(text, 'static int _open( STREAM *s, int buffer_size, int flags )', C_HELPERS+'\nstatic int _open( STREAM *s, int buffer_size, int flags )','ISO helpers')
