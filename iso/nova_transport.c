@@ -395,3 +395,48 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
          fresh->generation, fresh->output_size);
     return (*env)->NewStringUTF(env, out);
 }
+
+
+JNIEXPORT void JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeCloseGeneration(
+        JNIEnv *env, jclass cls, jlong generation)
+{
+    (void)env;
+    (void)cls;
+    pthread_mutex_lock(&g_lock);
+    nova_session *old = NULL;
+    if (g_session && generation > 0 &&
+        g_session->generation == (uint64_t)generation) {
+        old = g_session;
+        g_session = NULL;
+        old->stopping = 1;
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (old) {
+        LOGI("CLOSE generation=%" PRIu64, old->generation);
+        session_free(old);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeClose(
+        JNIEnv *env, jclass cls)
+{
+    (void)env;
+    (void)cls;
+    pthread_mutex_lock(&g_lock);
+    nova_session *old = g_session;
+    g_session = NULL;
+    if (old)
+        old->stopping = 1;
+    pthread_mutex_unlock(&g_lock);
+    if (old)
+        session_free(old);
+}
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    (void)vm;
+    (void)reserved;
+    return JNI_VERSION_1_6;
+}
