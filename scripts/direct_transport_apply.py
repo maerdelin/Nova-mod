@@ -322,13 +322,26 @@ def patch_activity_back(text):
             body="\n".join(lines)
             text=text[:m.start()]+body+text[m.end():]
     else:
-        super_hits=re.findall(r'^\\.super\\s+(L[^;]+;)
+        super_hits=re.findall(r'^\\.super\\s+(L[^;]+;)$', text, re.M)
+        if len(super_hits)!=1:
+            raise RuntimeError("PlayerActivity .super descriptor ambiguous")
+        super_desc=super_hits[0]
+        method=f"""
+.method public onBackPressed()V
+    .locals 0
+    # NOVA_DIRECT_BACK_EXIT: only reached when controller did not consume BACK.
+    invoke-static {{}}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V
+    invoke-super {{p0}}, {super_desc}->onBackPressed()V
+    return-void
+.end method
+"""
+        text=text.rstrip()+"\n\n"+method.strip()+"\n"
+
     if "NOVA_DIRECT_BACK_EXIT" not in text:
         raise RuntimeError("PlayerActivity back exit hook missing")
     if "DirectTransportProxy;->close()V" not in text:
         raise RuntimeError("PlayerActivity back close missing")
     return text
-
 
 def patch_activity_stop(text):
     methods=[m for m in METHOD_RE.finditer(text)
