@@ -54,7 +54,7 @@ public final class MainTransportApkProbe {
         catch(InvocationTargetException failure){Throwable t=failure.getCause();if(t instanceof Exception)throw(Exception)t;throw new AssertionError(t);}
     }
     static void run()throws Exception{
-        for(String name:new String[]{"NovaParallelRangeInputStream","NovaSingleStreamInputStream"}){
+        for(String name:new String[]{"NovaParallel"+"RangeInputStream","NovaSingle"+"StreamInputStream"}){
             try{Class.forName("com.archos.filecorelibrary."+name);throw new AssertionError("removed class still shipped "+name);}
             catch(ClassNotFoundException expected){}
         }

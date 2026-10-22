@@ -18,7 +18,7 @@ def one(root,name):
     return paths[0]
 def capture(root):
     return {name:one(root,name).read_text() for name in FILES}
-SOURCE_SUFFIXES={'.py','.yml','.yaml','.json','.c','.h','.java','.smali'}
+SOURCE_SUFFIXES={'.py','.yml','.yaml','.json','.c','.h','.java','.smali','.sh','.xml','.gradle','.properties','.kt'}
 SOURCE_EXCLUDED={'.git','work','reports','dist','inputs','tools','native-src'}
 def verify_repo_no_legacy(root=ROOT):
     legacy=tuple(x.replace('__','') for x in (

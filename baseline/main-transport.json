@@ -20,8 +20,8 @@
       "reason": "ISO timestamp seek validation requires the final fixed-128 buffering architecture only; legacy buffering compatibility tokens removed"
     },
     "scripts/main_transport_audit.py": {
-      "git_blob_sha1": "9c749e4e0d9ad66669ce3d8e7dc2a1b3ebec2496",
-      "reason": "Fail-closed full-repository source audit rejects removed files, legacy RAW chunk/10X semantics, obsolete dynamic-cap sentinels and any old/renamed parallel Range logic"
+      "git_blob_sha1": "7410313b1162491e3a42811bc70be50a663af70d",
+      "reason": "Fail-closed full-repository source audit rejects removed files, legacy RAW chunk/10X semantics, obsolete dynamic-cap sentinels and any old/renamed parallel Range logic across source, build and Android test files"
     },
     "scripts/native_rebuffer_patch.py": {
       "git_blob_sha1": "811ea9823edfef074e346a999a9fc2157d07e8cc",
