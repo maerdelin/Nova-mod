@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 C_HELPERS = r'''
-/* ISO timeline metadata is private to our localhost proxy. */
+/* ISO timeline metadata belongs to a verified native transport session. */
 static int nova_iso_uint_arg(const char *query, const char *key, uint64_t *value) {
     int seen = 0;
     const char *p = query;
@@ -42,24 +42,40 @@ static int nova_iso_uint_arg(const char *query, const char *key, uint64_t *value
 }
 static int64_t nova_iso_timeline_us(const char *url, const char *query, uint64_t size) {
     const char *p = NULL;
+    uint64_t direct_generation = 0;
     if (!url || !query || !size) return 0;
-    if (!strncmp(url, "http://127.0.0.1:", 17)) p = url + 17;
-    else if (!strncmp(url, "http://localhost:", 17)) p = url + 17;
-    else return 0;
-    unsigned port = 0;
-    if (*p < '0' || *p > '9') return 0;
-    while (*p >= '0' && *p <= '9') {
-        port = port * 10 + (unsigned)(*p++ - '0');
-        if (port > 65535) return 0;
-    }
-    if (!port || (strncmp(p, "/main.m2ts", 10) || (p[10] && p[10] != '?'))) return 0;
-    uint64_t iso = 0, us = 0, clips = 0, title = 0, generation = 0;
+    if (!strncmp(url, "novatransport://", 16)) {
+        p = url + 16;
+        if (*p < '1' || *p > '9') return 0;
+        while (*p >= '0' && *p <= '9') {
+            unsigned digit = (unsigned)(*p++ - '0');
+            if (direct_generation > (UINT64_MAX - digit) / 10) return 0;
+            direct_generation = direct_generation * 10 + digit;
+        }
+    } else if (!strncmp(url, "http://127.0.0.1:", 17) ||
+               !strncmp(url, "http://localhost:", 17)) {
+        p = url + 17;
+        unsigned port = 0;
+        if (*p < '0' || *p > '9') return 0;
+        while (*p >= '0' && *p <= '9') {
+            port = port * 10 + (unsigned)(*p++ - '0');
+            if (port > 65535) return 0;
+        }
+        if (!port) return 0;
+    } else return 0;
+    if (strncmp(p, "/main.m2ts", 10) || (p[10] && p[10] != '?'))
+        return 0;
+    uint64_t iso = 0, us = 0, clips = 0, title = 0, generation = 0, direct = 0;
     if (!nova_iso_uint_arg(query, "nova_iso", &iso) || iso != 1 ||
         !nova_iso_uint_arg(query, "nova_iso_duration_us", &us) ||
         !nova_iso_uint_arg(query, "nova_iso_clip_count", &clips) || clips != 1 ||
         !nova_iso_uint_arg(query, "nova_iso_title_size", &title) || title != size ||
         !nova_iso_uint_arg(query, "nova_iso_generation", &generation) || !generation ||
         us < 10000000ULL || us > 86400000000ULL) return 0;
+    if (direct_generation &&
+        (generation != direct_generation ||
+         !nova_iso_uint_arg(query, "nova_direct", &direct) || direct != 1))
+        return 0;
     return (int64_t)us;
 }
 '''

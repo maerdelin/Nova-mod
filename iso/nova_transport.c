@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <libavformat/avio.h>
 #include <libavutil/dict.h>
@@ -19,6 +20,12 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define UDF_BLOCK 2048
+
+static int64_t nova_iso_uptime_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 typedef enum {
     NOVA_MODE_FILE = 0,
@@ -85,9 +92,12 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
 
 static int select_main_title(nova_session *s)
 {
+    int64_t scan_start_ms = nova_iso_uptime_ms();
     int titles = bd_get_titles(s->bd, TITLES_RELEVANT, 180);
     if (titles <= 0)
         titles = bd_get_titles(s->bd, TITLES_RELEVANT, 0);
+    LOGI("ISO_OPEN_STAGE titles_scan_ms=%" PRId64 " titles=%d",
+         nova_iso_uptime_ms() - scan_start_ms, titles);
     if (titles <= 0)
         return -1;
     int main_title = bd_get_main_title(s->bd);
@@ -105,6 +115,7 @@ static int select_main_title(nova_session *s)
             bd_free_title_info(ti);
         }
     }
+    int64_t select_start_ms = nova_iso_uptime_ms();
     if (!bd_select_title(s->bd, (uint32_t)main_title))
         return -1;
     s->output_size = bd_get_title_size(s->bd);
@@ -120,6 +131,8 @@ static int select_main_title(nova_session *s)
              ti->clip_count, s->output_size);
         bd_free_title_info(ti);
     }
+    LOGI("ISO_OPEN_STAGE title_select_info_ms=%" PRId64 " clips=%u",
+         nova_iso_uptime_ms() - select_start_ms, s->clip_count);
     return s->output_size ? 0 : -1;
 }
 
@@ -174,6 +187,8 @@ static void session_free(nova_session *s)
 
 static nova_session *session_create(const char *url, const char *headers, int iso)
 {
+    int64_t iso_start_ms = iso ? nova_iso_uptime_ms() : 0;
+    int64_t stage_start_ms = iso_start_ms;
     nova_session *s = calloc(1, sizeof(*s));
     if (!s)
         return NULL;
@@ -211,6 +226,11 @@ static nova_session *session_create(const char *url, const char *headers, int is
         return NULL;
     }
     s->upstream_pos = origin;
+    if (iso) {
+        LOGI("ISO_OPEN_STAGE upstream_open_seek0_ms=%" PRId64,
+             nova_iso_uptime_ms() - stage_start_ms);
+        stage_start_ms = nova_iso_uptime_ms();
+    }
 
     if (s->mode == NOVA_MODE_BLURAY_ISO) {
         s->bd = bd_init();
@@ -219,6 +239,9 @@ static nova_session *session_create(const char *url, const char *headers, int is
             session_free(s);
             return NULL;
         }
+        LOGI("ISO_OPEN_STAGE bd_init_open_ms=%" PRId64,
+             nova_iso_uptime_ms() - stage_start_ms);
+        stage_start_ms = nova_iso_uptime_ms();
         const BLURAY_DISC_INFO *di = bd_get_disc_info(s->bd);
         if (di && di->aacs_detected && !di->aacs_handled) {
             LOGE("AACS_UNSUPPORTED");
@@ -230,6 +253,8 @@ static nova_session *session_create(const char *url, const char *headers, int is
             session_free(s);
             return NULL;
         }
+        LOGI("ISO_OPEN_STAGE select_main_title_ms=%" PRId64 " total_native_ms=%" PRId64,
+             nova_iso_uptime_ms() - stage_start_ms, nova_iso_uptime_ms() - iso_start_ms);
     } else {
         if (s->upstream_size <= 0) {
             LOGE("UPSTREAM_SIZE_INVALID size=%" PRId64, s->upstream_size);
