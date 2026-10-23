@@ -20,6 +20,17 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define UDF_BLOCK 2048
+/* Proven Run506 UDF metadata locality: 4 MiB per slot, eight LRU slots.
+ * This is used ONLY before playback. The working RAW128 pipeline is untouched. */
+#define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)
+#define NOVA_ISO_META_PAGE_COUNT 8
+
+typedef struct nova_iso_meta_page {
+    int64_t start;
+    int length;
+    uint64_t touched;
+    uint8_t *data;
+} nova_iso_meta_page;
 
 static int64_t nova_iso_uptime_ms(void) {
     struct timespec ts;
@@ -46,6 +57,13 @@ typedef struct nova_session {
     uint64_t output_size;
     uint64_t duration_us;
     uint32_t clip_count;
+    int iso_meta_active;
+    nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
+    uint64_t iso_meta_tick;
+    uint64_t iso_meta_reads;
+    uint64_t iso_meta_hits;
+    uint64_t iso_meta_misses;
+    uint64_t iso_meta_fetched;
 } nova_session;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -70,13 +88,100 @@ static int read_exact(AVIOContext *io, uint8_t *dst, int bytes)
     return done;
 }
 
+/* ISO_META_CACHE_BEGIN
+ * Only UDF indexing / playlist scanning. Never a movie data buffer.
+ */
+static void nova_iso_meta_release(nova_session *s)
+{
+    if (!s) return;
+    s->iso_meta_active = 0;
+    for (int i = 0; i < NOVA_ISO_META_PAGE_COUNT; ++i) {
+        free(s->iso_meta_pages[i].data);
+        s->iso_meta_pages[i].data = NULL;
+        s->iso_meta_pages[i].length = 0;
+    }
+}
+
+static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int bytes)
+{
+    if (!s->iso_meta_active || s->upstream_size <= 0 ||
+        start < 0 || bytes <= 0 || start > s->upstream_size ||
+        (int64_t)bytes > s->upstream_size - start)
+        return -1;
+    ++s->iso_meta_reads;
+    int copied = 0;
+    while (copied < bytes) {
+        int64_t pos = start + copied;
+        int64_t aligned = pos & ~((int64_t)NOVA_ISO_META_PAGE_BYTES - 1);
+        int hit = -1, first_free = -1, lru = -1;
+        uint64_t oldest = UINT64_MAX;
+        for (int i = 0; i < NOVA_ISO_META_PAGE_COUNT; ++i) {
+            nova_iso_meta_page *entry = &s->iso_meta_pages[i];
+            if (entry->data && entry->start == aligned && entry->length > 0) {
+                hit = i;
+                break;
+            }
+            if (!entry->data && first_free < 0)
+                first_free = i;
+            if (entry->data && entry->touched < oldest) {
+                oldest = entry->touched;
+                lru = i;
+            }
+        }
+        if (hit >= 0) {
+            ++s->iso_meta_hits;
+        } else {
+            hit = first_free >= 0 ? first_free : lru;
+            if (hit < 0) return -1;
+            nova_iso_meta_page *entry = &s->iso_meta_pages[hit];
+            if (!entry->data) {
+                entry->data = malloc(NOVA_ISO_META_PAGE_BYTES);
+                if (!entry->data) return -1;
+            }
+            entry->length = 0;
+            int64_t moved = avio_seek(s->upstream, aligned, SEEK_SET);
+            if (moved != aligned) return -1;
+            s->upstream_pos = moved;
+            int64_t remaining = s->upstream_size - aligned;
+            int request = (int)(remaining < NOVA_ISO_META_PAGE_BYTES ?
+                                remaining : NOVA_ISO_META_PAGE_BYTES);
+            int got = read_exact(s->upstream, entry->data, request);
+            if (got <= 0) return -1;
+            s->upstream_pos += got;
+            entry->start = aligned;
+            entry->length = got;
+            ++s->iso_meta_misses;
+            s->iso_meta_fetched += (uint64_t)got;
+        }
+        nova_iso_meta_page *entry = &s->iso_meta_pages[hit];
+        entry->touched = ++s->iso_meta_tick;
+        int offset = (int)(pos - aligned);
+        int available = entry->length - offset;
+        if (available <= 0) return -1;
+        int chunk = bytes - copied;
+        if (chunk > available) chunk = available;
+        memcpy(dst + copied, entry->data + offset, (size_t)chunk);
+        copied += chunk;
+    }
+    return copied / UDF_BLOCK;
+}
+/* ISO_META_CACHE_END */
+
 static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks)
 {
     nova_session *s = (nova_session *)handle;
-    if (!s || !buf || lba < 0 || num_blocks <= 0 || s->stopping)
+    if (!s || !buf || lba < 0 || num_blocks <= 0 ||
+        num_blocks > INT32_MAX / UDF_BLOCK || s->stopping)
         return -1;
     int64_t target = (int64_t)lba * UDF_BLOCK;
     int bytes = num_blocks * UDF_BLOCK;
+    if (s->iso_meta_active && s->upstream_size > 0) {
+        int blocks = nova_iso_meta_read(s, (uint8_t *)buf, target, bytes);
+        if (blocks > 0)
+            return blocks;
+        LOGI("ISO_META_CACHE: fallback_direct=1 start=%" PRId64, target);
+        nova_iso_meta_release(s);
+    }
     if (s->upstream_pos != target) {
         int64_t pos = avio_seek(s->upstream, target, SEEK_SET);
         if (pos < 0)
@@ -175,6 +280,7 @@ static void session_free(nova_session *s)
         bd_close(s->bd);
         s->bd = NULL;
     }
+    nova_iso_meta_release(s);
     if (s->upstream) {
         avio_closep(&s->upstream);
         s->upstream = NULL;
@@ -226,6 +332,9 @@ static nova_session *session_create(const char *url, const char *headers, int is
         return NULL;
     }
     s->upstream_pos = origin;
+    /* Temporary UDF scanning cache, OFF before first streaming byte. */
+    if (iso && s->upstream_size > 0)
+        s->iso_meta_active = 1;
     if (iso) {
         LOGI("ISO_OPEN_STAGE upstream_open_seek0_ms=%" PRId64,
              nova_iso_uptime_ms() - stage_start_ms);
@@ -255,6 +364,13 @@ static nova_session *session_create(const char *url, const char *headers, int is
         }
         LOGI("ISO_OPEN_STAGE select_main_title_ms=%" PRId64 " total_native_ms=%" PRId64,
              nova_iso_uptime_ms() - stage_start_ms, nova_iso_uptime_ms() - iso_start_ms);
+        LOGI("ISO_META_CACHE: reads=%" PRIu64 " hits=%" PRIu64
+             " misses=%" PRIu64 " fetched_bytes=%" PRIu64
+             " page_bytes=%d pages=%d phase=metadata_only",
+             s->iso_meta_reads, s->iso_meta_hits, s->iso_meta_misses,
+             s->iso_meta_fetched, NOVA_ISO_META_PAGE_BYTES, NOVA_ISO_META_PAGE_COUNT);
+        /* ISO scan finished: remove metadata cache BEFORE RAW128 playback. */
+        nova_iso_meta_release(s);
     } else {
         if (s->upstream_size <= 0) {
             LOGE("UPSTREAM_SIZE_INVALID size=%" PRId64, s->upstream_size);
