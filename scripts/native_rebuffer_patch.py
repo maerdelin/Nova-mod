@@ -261,36 +261,8 @@ static void nova_pick_fast_cpus(const cpu_set_t *allowed, cpu_set_t *fast,
 
 static void nova_raw_boost_thread(void)
 {
-    cpu_set_t allowed, fast, actual_mask;
-    CPU_ZERO(&allowed);
-    CPU_ZERO(&fast);
-    CPU_ZERO(&actual_mask);
-    int fast0 = -1, fast1 = -1;
-    int get_aff_rc = sched_getaffinity(0, sizeof(allowed), &allowed);
-    if( get_aff_rc == 0 )
-        nova_pick_fast_cpus(&allowed, &fast, &fast0, &fast1);
-
-    int affinity_rc = -1;
-    int affinity_errno = 0;
-    if( get_aff_rc == 0 && fast0 >= 0 ) {
-        errno = 0;
-        affinity_rc = sched_setaffinity(0, sizeof(fast), &fast);
-        affinity_errno = affinity_rc ? errno : 0;
-    }
-
-    errno = 0;
-    const int requested_nice = -8;
-    int nice_rc = setpriority(PRIO_PROCESS, 0, requested_nice);
-    int nice_errno = nice_rc ? errno : 0;
-    errno = 0;
-    int actual_nice = getpriority(PRIO_PROCESS, 0);
-    int get_nice_errno = errno;
-    int actual_aff_rc = sched_getaffinity(0, sizeof(actual_mask), &actual_mask);
-
-    serprintf(
-        "NOVA_RAW_SCHED: requestedNice=%d niceRc=%d niceErr=%d actualNice=%d getNiceErr=%d fastCpu0=%d fastCpu1=%d affinityRc=%d affinityErr=%d actualAffinityRc=%d\n",
-        requested_nice, nice_rc, nice_errno, actual_nice, get_nice_errno,
-        fast0, fast1, affinity_rc, affinity_errno, actual_aff_rc );
+    /* Run584 policy: inherit ordinary OS priority and CPU affinity.
+     * No explicit setpriority/sched_setaffinity of transport producer. */
 }
 static int nova_raw_interrupt(void *opaque)
 {
@@ -974,47 +946,9 @@ static long nova_playback_cpu_max_freq_khz(int cpu)
 
 static void nova_playback_yield_sched(const char *role, int requested_nice)
 {
-    cpu_set_t allowed, playback;
-    CPU_ZERO(&allowed);
-    CPU_ZERO(&playback);
-    int get_aff_rc = sched_getaffinity(0, sizeof(allowed), &allowed);
-
-    int fast0 = -1, fast1 = -1;
-    long score0 = -1, score1 = -1;
-    if( get_aff_rc == 0 ) {
-        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
-            if( !CPU_ISSET(cpu, &allowed) ) continue;
-            long score = nova_playback_cpu_max_freq_khz(cpu);
-            if( score <= 0 ) score = cpu + 1;
-            if( score > score0 || (score == score0 && cpu > fast0) ) {
-                score1 = score0; fast1 = fast0;
-                score0 = score; fast0 = cpu;
-            } else if( score > score1 || (score == score1 && cpu > fast1) ) {
-                score1 = score; fast1 = cpu;
-            }
-        }
-
-        int count = 0;
-        for( int cpu = 0; cpu < CPU_SETSIZE; cpu++ ) {
-            if( !CPU_ISSET(cpu, &allowed) ) continue;
-            if( cpu == fast0 || cpu == fast1 ) continue;
-            CPU_SET(cpu, &playback);
-            count++;
-        }
-        if( count > 0 )
-            sched_setaffinity(0, sizeof(playback), &playback);
-    }
-
-    errno = 0;
-    int nice_rc = setpriority(PRIO_PROCESS, 0, requested_nice);
-    int nice_errno = nice_rc ? errno : 0;
-    errno = 0;
-    int actual_nice = getpriority(PRIO_PROCESS, 0);
-    int get_nice_errno = errno;
-    serprintf(
-        "NOVA_PLAYBACK_SCHED: role=%s requestedNice=%d niceRc=%d niceErr=%d actualNice=%d getNiceErr=%d reservedFast0=%d reservedFast1=%d\n",
-        role, requested_nice, nice_rc, nice_errno,
-        actual_nice, get_nice_errno, fast0, fast1 );
+    /* Run584 default OS scheduling; no explicit priority/affinity changes. */
+    (void)role;
+    (void)requested_nice;
 }'''
 
 

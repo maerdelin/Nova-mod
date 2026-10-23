@@ -1,7 +1,7 @@
 # direct transport APK integration
 
 from __future__ import annotations
-import argparse, re, shutil, subprocess, struct
+import argparse, re, shutil, subprocess
 from pathlib import Path
 
 METHOD_RE = re.compile(r'^\.method [^\n]+\n.*?^\.end method', re.M | re.S)
@@ -13,56 +13,8 @@ AWAIT_RE = re.compile(
 )
 
 
-DEFAULT_SCHED_PATCHES = {
-    "arm64-v8a": [("arm64", 0x9a934), ("arm64", 0x9a950), ("arm64", 0xb4c14), ("arm64", 0xb5034)],
-    "armeabi-v7a": [("arm", 0x78eec), ("arm", 0x78f14), ("arm", 0x99800), ("arm", 0x99844)],
-    "x86": [("x86", 0x915ba), ("x86", 0x915df), ("x86", 0xb263a), ("x86", 0xb268b)],
-    "x86_64": [("x86", 0x9a912), ("x86", 0x9a92c), ("x86", 0xb7082), ("x86", 0xb75d1)],
-}
-
-def elf_va_to_offset(data, va):
-    if data[:4] != b"\x7fELF" or data[5] != 1:
-        raise RuntimeError("ELF/little-endian expected")
-    cls=data[4]
-    if cls==1:
-        phoff=struct.unpack_from("<I",data,28)[0]
-        entsz=struct.unpack_from("<H",data,42)[0]
-        count=struct.unpack_from("<H",data,44)[0]
-        for i in range(count):
-            o=phoff+i*entsz
-            typ,off,vaddr,_,filesz,_,_,_=struct.unpack_from("<IIIIIIII",data,o)
-            if typ==1 and vaddr<=va<vaddr+filesz:
-                return off+(va-vaddr)
-    elif cls==2:
-        phoff=struct.unpack_from("<Q",data,32)[0]
-        entsz=struct.unpack_from("<H",data,54)[0]
-        count=struct.unpack_from("<H",data,56)[0]
-        for i in range(count):
-            o=phoff+i*entsz
-            typ,_,off,vaddr,_,filesz,_,_=struct.unpack_from("<IIQQQQQQ",data,o)
-            if typ==1 and vaddr<=va<vaddr+filesz:
-                return off+(va-vaddr)
-    raise RuntimeError("ELF virtual address not mapped")
-
-def restore_default_scheduling(path, items):
-    data=bytearray(path.read_bytes())
-    for arch,va in items:
-        off=elf_va_to_offset(data,va)
-        if arch=="arm64":
-            old=struct.unpack_from("<I",data,off)[0]
-            if (old & 0xfc000000) != 0x94000000:
-                raise RuntimeError(f"{path.name}: arm64 call guard failed at {va:x}")
-            data[off:off+4]=struct.pack("<I",0x52800000)
-        elif arch=="arm":
-            old=struct.unpack_from("<I",data,off)[0]
-            if (old & 0xff000000) != 0xeb000000:
-                raise RuntimeError(f"{path.name}: arm call guard failed at {va:x}")
-            data[off:off+4]=struct.pack("<I",0xe3a00000)
-        else:
-            if data[off] != 0xe8:
-                raise RuntimeError(f"{path.name}: x86 call guard failed at {va:x}")
-            data[off:off+5]=b"\x31\xc0\x90\x90\x90"
-    path.write_bytes(data)
+# Native thread scheduling is restored in source before compilation.
+# Fixed machine-code address patching would corrupt recompiled libavos.so.
 
 def one(paths, label):
     xs=list(paths)
@@ -683,11 +635,12 @@ def main():
         dst.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(src,dst)
 
-    for abi,items in DEFAULT_SCHED_PATCHES.items():
+    # Pass through the rebuilt AVOS libraries unchanged. Their producer and
+    # playback thread schedulers are already no-ops in native source.
+    for abi in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64"):
         avos=root/"lib"/abi/"libavos.so"
         if not avos.is_file():
-            raise RuntimeError("missing libavos for "+abi)
-        restore_default_scheduling(avos,items)
+            raise RuntimeError("missing rebuilt libavos for "+abi)
 
     args.output.parent.mkdir(parents=True,exist_ok=True)
     run("java","-Xmx4g","-jar",args.apktool,"b",root,"-o",args.output)
