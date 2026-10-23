@@ -28,15 +28,18 @@ jobs:
         run: |
           set -euo pipefail
           # Keep dependency setup isolated from direct-transport acceptance logic.
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq zstd git make maven build-essential wget curl unzip pkg-config meson ninja-build ffmpeg
+          echo 'CI preflight: apt update (max 120s)'
+          timeout 120s sudo apt-get update -qq
+          echo 'CI preflight: apt install (max 120s)'
+          timeout 120s sudo apt-get install -y -qq zstd git make maven build-essential wget curl unzip pkg-config meson ninja-build ffmpeg
           mkdir -p inputs dist tools work reports
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
           python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
           python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py
-          curl -fL --retry 4 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'CI preflight: apktool download (max 120s)'
+          timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo | sudo tee /usr/local/bin/repo >/dev/null
           sudo chmod a+x /usr/local/bin/repo
