@@ -201,7 +201,7 @@ def patch_video(root):
     path = root / "Source/stream_video.c"
     rebuffer_insert = "static int _nova_rebuffer_eof( STREAM *s )"
     sleep = "\n        msec_sleep( NOVA_REBUFFER_POLL_MS );"
-    sink_count = "\ts->video_sink_count ++;\n"
+    sink_count = "\ts->sink_delay = frame->blit_time - s->video_sink->put( s->video_sink, frame ); \t\n\ts->video_sink_count ++;\n"
     sink_drop = "\t\ts->video_drop   = (frame->blit_time == -1);\n"
     pause_anchor = "\twas_paused = s->paused;\n"
     unpause_anchor = "void stream_un_pause( STREAM *s, int was_paused )\n{\n"
