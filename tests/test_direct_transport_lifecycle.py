@@ -40,6 +40,7 @@ class DirectLifecycleTests(unittest.TestCase):
         source = (ROOT / 'iso/nova_transport.c').read_text()
         acquire_free = source[source.index('static nova_session *session_acquire'):source.index('static nova_session *session_create')]
         close = source[source.index('static void transport_close'):source.index('JNIEXPORT void JNICALL', source.index('static void transport_close'))]
+        release = source[source.index('static void nova_iso_meta_release'):source.index('static int nova_iso_meta_read')]
         harness = r'''
 #define _GNU_SOURCE
 #include <assert.h>
@@ -50,6 +51,13 @@ class DirectLifecycleTests(unittest.TestCase):
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define NOVA_ISO_META_PAGE_COUNT 8
+typedef struct nova_iso_meta_page {
+    int64_t start;
+    int length;
+    uint64_t touched;
+    uint8_t *data;
+} nova_iso_meta_page;
 typedef struct nova_session {
     uint64_t generation;
     volatile int stopping;
@@ -57,6 +65,8 @@ typedef struct nova_session {
     pthread_cond_t idle;
     pthread_mutex_t io_lock;
     void *bd, *upstream;
+    int iso_meta_active;
+    nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
 } nova_session;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static nova_session *g_session;
@@ -79,11 +89,14 @@ static void avio_closep(void **p) {
     pthread_mutex_unlock(&evidence_lock);
 }
 '''
-        harness += acquire_free + close + r'''
+        harness += release + acquire_free + close + r'''
 static nova_session *make_session(uint64_t generation) {
     nova_session *s = calloc(1, sizeof(*s));
     s->generation = generation;
     s->upstream = (void *)1;
+    s->iso_meta_active = 1;
+    s->iso_meta_pages[0].data = malloc(32);
+    assert(s->iso_meta_pages[0].data);
     pthread_mutex_init(&s->io_lock, NULL);
     pthread_cond_init(&s->idle, NULL);
     return s;
