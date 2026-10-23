@@ -231,9 +231,18 @@ def native_text(text: str) -> str:
     text = once(text, '\ts->parser_open = 1;', C_ACTIVATE+'\n\ts->parser_open = 1;','activate consistent timeline')
     anchor = '\t\tnew_pos = ((INT64)time + ff_p->start_time) * AV_TIME_BASE / 1000;'
     text = once(text, anchor, anchor+r'''
+        if (ff_p->nova_iso_time_mode && time == 0) {
+            /* FFmpeg's timebase may begin with a nonzero TS PTS. The time
+             * slider's zero must seek the first title byte, not an estimated
+             * first keyframe from a possibly stale MPEG-TS timestamp index. */
+            new_pos = 0;
+            av_flags |= AVSEEK_FLAG_BYTE | AVSEEK_FLAG_BACKWARD;
+            serprintf("NOVA_ISO_ZERO_SEEK byteOffset=0 seekUnit=ms\\n");
+        }
         if (ff_p->nova_iso_time_mode)
-            serprintf("NOVA_ISO_TIME_SEEK targetMs=%d startMs=%d absoluteUs=%lld byteMode=0\n",
-                      time, ff_p->start_time, (long long)new_pos);''','time seek diagnostic')
+            serprintf("NOVA_ISO_TIME_SEEK targetMs=%d startMs=%d actualTarget=%lld byteZero=%d\\n",
+                      time, ff_p->start_time, (long long)new_pos,
+                      time == 0);''','zero and millisecond time seek diagnostic')
     return text
 
 def iso_text(text: str) -> str:
