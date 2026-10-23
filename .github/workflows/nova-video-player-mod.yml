@@ -76,6 +76,7 @@ jobs:
           python3 scripts/ts_resume_fallback_patch.py native-src/native/avos --report reports/ts-resume-fallback.json
           python3 scripts/iso_fast_probe_patch.py native-src/native/avos --report reports/iso-fast-probe.json
           python3 scripts/iso_seek_ui_patch.py --native native-src/native/avos --report reports/iso-timeline.json
+          python3 scripts/av_diag_patch.py --native native-src/native/avos --report reports/av-diagnostics.json
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
           # AVOS base/full differ only by which FFmpeg directory is linked; no
           # AVOS source feature macro depends on LIBAV_CONFIG. Alias the same
