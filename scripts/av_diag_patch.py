@@ -360,7 +360,7 @@ def patch_hw(root):
 '''
     return patch(path,[
         ("codec input accepted/error",anchor,anchor+add),
-        ("codec output result and latency",anchor2,anchor2.replace("\t\tpthread_mutex_lock",&add2+"\t\tpthread_mutex_lock")),
+        ("codec output result and latency",anchor2,anchor2.replace("\t\tpthread_mutex_lock",add2+"\t\tpthread_mutex_lock")),
         ("timed surface render submission",render,render+render_add),
         ("late frame drop reason",late,"\t\t\t\tp->dropped++;\n"+late_add+'\t\t\t\tDBGSI serprintf("android_sync: late frame drop'),
         ("startup hold drop reason",startup,"\t\t\t\tp->dropped++;\n"+startup_add+"\t\t\t\t// Keep flush from invalidating"),
