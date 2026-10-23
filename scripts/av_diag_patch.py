@@ -350,13 +350,14 @@ def patch_hw(root):
 '''
     flush="static int videodec_flush(STREAM_DEC_VIDEO *dec)\n{\n"
     flush_log=r'''    STREAM *nova_diag_s = (STREAM *)dec->ctx;
-    if (nova_diag_s)
+    if (nova_diag_s) {
         serprintf("NOVA_AVDIAG_CODEC_FLUSH: epoch=%d hwInput=%d hwOutput=%d renderSubmit=%d lateDrops=%d\n",
             nova_diag_s->seek_epoch,
             __atomic_load_n(&nova_diag_s->nova_diag_codec_input, __ATOMIC_RELAXED),
             __atomic_load_n(&nova_diag_s->nova_diag_codec_output, __ATOMIC_RELAXED),
             __atomic_load_n(&nova_diag_s->nova_diag_render_submitted, __ATOMIC_RELAXED),
             __atomic_load_n(&nova_diag_s->nova_diag_drop_late, __ATOMIC_RELAXED));
+    }
 '''
     return patch(path,[
         ("codec input accepted/error",anchor,anchor+add),
