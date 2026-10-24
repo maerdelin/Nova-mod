@@ -66,10 +66,13 @@ typedef struct nova_session {
     pthread_mutex_t io_lock;
     void *bd, *upstream;
     int iso_meta_active;
+    char *upstream_url;
+    char *upstream_headers;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
 } nova_session;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static nova_session *g_session;
+static nova_session *g_opening_session;
 static pthread_mutex_t evidence_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t evidence_ready = PTHREAD_COND_INITIALIZER;
 static int aborted, closed, freed;
@@ -120,6 +123,13 @@ int main(void) {
     assert(aborted == 1 && closed == 1 && freed == 1);
     transport_close(0, 0);
     assert(closed == 1);
+    /* Pending opens must see cancellation before they can publish. */
+    nova_session *opening = make_session(99);
+    g_opening_session = opening;
+    transport_close(0, 0);
+    assert(opening->stopping && g_opening_session == opening);
+    session_free(opening);
+    assert(g_opening_session == NULL);
     g_session = make_session(8);
     transport_close(7, 1);
     assert(g_session && g_session->generation == 8);
