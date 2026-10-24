@@ -114,7 +114,7 @@ int nova_sfdec2_claim_no_output_return(STREAM *s, VIDEO_FRAME *f)
 \t\t\ts->video_sink_count--;'''
     assert text.count(before)>=1
     # Precisely modify _queue_sink_frames(), NOT any other counter use.
-    begin=text.index('static void _queue_sink_frames( STREAM *s )\\n{')
+    begin=text.index('static void _queue_sink_frames( STREAM *s )\n{')
     end=text.index('static void _free_all_frames( STREAM *s )', begin)
     region=text[begin:end]
     assert region.count(before)==1
