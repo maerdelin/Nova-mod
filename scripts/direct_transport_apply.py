@@ -332,6 +332,7 @@ WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakSt
     move-result-object v1
     if-eq v0, v1, :apply
 
+    :background_retry
     iget v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mGeneration:I
     invoke-static {v0}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->current(I)Z
     move-result v0
@@ -343,14 +344,21 @@ WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakSt
     move-result-object v1
     iput-object v1, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mResolved:Landroid/net/Uri;
     :try_end
-    .catch Ljava/lang/RuntimeException; {:try_start .. :try_end} :failed
+    .catch Ljava/lang/RuntimeException; {:try_start .. :try_end} :retry_open
     goto :post_main
-    :failed
+    :retry_open
     move-exception v1
     const-string v2, "NOVA_WEAKNET"
-    const-string v3, "Network source could not be opened"
-    invoke-static {v2, v3, v1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+    const-string v3, "Waiting for network source; retrying"
+    invoke-static {v2, v3, v1}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
     move-result v2
+    iget v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mGeneration:I
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->current(I)Z
+    move-result v0
+    if-eqz v0, :done
+    const-wide/16 v2, 0x3e8
+    invoke-static {v2, v3}, Landroid/os/SystemClock;->sleep(J)V
+    goto :background_retry
     :post_main
     new-instance v0, Landroid/os/Handler;
     invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
