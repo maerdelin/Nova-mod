@@ -328,25 +328,33 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
             hit = first_free >= 0 ? first_free : lru;
             if (hit < 0) return -1;
             nova_iso_meta_page *entry = &s->iso_meta_pages[hit];
-            if (!entry->data) {
-                entry->data = malloc(NOVA_ISO_META_PAGE_BYTES);
-                if (!entry->data) return -1;
-            }
-            entry->length = 0;
+            /* Stage the new range separately. Never overwrite an LRU page
+             * until the network fetch has actually returned useful bytes.
+             * Otherwise one transient timeout destroys already-good metadata
+             * that libbluray may need later in the same title scan. */
+            uint8_t *staging = malloc((size_t)page_bytes);
+            if (!staging) return -1;
             int64_t moved = avio_seek(s->upstream, aligned, SEEK_SET);
-            if (moved != aligned) return -1;
+            if (moved != aligned) {
+                free(staging);
+                s->iso_meta_degraded = 1;
+                return -1;
+            }
             s->upstream_pos = moved;
             int64_t remaining = s->upstream_size - aligned;
             int request = (int)(remaining < page_bytes ?
                                 remaining : page_bytes);
-            int got = read_exact(s->upstream, entry->data, request);
+            int got = read_exact(s->upstream, staging, request);
             if (got <= 0) {
+                free(staging);
                 s->iso_meta_degraded = 1;
                 return -1;
             }
             s->upstream_pos += got;
             if (got < request)
                 s->iso_meta_degraded = 1;
+            free(entry->data);
+            entry->data = staging;
             entry->start = aligned;
             entry->length = got;
             ++s->iso_meta_misses;
