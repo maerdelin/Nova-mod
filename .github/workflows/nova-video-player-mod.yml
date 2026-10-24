@@ -51,7 +51,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
-          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/seek_priority_patch.py scripts/seek_cache_window_patch.py scripts/seek_video_index_patch.py scripts/smoke_mp4_raw_seek_race.py scripts/disable_all_subtitle_history_patch.py scripts/late_stall_self_heal_patch.py scripts/seek_safe_serial_v2_patch.py
+          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/seek_priority_patch.py scripts/seek_cache_window_patch.py scripts/seek_video_index_patch.py scripts/smoke_mp4_raw_seek_race.py scripts/disable_all_subtitle_history_patch.py scripts/late_stall_self_heal_patch.py scripts/seek_safe_serial_v2_patch.py scripts/seek_engine_diag_patch.py
           echo 'CI preflight: apktool download (max 120s)'
           timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
@@ -100,6 +100,7 @@ jobs:
           if grep -Eq 'seek_preempt|seek_pending|NOVA_RAW_CACHE_SEEK_V1|NOVA_FAST_VIDEO_INDEX_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c; then echo '::error::Experimental Seek path still present'; exit 1; fi
           python3 scripts/disable_all_subtitle_history_patch.py --native native-src/native/avos --report reports/all-subtitle-history-disabled.json
           python3 scripts/late_stall_self_heal_patch.py --native native-src/native/avos --report reports/late-render-recovery.json
+          python3 scripts/seek_engine_diag_patch.py --native native-src/native/avos
           grep -Fq 'NOVA_SUB_HISTORY_DISABLED_ALL_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_LATE_STALL_SELF_HEAL_V1' native-src/native/avos/Source/codec_sfdec2.c
           if grep -Eq '_cache_subtitle_packet\(|_subtitle_recovery_point\(' native-src/native/avos/Source/stream_parser_ffmpeg.c; then echo '::error::History code still compiled'; exit 1; fi
@@ -123,7 +124,7 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1; do
+              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1; do
                 if ! grep -aq "$trace" "$new"; then
                   echo "::error::Missing $trace instrumentation from $abi libavos.so"
                   exit 1
