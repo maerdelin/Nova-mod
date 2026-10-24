@@ -49,6 +49,7 @@ def test_one(fmt, root, report_dir):
     size = media.stat().st_size
     lock = threading.Lock()
     requests = []
+    all_requests = []
     faults = {"probe_503": 0, "short_body": 0}
     server = None
     port = None
@@ -59,7 +60,27 @@ def test_one(fmt, root, report_dir):
         def log_message(self, *_):
             pass
 
+        def do_HEAD(self):
+            with lock:
+                all_requests.append({"method": "HEAD", "path": self.path, "range": self.headers.get("Range", "")})
+            if self.path.split("?", 1)[0] != "/" + media.name:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+        def do_PROPFIND(self):
+            with lock:
+                all_requests.append({"method": "PROPFIND", "path": self.path, "range": self.headers.get("Range", "")})
+            self.send_error(404)
+
         def do_GET(self):
+            with lock:
+                all_requests.append({"method": "GET", "path": self.path, "range": self.headers.get("Range", "")})
             if self.path.split("?", 1)[0] != "/" + media.name:
                 self.send_error(404)
                 return
@@ -136,6 +157,8 @@ def test_one(fmt, root, report_dir):
         adb("reverse", f"tcp:{port}", f"tcp:{port}")
         adb("shell", "am", "force-stop", PACKAGE)
         adb("logcat", "-c")
+        marker = "NOVA_WEAKNET_" + fmt.upper() + "_" + str(time.monotonic_ns())
+        adb("shell", "log", "-p", "i", "-t", "NOVA_WEAKNET_TEST", marker)
         uri = f"webdav://127.0.0.1:{port}/{media.name}"
         adb("shell",
             f"am start -W -n {PLAYER} -a android.intent.action.VIEW "
@@ -144,10 +167,13 @@ def test_one(fmt, root, report_dir):
             timeout=30)
 
         log = wait_for(
-            lambda t: ("NovaTransport: OPEN_READY mode=file" in t
-                       and "NOVA_DIRECT_SOURCE_OPEN:" in t
-                       and "NOVA_RAW128_OPEN: phase=pre_probe" in t
-                       and "first_frame_sink" in t),
+            lambda t: (
+                marker in t
+                and "NovaTransport: OPEN_READY mode=file" in t[t.rfind(marker):]
+                and "NOVA_DIRECT_SOURCE_OPEN:" in t[t.rfind(marker):]
+                and "NOVA_RAW128_OPEN: phase=pre_probe" in t[t.rfind(marker):]
+                and "NOVA_STARTUP_TRACE first_frame_sink" in t[t.rfind(marker):]
+            ),
             95,
             fmt + " WebDAV weak-network first rendered frame",
         )
@@ -155,9 +181,11 @@ def test_one(fmt, root, report_dir):
             raise RuntimeError(fmt + " crashed despite a first-frame marker")
         with lock:
             snapshot = list(requests)
+            all_snapshot = list(all_requests)
             fault_counts = dict(faults)
         if fault_counts != {"probe_503": 1, "short_body": 1}:
-            raise RuntimeError(fmt + " faults not both exercised: " + str(fault_counts))
+            raise RuntimeError(fmt + " faults not both exercised: " + str(fault_counts)
+                               + " all_requests=" + repr(all_snapshot[:16]))
         if len(snapshot) < 3:
             raise RuntimeError(fmt + " did not generate recovery reads")
         result = {
@@ -177,6 +205,10 @@ def test_one(fmt, root, report_dir):
         print("WEAKNET_WEBDAV_FORMAT_PASS " + json.dumps(result))
         return result
     finally:
+        with lock:
+            (report_dir / ("weaknet-" + fmt + "-request-debug.json")).write_text(
+                json.dumps({"faults": faults, "valid_requests": requests,
+                            "all_requests": all_requests}, indent=2) + "\n")
         try:
             (report_dir / ("weaknet-" + fmt + "-last-logcat.txt")).write_text(logs())
         except Exception:
