@@ -27,11 +27,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep dependency setup isolated from direct-transport acceptance logic.
-          echo 'CI preflight: apt update (max 120s)'
-          timeout 120s sudo apt-get update -qq
-          echo 'CI preflight: apt install (max 120s)'
-          timeout 120s sudo apt-get install -y -qq zstd git make maven build-essential wget curl unzip pkg-config meson ninja-build ffmpeg
+          # Install only tools missing from the runner to avoid apt stalls.
+          missing=()
+          for spec in zstd:zstd git:git make:make mvn:maven cc:build-essential wget:wget curl:curl unzip:unzip pkg-config:pkg-config meson:meson ninja:ninja-build ffmpeg:ffmpeg; do
+            bin="${spec%%:*}"
+            pkg="${spec#*:}"
+            if ! command -v "$bin" >/dev/null 2>&1; then
+              missing+=("$pkg")
+            fi
+          done
+          if ((${#missing[@]} > 0)); then
+            printf "CI preflight: missing packages: %s\n" "${missing[*]}"
+            timeout 120s sudo apt-get update -qq
+            timeout 240s sudo apt-get install -y -qq --no-install-recommends "${missing[@]}"
+          else
+            echo 'CI preflight: required build tools are already installed'
+          fi
           mkdir -p inputs dist tools work reports
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
