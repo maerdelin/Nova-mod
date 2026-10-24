@@ -30,9 +30,9 @@ def main():
     path=root/"Source/stream_video.c"
     text=path.read_text()
     text=one(text,
-       "            s->player( s );\n",
-       "            __atomic_fetch_add(&s->nova_seek_engine_loops, 1, __ATOMIC_RELAXED);\n"
-       "            s->player( s );\n",
+       "\t\t\t\ts->player( s );\n",
+       "\t\t\t\t__atomic_fetch_add(&s->nova_seek_engine_loops, 1, __ATOMIC_RELAXED);\n"
+       "\t\t\t\ts->player( s );\n",
        "count engine dispatches")
     # Install beside the 1Hz heartbeat, not inside any player/codec loop.
     needle="        __atomic_load_n(&s->nova_diag_drop_late, __ATOMIC_RELAXED));\n"
