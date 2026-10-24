@@ -314,7 +314,7 @@ WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakSt
     return v0
 .end method
 
-.method public static start(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;)V
+.method public static maybeStart(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;)Z
     .locals 5
     if-eqz p1, :normal
     invoke-virtual {p1}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
@@ -336,13 +336,23 @@ WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakSt
     new-instance v0, Ljava/lang/Thread;
     invoke-direct {v0, v4}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;)V
     invoke-virtual {v0}, Ljava/lang/Thread;->start()V
-    return-void
+    const/4 v0, 0x1
+    return v0
     :normal
-    # Opening a local or unrelated source invalidates any pending WebDAV job.
+    # A resolved URI must KEEP its newly opened native session.
+    if-eqz p1, :cancel_previous
+    invoke-virtual {p1}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    move-result-object v0
+    if-eqz v0, :cancel_previous
+    const-string v1, "novatransport"
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-nez v2, :continue_normal
+    :cancel_previous
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V
+    :continue_normal
     const/4 v0, 0x0
-    invoke-virtual {p0, p1, v0}, Lcom/archos/mediacenter/video/player/Player;->setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V
-    return-void
+    return v0
 .end method
 
 .method public run()V
@@ -639,7 +649,47 @@ def patch_player(text):
          "(Landroid/content/Context;Z)Lcom/archos/medialib/IMediaPlayer;")
     if text.count(old)!=1:
         raise RuntimeError("player factory anchor changed")
-    return text.replace(old,new,1)
+    return patch_player_uri_gate(text.replace(old,new,1))
+
+
+def patch_player_uri_gate(text):
+    """Gate WebDAV at the verified Player.setVideoURI entry point.
+
+    This is independent of how the current upstream APK compiles
+    PlayerService.onStreamingUriOK(). The remote job runs on a worker and
+    reenters setVideoURI with the resolved novatransport:// URL on UI.
+    """
+    targets=[m for m in METHOD_RE.finditer(text)
+             if m.group(0).splitlines()[0].startswith(
+                 ".method public setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V")]
+    if len(targets)!=1:
+        raise RuntimeError("Player.setVideoURI weak-start gate ambiguous")
+    m=targets[0]
+    lines=m.group(0).splitlines()
+    ri=next(i for i,l in enumerate(lines)
+            if l.strip().startswith((".locals ", ".registers ")))
+    method_declaration=lines[ri].strip()
+    if method_declaration.startswith(".locals "):
+        old_locals=int(method_declaration.split()[1])
+        lines[ri]="    .locals "+str(old_locals+1)
+    else:
+        old_registers=int(method_declaration.split()[1])
+        # instance method p0 + Uri p1 + Map p2: exactly 3 parameter words
+        if old_registers < 3:
+            raise RuntimeError("Invalid Player.setVideoURI register count")
+        old_locals=old_registers-3
+        lines[ri]="    .registers "+str(old_registers+1)
+    tmp=f"v{old_locals}"
+    lines[ri+1:ri+1]=[
+        "",
+        "    # NOVA_WEAK_START: do not run network/ISO scan synchronously on UI.",
+        "    invoke-static/range {p0 .. p1}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->maybeStart(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;)Z",
+        f"    move-result {tmp}",
+        f"    if-eqz {tmp}, :nova_weak_start_sync",
+        "    return-void",
+        "    :nova_weak_start_sync",
+    ]
+    return text[:m.start()]+"\n".join(lines)+text[m.end():]
 
 
 def patch_service_async_start(text):
@@ -829,7 +879,7 @@ def main():
     player=one(root.glob("smali*/com/archos/mediacenter/video/player/Player.smali"),"Player")
     player.write_text(patch_player(player.read_text()))
     service=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerService.smali"),"PlayerService")
-    service.write_text(patch_service_async_start(patch_service(service.read_text())))
+    service.write_text(patch_service(service.read_text()))
     activity=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity.smali"),"PlayerActivity")
     activity_text=patch_activity_back(activity.read_text())
     activity.write_text(patch_activity_stop(activity_text))
