@@ -31,10 +31,11 @@ def change(path, edits):
 
 PRIVATE = r'''
     /* NOVA_SYNC_TRACE_V2: per-decoder, observational state only. */
-    int nova_trace_start_ms;
-    int nova_trace_last_put_ms;
-    int nova_trace_last_renderer_ms;
-    int nova_trace_last_late_ms;
+    INT64 nova_trace_start_ms;
+    INT64 nova_trace_last_put_ms;
+    INT64 nova_trace_last_renderer_ms;
+    INT64 nova_trace_last_late_ms;
+    int nova_trace_boot_logged;
     int nova_trace_consecutive_late;
     int nova_trace_late_epoch;
     int nova_trace_correction_logs;
@@ -45,7 +46,7 @@ PUT_SNAPSHOT = r'''
     INT64 nova_trace_old_offset = p->render_offset_ns;
     int nova_trace_old_from_audio = p->render_offset_from_audio;
     if (!p->nova_trace_start_ms)
-        p->nova_trace_start_ms = (int)atime64();
+        p->nova_trace_start_ms = atime64();
 '''
 
 PUT_LOG = r'''
@@ -58,7 +59,7 @@ PUT_LOG = r'''
          (nova_trace_old_offset != p->render_offset_ns &&
           (p->render_offset_ns == -1 ||
            llabs(p->render_offset_ns - nova_trace_old_offset) >= 25000000LL)))) {
-        p->nova_trace_last_put_ms = (int)now_ms;
+        p->nova_trace_last_put_ms = now_ms;
         serprintf("NOVA_SYNC_PUT: wallMs=%lld elapsedMs=%lld epoch=%d putMs=%d audioMs=%d videoMs=%d diffMs=%lld threshMs=%d grace=%d disc=%d hard=%d reanchor=%d speedChanged=%d passthrough=%d oldOffNs=%lld newOffNs=%lld targetOffNs=%lld oldFromAudio=%d fromAudio=%d pending=%d seekPending=%d slew=%d pcmStartupSlew=%d pcmSeekSlew=%d pcmResumeSlew=%d pcmLatencyUs=%d startupCorrectionPending=%d lastDelayMs=%d lastDelayValid=%d speed=%.3f renderGen=%u\n",
             (long long)now_ms, (long long)(now_ms - p->nova_trace_start_ms),
             s->seek_epoch, time, s->audio_time, s->video_time, (long long)diff,
@@ -76,10 +77,12 @@ PUT_LOG = r'''
 '''
 
 BOOT_LOG = r'''
-            if (p->nova_trace_start_ms == 0) {
-                p->nova_trace_start_ms = (int)atime64();
-                serprintf("NOVA_SYNC_BOOT: wallMs=%d epoch=%d firstFrameMs=%d audioMs=%d videoMs=%d putMs=%d offsetNs=%lld\n",
-                    p->nova_trace_start_ms, s ? s->seek_epoch : -1,
+            if (f && !p->nova_trace_boot_logged) {
+                p->nova_trace_boot_logged = 1;
+                if (!p->nova_trace_start_ms)
+                    p->nova_trace_start_ms = atime64();
+                serprintf("NOVA_SYNC_BOOT: wallMs=%lld epoch=%d firstFrameMs=%d audioMs=%d videoMs=%d putMs=%d offsetNs=%lld\n",
+                    (long long)p->nova_trace_start_ms, s ? s->seek_epoch : -1,
                     f->time, s ? s->audio_time : -1,
                     s ? s->video_time : -1, p->venc_put_time,
                     (long long)p->render_offset_ns);
@@ -89,16 +92,16 @@ BOOT_LOG = r'''
 RENDER_CLOCK_LOG = r'''
             /* Observe finalized video deadline inputs, without querying
              * AudioTrack, shifting anchors, or waiting on another mutex. */
-            int nova_trace_now_ms = (int)(now_ns / NSEC_PER_MSEC);
+            INT64 nova_trace_now_ms = now_ns / NSEC_PER_MSEC;
             if (s && p->nova_trace_start_ms > 0 &&
                 (int)atime64() - p->nova_trace_start_ms <= 180000 &&
                 (p->nova_trace_last_renderer_ms == 0 ||
                  (int)atime64() - p->nova_trace_last_renderer_ms >= 1000)) {
-                p->nova_trace_last_renderer_ms = (int)atime64();
-                serprintf("NOVA_SYNC_RENDER_CLOCK: wallMs=%d epoch=%d frameMs=%d audioMs=%d videoMs=%d putMs=%d putRefMs=%lld nowMonoMs=%d offsetNs=%lld targetNs=%lld offsetFromAudio=%d pending=%d seekPending=%d slew=%d pcmSlew=%d pcmSeekSlew=%d mode2Active=%d passthrough=%d lastDelayMs=%d lastDelayValid=%d startupCorrectionPending=%d renderSeq=%llu lateStreak=%d\n",
-                    p->nova_trace_last_renderer_ms, s->seek_epoch, f->time,
+                p->nova_trace_last_renderer_ms = atime64();
+                serprintf("NOVA_SYNC_RENDER_CLOCK: wallMs=%lld epoch=%d frameMs=%d audioMs=%d videoMs=%d putMs=%d putRefMs=%lld nowMonoMs=%lld offsetNs=%lld targetNs=%lld offsetFromAudio=%d pending=%d seekPending=%d slew=%d pcmSlew=%d pcmSeekSlew=%d mode2Active=%d passthrough=%d lastDelayMs=%d lastDelayValid=%d startupCorrectionPending=%d renderSeq=%llu lateStreak=%d\n",
+                    (long long)p->nova_trace_last_renderer_ms, s->seek_epoch, f->time,
                     s->audio_time, s->video_time, p->venc_put_time,
-                    (long long)p->venc_ref_time, nova_trace_now_ms,
+                    (long long)p->venc_ref_time, (long long)nova_trace_now_ms,
                     (long long)p->render_offset_ns,
                     (long long)p->target_offset_ns,
                     p->render_offset_from_audio,
@@ -133,13 +136,13 @@ LATE_LOG = r'''
                         p->nova_trace_last_late_ms = 0;
                     }
                     ++p->nova_trace_consecutive_late;
-                    int trace_wall_ms = (int)atime64();
+                    INT64 trace_wall_ms = atime64();
                     if (p->nova_trace_consecutive_late <= 3 ||
                         p->nova_trace_last_late_ms == 0 ||
                         trace_wall_ms - p->nova_trace_last_late_ms >= 1000) {
                         p->nova_trace_last_late_ms = trace_wall_ms;
-                        serprintf("NOVA_SYNC_LATE: wallMs=%d epoch=%d streak=%d frameMs=%d audioMs=%d videoMs=%d latenessMs=%lld nowNs=%lld deadlineNs=%lld offsetNs=%lld targetNs=%lld fromAudio=%d pending=%d seekPending=%d slew=%d pcmSlew=%d renderGen=%d putMs=%d putRefMs=%lld cadenceUs=%lld lastRenderSeq=%llu\n",
-                            trace_wall_ms, f->epoch, p->nova_trace_consecutive_late,
+                        serprintf("NOVA_SYNC_LATE: wallMs=%lld epoch=%d streak=%d frameMs=%d audioMs=%d videoMs=%d latenessMs=%lld nowNs=%lld deadlineNs=%lld offsetNs=%lld targetNs=%lld fromAudio=%d pending=%d seekPending=%d slew=%d pcmSlew=%d renderGen=%d putMs=%d putRefMs=%lld cadenceUs=%lld lastRenderSeq=%llu\n",
+                            (long long)trace_wall_ms, f->epoch, p->nova_trace_consecutive_late,
                             f->time, s->audio_time, s->video_time,
                             (long long)(lateness_ns / NSEC_PER_MSEC),
                             (long long)now_ns, (long long)render_ts_ns,
@@ -184,7 +187,7 @@ CORRECTION_LOG = r'''
             s->pcm_startup_correction_pending, p->render_offset_from_audio,
             (long long)p->render_offset_ns, (long long)p->target_offset_ns,
             s->audio_speed_diag_epoch, s->pcm_startup_correction_seek_epoch,
-            (double)audio_interface_get_audio_speed());
+            s->video_speed_den ? (double)s->video_speed_num / s->video_speed_den : 0.0);
     }
 '''
 
