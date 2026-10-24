@@ -338,6 +338,8 @@ WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakSt
     invoke-virtual {v0}, Ljava/lang/Thread;->start()V
     return-void
     :normal
+    # Opening a local or unrelated source invalidates any pending WebDAV job.
+    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->close()V
     const/4 v0, 0x0
     invoke-virtual {p0, p1, v0}, Lcom/archos/mediacenter/video/player/Player;->setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V
     return-void
