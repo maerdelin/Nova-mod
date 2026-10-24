@@ -24,6 +24,8 @@
  * This is used ONLY before playback. The working RAW128 pipeline is untouched. */
 #define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
+#define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
+#define NOVA_WEAK_RETRY_MAX_DELAY_MS 3000
 
 typedef struct nova_iso_meta_page {
     int64_t start;
@@ -58,6 +60,9 @@ typedef struct nova_session {
     uint64_t duration_us;
     uint32_t clip_count;
     int iso_meta_active;
+    int iso_meta_degraded;
+    char *upstream_url;
+    char *upstream_headers;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
     uint64_t iso_meta_tick;
     uint64_t iso_meta_reads;
@@ -68,6 +73,7 @@ typedef struct nova_session {
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static nova_session *g_session = NULL;
+static nova_session *g_opening_session = NULL;
 static uint64_t g_generation = 0;
 
 static int transport_interrupt(void *opaque)
@@ -86,6 +92,185 @@ static int read_exact(AVIOContext *io, uint8_t *dst, int bytes)
         done += got;
     }
     return done;
+}
+
+
+/* The direct transport is seekable. A failed HTTP range is not a missing UDF
+ * block: reopen and retry that exact byte offset, keeping prior cache pages.
+ * Only explicit close/abort and permanent HTTP/format errors end this wait. */
+static int nova_weak_terminal_error(int rc)
+{
+    return rc == AVERROR_HTTP_BAD_REQUEST ||
+           rc == AVERROR_HTTP_UNAUTHORIZED ||
+           rc == AVERROR_HTTP_FORBIDDEN ||
+           rc == AVERROR_HTTP_NOT_FOUND ||
+           rc == AVERROR(EACCES) || rc == AVERROR(ENOENT) ||
+           rc == AVERROR(EINVAL) || rc == AVERROR(ENOSYS);
+}
+
+static void nova_weak_backoff(nova_session *s, unsigned failures)
+{
+    int ms = 250;
+    for (unsigned i = 1; i < failures && ms < NOVA_WEAK_RETRY_MAX_DELAY_MS; ++i)
+        ms = ms > NOVA_WEAK_RETRY_MAX_DELAY_MS / 2
+            ? NOVA_WEAK_RETRY_MAX_DELAY_MS : ms * 2;
+    while (ms > 0 && !s->stopping) {
+        int step = ms > 100 ? 100 : ms;
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = step * 1000000L };
+        nanosleep(&ts, NULL);
+        ms -= step;
+    }
+}
+
+static int nova_upstream_connect(nova_session *s)
+{
+    if (s->stopping)
+        return AVERROR_EXIT;
+    AVIOContext *fresh = NULL;
+    AVDictionary *opts = NULL;
+    if (s->upstream_headers && *s->upstream_headers)
+        av_dict_set(&opts, "headers", s->upstream_headers, 0);
+    av_dict_set(&opts, "reconnect", "1", 0);
+    av_dict_set(&opts, "reconnect_streamed", "1", 0);
+    av_dict_set(&opts, "reconnect_at_eof", "0", 0);
+    av_dict_set(&opts, "reconnect_delay_max", "3", 0);
+    av_dict_set(&opts, "rw_timeout", "15000000", 0);
+    AVIOInterruptCB cb = { .callback = transport_interrupt, .opaque = s };
+    int rc = avio_open2(&fresh, s->upstream_url, AVIO_FLAG_READ, &cb, &opts);
+    av_dict_free(&opts);
+    if (rc < 0 || !fresh) {
+        if (fresh)
+            avio_closep(&fresh);
+        return rc < 0 ? rc : AVERROR(EIO);
+    }
+    if (s->upstream)
+        avio_closep(&s->upstream);
+    s->upstream = fresh;
+    s->upstream_pos = 0;
+    return 0;
+}
+
+static void nova_upstream_drop(nova_session *s)
+{
+    if (s->upstream)
+        avio_closep(&s->upstream);
+    s->upstream_pos = -1;
+}
+
+static int nova_upstream_open_until_ready(nova_session *s)
+{
+    unsigned failures = 0;
+    while (!s->stopping) {
+        int rc = nova_upstream_connect(s);
+        if (rc >= 0) {
+            int64_t size = avio_size(s->upstream);
+            int64_t origin = size > 0 ? avio_seek(s->upstream, 0, SEEK_SET) : -1;
+            if (size > 0 && origin == 0) {
+                s->upstream_size = size;
+                s->upstream_pos = 0;
+                return 0;
+            }
+            rc = origin < 0 ? (int)origin : AVERROR(EIO);
+        }
+        if (nova_weak_terminal_error(rc)) {
+            LOGE("NOVA_WEAKNET_TERMINAL phase=open rc=%d", rc);
+            return -1;
+        }
+        ++failures;
+        LOGI("NOVA_WEAKNET_RETRY phase=open count=%u rc=%d", failures, rc);
+        nova_upstream_drop(s);
+        nova_weak_backoff(s, failures);
+    }
+    return -1;
+}
+
+static int nova_upstream_seek_retry(nova_session *s, int64_t target)
+{
+    unsigned failures = 0;
+    while (!s->stopping) {
+        if (!s->upstream) {
+            int rc = nova_upstream_connect(s);
+            if (rc < 0) {
+                if (nova_weak_terminal_error(rc))
+                    return -1;
+                ++failures;
+                LOGI("NOVA_WEAKNET_RETRY phase=reconnect count=%u rc=%d at=%" PRId64,
+                     failures, rc, target);
+                nova_weak_backoff(s, failures);
+                continue;
+            }
+        }
+        if (s->upstream_pos == target)
+            return 0;
+        int64_t moved = avio_seek(s->upstream, target, SEEK_SET);
+        if (moved == target) {
+            s->upstream_pos = moved;
+            return 0;
+        }
+        if (moved < 0 && nova_weak_terminal_error((int)moved))
+            return -1;
+        ++failures;
+        LOGI("NOVA_WEAKNET_RETRY phase=seek count=%u at=%" PRId64 " result=%" PRId64,
+             failures, target, moved);
+        nova_upstream_drop(s);
+        nova_weak_backoff(s, failures);
+    }
+    return -1;
+}
+
+static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
+                                          int64_t offset, int bytes)
+{
+    if (bytes <= 0 || offset < 0 ||
+        s->upstream_size <= 0 || offset > s->upstream_size ||
+        bytes > s->upstream_size - offset)
+        return -1;
+    int done = 0;
+    unsigned failures = 0;
+    while (!s->stopping && done < bytes) {
+        if (nova_upstream_seek_retry(s, offset + done) < 0)
+            return -1;
+        int got = avio_read(s->upstream, dst + done, bytes - done);
+        if (got > 0) {
+            done += got;
+            s->upstream_pos += got;
+            failures = 0;
+            continue;
+        }
+        if (got < 0 && nova_weak_terminal_error(got))
+            return -1;
+        ++failures;
+        LOGI("NOVA_WEAKNET_RETRY phase=iso_read count=%u at=%" PRId64
+             " remaining=%d rc=%d", failures, offset + done, bytes - done, got);
+        nova_upstream_drop(s);
+        nova_weak_backoff(s, failures);
+    }
+    return done == bytes ? done : -1;
+}
+
+static int nova_upstream_read_some_retry(nova_session *s, uint8_t *dst, int bytes)
+{
+    unsigned failures = 0;
+    while (!s->stopping) {
+        if (s->upstream_size > 0 && s->upstream_pos >= s->upstream_size)
+            return AVERROR_EOF;
+        int64_t at = s->upstream_pos;
+        if (at < 0 || nova_upstream_seek_retry(s, at) < 0)
+            return AVERROR(EIO);
+        int got = avio_read(s->upstream, dst, bytes);
+        if (got > 0) {
+            s->upstream_pos += got;
+            return got;
+        }
+        if (got < 0 && nova_weak_terminal_error(got))
+            return got;
+        ++failures;
+        LOGI("NOVA_WEAKNET_RETRY phase=file_read count=%u at=%" PRId64
+             " rc=%d", failures, at, got);
+        nova_upstream_drop(s);
+        nova_weak_backoff(s, failures);
+    }
+    return AVERROR_EXIT;
 }
 
 /* ISO_META_CACHE_BEGIN
@@ -112,12 +297,15 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
     int copied = 0;
     while (copied < bytes) {
         int64_t pos = start + copied;
-        int64_t aligned = pos & ~((int64_t)NOVA_ISO_META_PAGE_BYTES - 1);
+        int page_bytes = s->iso_meta_degraded ? NOVA_ISO_WEAK_PAGE_BYTES
+                                               : NOVA_ISO_META_PAGE_BYTES;
+        int64_t aligned = pos & ~((int64_t)page_bytes - 1);
         int hit = -1, first_free = -1, lru = -1;
         uint64_t oldest = UINT64_MAX;
         for (int i = 0; i < NOVA_ISO_META_PAGE_COUNT; ++i) {
             nova_iso_meta_page *entry = &s->iso_meta_pages[i];
-            if (entry->data && entry->start == aligned && entry->length > 0) {
+            if (entry->data && entry->length > 0 &&
+                pos >= entry->start && pos - entry->start < entry->length) {
                 hit = i;
                 break;
             }
@@ -143,11 +331,16 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
             if (moved != aligned) return -1;
             s->upstream_pos = moved;
             int64_t remaining = s->upstream_size - aligned;
-            int request = (int)(remaining < NOVA_ISO_META_PAGE_BYTES ?
-                                remaining : NOVA_ISO_META_PAGE_BYTES);
+            int request = (int)(remaining < page_bytes ?
+                                remaining : page_bytes);
             int got = read_exact(s->upstream, entry->data, request);
-            if (got <= 0) return -1;
+            if (got <= 0) {
+                s->iso_meta_degraded = 1;
+                return -1;
+            }
             s->upstream_pos += got;
+            if (got < request)
+                s->iso_meta_degraded = 1;
             entry->start = aligned;
             entry->length = got;
             ++s->iso_meta_misses;
@@ -157,7 +350,10 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
         entry->touched = ++s->iso_meta_tick;
         int offset = (int)(pos - aligned);
         int available = entry->length - offset;
-        if (available <= 0) return -1;
+        if (available <= 0) {
+            s->iso_meta_degraded = 1;
+            return -1;
+        }
         int chunk = bytes - copied;
         if (chunk > available) chunk = available;
         memcpy(dst + copied, entry->data + offset, (size_t)chunk);
@@ -179,20 +375,14 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
         int blocks = nova_iso_meta_read(s, (uint8_t *)buf, target, bytes);
         if (blocks > 0)
             return blocks;
-        LOGI("ISO_META_CACHE: fallback_direct=1 start=%" PRId64, target);
-        nova_iso_meta_release(s);
+        LOGI("ISO_META_CACHE: fallback_direct=1 start=%" PRId64
+             " retain_pages=1 weak_page_bytes=%d", target, NOVA_ISO_WEAK_PAGE_BYTES);
+        s->iso_meta_degraded = 1;
     }
-    if (s->upstream_pos != target) {
-        int64_t pos = avio_seek(s->upstream, target, SEEK_SET);
-        if (pos < 0)
-            return -1;
-        s->upstream_pos = pos;
-    }
-    int got = read_exact(s->upstream, (uint8_t *)buf, bytes);
-    if (got <= 0)
-        return -1;
-    s->upstream_pos += got;
-    return got / UDF_BLOCK;
+    /* Demand-read only the requested UDF blocks, reconnecting at the exact
+     * byte offset after transient errors. Previously cached pages survive. */
+    int got = nova_upstream_read_exact_retry(s, (uint8_t *)buf, target, bytes);
+    return got == bytes ? num_blocks : -1;
 }
 
 static int select_main_title(nova_session *s)
@@ -269,7 +459,11 @@ static void session_free(nova_session *s)
 {
     if (!s)
         return;
+    pthread_mutex_lock(&g_lock);
+    if (g_opening_session == s)
+        g_opening_session = NULL;
     s->stopping = 1;
+    pthread_mutex_unlock(&g_lock);
     pthread_mutex_lock(&g_lock);
     while (s->active_calls > 0)
         pthread_cond_wait(&s->idle, &g_lock);
@@ -288,6 +482,8 @@ static void session_free(nova_session *s)
     pthread_mutex_unlock(&s->io_lock);
     pthread_mutex_destroy(&s->io_lock);
     pthread_cond_destroy(&s->idle);
+    free(s->upstream_url);
+    free(s->upstream_headers);
     free(s);
 }
 
@@ -304,34 +500,23 @@ static nova_session *session_create(const char *url, const char *headers, int is
     pthread_mutex_init(&s->io_lock, NULL);
     pthread_cond_init(&s->idle, NULL);
 
-    AVDictionary *opts = NULL;
-    if (headers && *headers)
-        av_dict_set(&opts, "headers", headers, 0);
-    av_dict_set(&opts, "reconnect", "1", 0);
-    av_dict_set(&opts, "reconnect_streamed", "1", 0);
-    av_dict_set(&opts, "reconnect_at_eof", "0", 0);
-    av_dict_set(&opts, "reconnect_delay_max", "3", 0);
-    av_dict_set(&opts, "rw_timeout", "15000000", 0);
-
-    AVIOInterruptCB cb = { .callback = transport_interrupt, .opaque = s };
-    int rc = avio_open2(&s->upstream, url, AVIO_FLAG_READ, &cb, &opts);
-    av_dict_free(&opts);
-    if (rc < 0 || !s->upstream) {
-        char err[128] = {0};
-        av_strerror(rc, err, sizeof(err));
-        LOGE("UPSTREAM_OPEN_FAIL rc=%d err=%s", rc, err);
+    s->upstream_url = strdup(url);
+    s->upstream_headers = strdup(headers ? headers : "");
+    if (!s->upstream_url || !s->upstream_headers) {
         session_free(s);
         return NULL;
     }
-
-    s->upstream_size = avio_size(s->upstream);
-    int64_t origin = avio_seek(s->upstream, 0, SEEK_SET);
-    if (origin < 0) {
-        LOGE("UPSTREAM_SEEK0_FAIL rc=%" PRId64, origin);
+    /* Make an in-flight open cancellable by nativeClose, even before
+     * publication of g_session. A newer open invalidates the prior one. */
+    pthread_mutex_lock(&g_lock);
+    if (g_opening_session)
+        g_opening_session->stopping = 1;
+    g_opening_session = s;
+    pthread_mutex_unlock(&g_lock);
+    if (nova_upstream_open_until_ready(s) < 0) {
         session_free(s);
         return NULL;
     }
-    s->upstream_pos = origin;
     /* Temporary UDF scanning cache, OFF before first streaming byte. */
     if (iso && s->upstream_size > 0)
         s->iso_meta_active = 1;
@@ -400,9 +585,7 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
         if (ret == 0)
             ret = AVERROR_EOF;
     } else {
-        ret = avio_read(s->upstream, dst, size);
-        if (ret > 0)
-            s->upstream_pos += ret;
+        ret = nova_upstream_read_some_retry(s, dst, size);
     }
     pthread_mutex_unlock(&s->io_lock);
     session_release(s);
@@ -450,9 +633,16 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
                 }
             }
         } else {
-            ret = avio_seek(s->upstream, offset, whence);
-            if (ret >= 0)
-                s->upstream_pos = ret;
+            int64_t target = offset;
+            if (whence == SEEK_CUR)
+                target = s->upstream_pos + offset;
+            else if (whence == SEEK_END)
+                target = s->upstream_size + offset;
+            else if (whence != SEEK_SET)
+                target = -1;
+            if (target >= 0 && target <= s->upstream_size &&
+                nova_upstream_seek_retry(s, target) == 0)
+                ret = target;
         }
     }
     if (whence != AVSEEK_SIZE)
@@ -509,16 +699,18 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
     if (!fresh)
         return NULL;
 
+    char out[512];
     pthread_mutex_lock(&g_lock);
+    if (fresh->stopping || g_opening_session != fresh) {
+        pthread_mutex_unlock(&g_lock);
+        session_free(fresh);
+        return NULL;
+    }
+    g_opening_session = NULL;
     nova_session *old = g_session;
     fresh->generation = ++g_generation;
     g_session = fresh;
-    pthread_mutex_unlock(&g_lock);
-
-    if (old)
-        session_free(old);
-
-    char out[512];
+    /* Snapshot the new URI while it cannot be closed by another thread. */
     if (fresh->mode == NOVA_MODE_BLURAY_ISO) {
         snprintf(out, sizeof(out),
             "novatransport://%" PRIu64 "/main.m2ts?mpegts&nova_direct=1"
@@ -533,10 +725,15 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
             "&nova_generation=%" PRIu64 "&nova_source_size=%" PRIu64,
             fresh->generation, fresh->generation, fresh->output_size);
     }
+    const uint64_t ready_generation = fresh->generation;
+    const uint64_t ready_size = fresh->output_size;
+    const int ready_iso = fresh->mode == NOVA_MODE_BLURAY_ISO;
+    pthread_mutex_unlock(&g_lock);
+    if (old)
+        session_free(old);
 
     LOGI("OPEN_READY mode=%s generation=%" PRIu64 " size=%" PRIu64,
-         fresh->mode == NOVA_MODE_BLURAY_ISO ? "iso" : "file",
-         fresh->generation, fresh->output_size);
+         ready_iso ? "iso" : "file", ready_generation, ready_size);
     return (*env)->NewStringUTF(env, out);
 }
 
@@ -547,6 +744,10 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
 static void transport_close(uint64_t generation, int match_generation)
 {
     pthread_mutex_lock(&g_lock);
+    if (!match_generation && g_opening_session) {
+        g_opening_session->stopping = 1;
+        LOGI("NOVA_WEAKNET_CANCEL phase=pending_open");
+    }
     nova_session *old = g_session;
     if (old && (!match_generation ||
                 (generation > 0 && old->generation == generation))) {
