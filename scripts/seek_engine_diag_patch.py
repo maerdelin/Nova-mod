@@ -54,7 +54,7 @@ def main():
           frame_q_count(&s->codec_q));
 '''
     text=one(text,needle,needle+sample,"heartbeat addition")
-    assert text.count("NOVA_SEEK_ENGINE_DIAG_V1:") == 1
+    assert text.count('serprintf("NOVA_SEEK_ENGINE_DIAG_V1:') == 1
     path.write_text(text)
     print("NOVA_SEEK_ENGINE_DIAG_V1=INSTRUMENTED")
 
