@@ -30,9 +30,16 @@ def patch_transport(p):
         start=s.index("static int "+fn+"(")
         end=s.index(next_fn,start+len(fn))
         part=s[start:end]
-        old="while (!s->stopping)"
+        old=("while (!s->stopping && done < bytes)"
+             if fn=="nova_upstream_read_exact_retry"
+             else "while (!s->stopping)")
         if part.count(old)!=1: raise RuntimeError(fn+" retry anchor")
-        part=part.replace(old,"while (!s->stopping &&\n           !__atomic_load_n(&s->seek_preempt, __ATOMIC_ACQUIRE))",1)
+        new=("while (!s->stopping && done < bytes &&\n"
+             "           !__atomic_load_n(&s->seek_preempt, __ATOMIC_ACQUIRE))"
+             if fn=="nova_upstream_read_exact_retry" else
+             "while (!s->stopping &&\n"
+             "           !__atomic_load_n(&s->seek_preempt, __ATOMIC_ACQUIRE))")
+        part=part.replace(old,new,1)
         s=s[:start]+part+s[end:]
 
     exports=r'''
