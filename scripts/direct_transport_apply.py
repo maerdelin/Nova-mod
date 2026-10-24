@@ -363,7 +363,7 @@ WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakSt
     move-result-object v1
     iput-object v1, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mResolved:Landroid/net/Uri;
     :try_end
-    .catch Ljava/lang/RuntimeException; {:try_start .. :try_end} :retry_open
+    .catch Ljava/lang/Exception; {:try_start .. :try_end} :retry_open
     goto :post_main
     :retry_open
     move-exception v1
