@@ -51,7 +51,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
-          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py
+          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py
           echo 'CI preflight: apktool download (max 120s)'
           timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
@@ -92,6 +92,7 @@ jobs:
           python3 scripts/iso_seek_ui_patch.py --native native-src/native/avos --report reports/iso-timeline.json
           python3 scripts/av_diag_patch.py --native native-src/native/avos --report reports/av-diagnostics.json
           python3 scripts/startup_freeze_trace_patch.py --native native-src/native/avos --report reports/startup-freeze-trace.json
+          python3 scripts/final_freeze_forensics_patch.py --native native-src/native/avos --report reports/final-freeze-forensics.json
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
           # AVOS base/full differ only by which FFmpeg directory is linked; no
           # AVOS source feature macro depends on LIBAV_CONFIG. Alias the same
@@ -111,7 +112,7 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START; do
+              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q; do
                 if ! grep -aq "$trace" "$new"; then
                   echo "::error::Missing $trace instrumentation from $abi libavos.so"
                   exit 1
