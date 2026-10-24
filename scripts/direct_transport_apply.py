@@ -139,14 +139,20 @@ PROXY_RESOLVE = r'''
     # Already resolved on a background worker: never close/reopen it on UI.
     invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
     move-result-object v0
-    if-eqz v0, :check_force
+    if-eqz v0, :return_original
     const-string v1, "novatransport"
     invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
-    move-result v0
-    if-nez v0, :return_original
-    :check_force
-    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
-    if-eqz v0, :return_original
+    move-result v1
+    if-nez v1, :return_original
+    const-string v1, "webdav"
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v1
+    if-nez v1, :open_direct
+    const-string v1, "webdavs"
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v1
+    if-eqz v1, :return_original
+    :open_direct
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeClose()V
     invoke-static {p0}, Lcom/archos/filecorelibrary/webdav/WebdavFile2;->uriToHttp(Landroid/net/Uri;)Landroid/net/Uri;
     move-result-object v1
