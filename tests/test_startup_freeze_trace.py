@@ -44,7 +44,7 @@ class StartupFreezeTraceTests(unittest.TestCase):
         self.assertIn("p->nova_trace_correction_logs < 48", trace.CORRECTION_LOG)
         self.assertIn("oldOffNs=%lld", trace.PUT_LOG)
         self.assertIn("newOffNs=%lld", trace.PUT_LOG)
-        self.assertIn("threshold", trace.PUT_LOG.lower())
+        self.assertIn("threshMs=", trace.PUT_LOG)
         self.assertIn("offsetNs=%lld", trace.LATE_LOG)
         self.assertIn("deadlineNs=%lld", trace.LATE_LOG)
 
