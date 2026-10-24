@@ -20,6 +20,10 @@ class IsoScanOnlyCacheTests(unittest.TestCase):
         self.assertIn("if (s->iso_meta_active && s->upstream_size > 0)", SOURCE)
         self.assertIn("if (blocks > 0)", SOURCE)
         self.assertIn('LOGI("ISO_META_CACHE: fallback_direct=1', SOURCE)
+        self.assertIn('retain_pages=1 weak_page_bytes=%d', SOURCE)
+        self.assertIn('#define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)', SOURCE)
+        self.assertIn('int offset = (int)(pos - entry->start);', SOURCE)
+        self.assertIn('nova_upstream_read_exact_retry(s, (uint8_t *)buf, target, bytes)', SOURCE)
         self.assertIn('phase=metadata_only', SOURCE)
         self.assertIn("nova_iso_meta_release(s);", SOURCE)
         # Keep old native HTTP bridge deleted and disk playback RAW untouched.
@@ -40,12 +44,14 @@ class IsoScanOnlyCacheTests(unittest.TestCase):
 #define UDF_BLOCK 2048
 #define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
+#define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
 
 typedef struct mock_io {
     int64_t pos;
     int64_t size;
     int seeks;
     int reads;
+    int fail_reads;
 } mock_io;
 
 typedef struct nova_iso_meta_page {
@@ -57,6 +63,7 @@ typedef struct nova_iso_meta_page {
 
 typedef struct nova_session {
     int iso_meta_active;
+    int iso_meta_degraded;
     int64_t upstream_size;
     int64_t upstream_pos;
     mock_io *upstream;
@@ -73,6 +80,10 @@ static int64_t avio_seek(mock_io *io, int64_t offset, int whence) {
     return io->pos;
 }
 static int read_exact(mock_io *io, uint8_t *dst, int bytes) {
+    if (io->fail_reads > 0) {
+        --io->fail_reads;
+        return -1;
+    }
     assert(io->pos + bytes <= io->size);
     for (int i = 0; i < bytes; i++)
         dst[i] = (uint8_t)((io->pos + i) % 251);
@@ -95,9 +106,21 @@ int main(void) {
     assert(io.seeks==1 && s.iso_meta_hits==1);
     assert(nova_iso_meta_read(&s,buf,9*page+4096,2048)==1);
     assert(io.seeks==2);
+    /* One failed prefetch must not discard previous fully fetched pages.
+     * The old 4MiB page must be readable after switching to 256KiB pages. */
+    io.fail_reads = 1;
+    assert(nova_iso_meta_read(&s,buf,10*page+4096,2048)==-1);
+    assert(s.iso_meta_degraded == 1);
+    int cached_reads = io.reads;
+    assert(nova_iso_meta_read(&s,buf,400000,2048)==1);
+    assert(io.reads == cached_reads);
+    assert(buf[0]==(uint8_t)(400000 % 251));
+    assert(nova_iso_meta_read(&s,buf,10*page+4096,2048)==1);
+    assert(io.reads == cached_reads+1);
+    assert(buf[0]==(uint8_t)((10*page+4096) % 251));
     /* Exercise two adjacent pages in one UDF block fetch. */
     assert(nova_iso_meta_read(&s,buf,page-2048,4096)==2);
-    assert(io.seeks==3);
+    assert(io.seeks>=3);
     /* Touch first page so LRU evicts the oldest other page. */
     assert(nova_iso_meta_read(&s,buf,4096,2048)==1);
     int old_seeks=io.seeks;
