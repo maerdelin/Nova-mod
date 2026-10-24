@@ -225,7 +225,20 @@ PROXY_RESOLVE = r'''
     :no_final_auth
     const-string v3, ""
     :native_open
-    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
+    # Avoid races with another pending source changing global sIso.
+    invoke-virtual {p0}, Landroid/net/Uri;->getPath()Ljava/lang/String;
+    move-result-object v0
+    if-eqz v0, :native_not_iso
+    sget-object v13, Ljava/util/Locale;->ROOT:Ljava/util/Locale;
+    invoke-virtual {v0, v13}, Ljava/lang/String;->toLowerCase(Ljava/util/Locale;)Ljava/lang/String;
+    move-result-object v0
+    const-string v13, ".iso"
+    invoke-virtual {v0, v13}, Ljava/lang/String;->endsWith(Ljava/lang/String;)Z
+    move-result v0
+    goto :native_iso_ready
+    :native_not_iso
+    const/4 v0, 0x0
+    :native_iso_ready
     invoke-static {v2, v3, v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
     move-result-object v2
     if-eqz v2, :fail
