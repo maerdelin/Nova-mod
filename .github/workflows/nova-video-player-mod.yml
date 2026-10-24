@@ -51,7 +51,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
-          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py
+          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/iso_index_seek_patch.py
           echo 'CI preflight: apktool download (max 120s)'
           timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
@@ -95,6 +95,7 @@ jobs:
           python3 scripts/final_freeze_forensics_patch.py --native native-src/native/avos --report reports/final-freeze-forensics.json
           python3 scripts/pgs_history_bypass_ab_patch.py --native native-src/native/avos --report reports/pgs-history-bypass-ab.json
           python3 scripts/mp4_seek_slow_read_grace_patch.py --native native-src/native/avos --report reports/mp4-seek-slow-read-grace.json
+          python3 scripts/iso_index_seek_patch.py --native native-src/native/avos --transport iso/nova_transport.c
           grep -Fq 'NOVA_MP4_SEEK_SLOW_READ_GRACE_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_PGS_HISTORY_BYPASS_AB_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
