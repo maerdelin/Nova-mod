@@ -43,17 +43,31 @@ def seek_action_result(text, marker, direction):
     if (direction > 0 and target <= prior) or (direction < 0 and target >= prior):
         return None
     tail = phase[m.end():]
+    # A locally retained RAW128 history hit is a valid seek too. Verify
+    # the exact cache position transition and resumed decoding afterward.
     raw = re.search(r'NOVA_RAW128_SEEK: target=(\d+) result=(-?\d+) generation=(\d+)', tail)
-    if not raw or raw[1] != raw[2]:
+    cached = re.search(
+        r'NOVA_RAW_CACHE_SEEK_V1: from=(\d+) to=(\d+) move=(-?\d+) history=(\d+) unread=(\d+)', tail)
+    if cached and (not raw or cached.start() < raw.start()):
+        if int(cached[2]) - int(cached[1]) != int(cached[3]):
+            return None
+        mode = 'cache'
+        raw_generation = -1
+        post = tail[cached.end():]
+    elif raw and raw[1] == raw[2]:
+        mode = 'network'
+        raw_generation = int(raw[3])
+        post = tail[raw.end():]
+    else:
         return None
-    post = tail[raw.end():]
     started = post.find('avos_mp_start:')
     if started < 0:
         return None
     consumed = [int(x) for x in re.findall(r'NOVA_RAW128: produced=\d+ consumed=(\d+)', post[started:])]
     if len(consumed) < 2 or consumed[-1] <= consumed[0]:
         return None
-    return {'from': prior, 'to': target, 'raw_generation': int(raw[3]),
+    return {'from': prior, 'to': target, 'raw_generation': raw_generation,
+            'mode': mode,
             'post_seek_consumed_delta': consumed[-1] - consumed[0]}
 
 
@@ -163,11 +177,14 @@ def main():
             if 'error opening parser' in final or 'moov atom not found' in final:
                 raise RuntimeError('MP4 parser failure after seek stress')
             raw_seek_count=final.count('NOVA_RAW128_SEEK:')
-            if raw_seek_count < 8:
-                raise RuntimeError('Too few RAW seeks observed: '+str(raw_seek_count))
+            cache_seek_count=final.count('NOVA_RAW_CACHE_SEEK_V1:')
+            if raw_seek_count + cache_seek_count < 8:
+                raise RuntimeError('Too few validated native seeks: network='+str(raw_seek_count)+
+                                   ' cached='+str(cache_seek_count))
             with lock:ranges=list(starts)
             report.update(status='PASS',size=size,seek_events=events,
-                          raw_seek_count=raw_seek_count,range_starts=ranges,
+                          raw_seek_count=raw_seek_count,cache_seek_count=cache_seek_count,
+                          range_starts=ranges,
                           player_alive=True)
             (a.reports/'mp4-raw-seek-race-logcat.txt').write_text(final)
             print('MP4_RAW_SEEK_RACE_SMOKE=PASS '+json.dumps(report))
