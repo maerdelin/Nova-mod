@@ -66,6 +66,14 @@ def seek_action_result(text, marker, direction):
     consumed = [int(x) for x in re.findall(r'NOVA_RAW128: produced=\d+ consumed=(\d+)', post[started:])]
     if len(consumed) < 2 or consumed[-1] <= consumed[0]:
         return None
+    # Real post-seek presentation, not merely a byte pointer / RAW movement.
+    # The renderer may be paused for buffering; the 20s test limit accounts
+    # for the existing unchanged 2X/5X refill contract.
+    renders = [int(v) for v in re.findall(r'NOVA_FINAL_HEARTBEAT:[^\n]* rendered=(\d+)', post[started:])]
+    if len(renders) < 2 or renders[-1] <= renders[0]:
+        return None
+    if 'NOVA_RAW_RETRY: error=-1414092869' in post[started:]:
+        return None
     return {'from': prior, 'to': target, 'raw_generation': raw_generation,
             'mode': mode,
             'post_seek_consumed_delta': consumed[-1] - consumed[0]}
@@ -178,6 +186,10 @@ def main():
                 raise RuntimeError('MP4 parser failure after seek stress')
             raw_seek_count=final.count('NOVA_RAW128_SEEK:')
             cache_seek_count=final.count('NOVA_RAW_CACHE_SEEK_V1:')
+            if 'NOVA_SEEK_SAFE_SERIAL_V2: seek_finish' not in final:
+                raise RuntimeError('Safe serialized seek did not execute; wrong APK?')
+            if 'NOVA_RAW_RETRY: error=-1414092869' in final:
+                raise RuntimeError('Seek cancellation poisoned AVIO: AVERROR_EXIT retry observed')
             if raw_seek_count + cache_seek_count < 8:
                 raise RuntimeError('Too few validated native seeks: network='+str(raw_seek_count)+
                                    ' cached='+str(cache_seek_count))
