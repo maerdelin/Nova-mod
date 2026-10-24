@@ -42,11 +42,11 @@ PRIVATE = r'''
 '''
 
 PUT_SNAPSHOT = r'''
-    /* Capture the pre-publication wall anchor; never alter its calculation. */
-    INT64 nova_trace_old_offset = p->render_offset_ns;
-    int nova_trace_old_from_audio = p->render_offset_from_audio;
-    if (!p->nova_trace_start_ms)
-        p->nova_trace_start_ms = atime64();
+	/* Capture the pre-publication wall anchor; never alter its calculation. */
+	INT64 nova_trace_old_offset = p->render_offset_ns;
+	int nova_trace_old_from_audio = p->render_offset_from_audio;
+	if (!p->nova_trace_start_ms)
+		p->nova_trace_start_ms = atime64();
 '''
 
 PUT_LOG = r'''
