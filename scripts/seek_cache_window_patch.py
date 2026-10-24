@@ -103,7 +103,7 @@ def main():
     s=rep(s,anchor,changed,"cached hit before network seek")
     # Guard against a copied ring producer reservation writing past previous
     # cached history: all modifications of valid range happen under raw mutex.
-    assert s.count('NOVA_RAW_CACHE_SEEK_V1')==2
+    assert s.count('NOVA_RAW_CACHE_SEEK_V1')==3
     path.write_text(s)
     print('NOVA_RAW_CACHE_SEEK_V1=PATCHED')
 
