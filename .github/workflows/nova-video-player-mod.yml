@@ -95,19 +95,14 @@ jobs:
           python3 scripts/final_freeze_forensics_patch.py --native native-src/native/avos --report reports/final-freeze-forensics.json
           python3 scripts/pgs_history_bypass_ab_patch.py --native native-src/native/avos --report reports/pgs-history-bypass-ab.json
           python3 scripts/mp4_seek_slow_read_grace_patch.py --native native-src/native/avos --report reports/mp4-seek-slow-read-grace.json
-          python3 scripts/seek_priority_patch.py --native native-src/native/avos --transport iso/nova_transport.c
-          python3 scripts/seek_cache_window_patch.py --native native-src/native/avos
-          python3 scripts/seek_safe_serial_v2_patch.py --native native-src/native/avos --transport iso/nova_transport.c
-          grep -Fq 'NOVA_SEEK_SAFE_SERIAL_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
-          python3 scripts/seek_video_index_patch.py --native native-src/native/avos
+          # Strictly revert unsafe Test-only seek experiments. Keep the
+          # proven RUN638 network/seek path and unchanged 2X/5X thresholds.
+          if grep -Eq 'seek_preempt|seek_pending|NOVA_RAW_CACHE_SEEK_V1|NOVA_FAST_VIDEO_INDEX_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c; then echo '::error::Experimental Seek path still present'; exit 1; fi
           python3 scripts/disable_all_subtitle_history_patch.py --native native-src/native/avos --report reports/all-subtitle-history-disabled.json
           python3 scripts/late_stall_self_heal_patch.py --native native-src/native/avos --report reports/late-render-recovery.json
           grep -Fq 'NOVA_SUB_HISTORY_DISABLED_ALL_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_LATE_STALL_SELF_HEAL_V1' native-src/native/avos/Source/codec_sfdec2.c
           if grep -Eq '_cache_subtitle_packet\(|_subtitle_recovery_point\(' native-src/native/avos/Source/stream_parser_ffmpeg.c; then echo '::error::History code still compiled'; exit 1; fi
-          grep -Fq 'NOVA_SEEK_PREEMPT_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
-          grep -Fq 'NOVA_RAW_CACHE_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
-          grep -Fq 'NOVA_FAST_VIDEO_INDEX_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_MP4_SEEK_SLOW_READ_GRACE_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
           # AVOS base/full differ only by which FFmpeg directory is linked; no
@@ -128,7 +123,7 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SEEK_PREEMPT_V1 NOVA_RAW_CACHE_SEEK_V1 NOVA_FAST_VIDEO_INDEX_SEEK_V1 NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_SAFE_SERIAL_V2; do
+              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1; do
                 if ! grep -aq "$trace" "$new"; then
                   echo "::error::Missing $trace instrumentation from $abi libavos.so"
                   exit 1
