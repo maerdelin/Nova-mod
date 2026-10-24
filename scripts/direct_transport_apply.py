@@ -71,7 +71,18 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
     const-string v3, "webdavs"
     invoke-virtual {v2, v3}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
     move-result v4
+    if-eqz v4, :remote
+    const-string v3, "novatransport"
+    invoke-virtual {v2, v3}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v4
     if-eqz v4, :store
+    const/4 v0, 0x1
+    invoke-virtual {p0}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-result-object v2
+    const-string v3, "&nova_iso=1&"
+    invoke-virtual {v2, v3}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
+    move-result v1
+    goto :store
     :remote
     const/4 v0, 0x1
     invoke-virtual {p0}, Landroid/net/Uri;->getPath()Ljava/lang/String;
@@ -114,6 +125,7 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
 
 .method public static declared-synchronized close()V
     .locals 0
+    invoke-static {}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->cancel()V
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeClose()V
     return-void
 .end method
@@ -121,9 +133,18 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
 
 
 PROXY_RESOLVE = r'''
-.method public static declared-synchronized resolve(Landroid/net/Uri;)Landroid/net/Uri;
+.method public static resolve(Landroid/net/Uri;)Landroid/net/Uri;
     .locals 14
     if-eqz p0, :return_original
+    # Already resolved on a background worker: never close/reopen it on UI.
+    invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    move-result-object v0
+    if-eqz v0, :check_force
+    const-string v1, "novatransport"
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v0
+    if-nez v0, :return_original
+    :check_force
     sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
     if-eqz v0, :return_original
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeClose()V
@@ -226,6 +247,141 @@ PROXY_RESOLVE = r'''
 .end method
 '''
 
+
+WEAK_START = r'''.class public final Lcom/archos/mediacenter/video/player/WeakStartProxy;
+.super Ljava/lang/Object;
+.implements Ljava/lang/Runnable;
+.source "WeakStartProxy.java"
+
+.field private static sGeneration:I
+.field private final mPlayer:Lcom/archos/mediacenter/video/player/Player;
+.field private final mSource:Landroid/net/Uri;
+.field private final mGeneration:I
+.field private mResolved:Landroid/net/Uri;
+
+.method private constructor <init>(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;I)V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    iput-object p1, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mPlayer:Lcom/archos/mediacenter/video/player/Player;
+    iput-object p2, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mSource:Landroid/net/Uri;
+    iput p3, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mGeneration:I
+    return-void
+.end method
+
+.method private static declared-synchronized next()I
+    .locals 1
+    sget v0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->sGeneration:I
+    add-int/lit8 v0, v0, 0x1
+    sput v0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->sGeneration:I
+    return v0
+.end method
+
+.method public static declared-synchronized cancel()V
+    .locals 1
+    sget v0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->sGeneration:I
+    add-int/lit8 v0, v0, 0x1
+    sput v0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->sGeneration:I
+    return-void
+.end method
+
+.method private static declared-synchronized current(I)Z
+    .locals 1
+    sget v0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->sGeneration:I
+    if-ne p0, v0, :stale
+    const/4 v0, 0x1
+    return v0
+    :stale
+    const/4 v0, 0x0
+    return v0
+.end method
+
+.method public static start(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;)V
+    .locals 5
+    if-eqz p1, :normal
+    invoke-virtual {p1}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    move-result-object v0
+    if-eqz v0, :normal
+    const-string v1, "webdav"
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-nez v2, :remote
+    const-string v1, "webdavs"
+    invoke-virtual {v0, v1}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+    move-result v2
+    if-eqz v2, :normal
+    :remote
+    invoke-static {}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->next()I
+    move-result v3
+    new-instance v4, Lcom/archos/mediacenter/video/player/WeakStartProxy;
+    invoke-direct {v4, p0, p1, v3}, Lcom/archos/mediacenter/video/player/WeakStartProxy;-><init>(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;I)V
+    new-instance v0, Ljava/lang/Thread;
+    invoke-direct {v0, v4}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;)V
+    invoke-virtual {v0}, Ljava/lang/Thread;->start()V
+    return-void
+    :normal
+    const/4 v0, 0x0
+    invoke-virtual {p0, p1, v0}, Lcom/archos/mediacenter/video/player/Player;->setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V
+    return-void
+.end method
+
+.method public run()V
+    .locals 6
+    invoke-static {}, Landroid/os/Looper;->myLooper()Landroid/os/Looper;
+    move-result-object v0
+    invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
+    move-result-object v1
+    if-eq v0, v1, :apply
+
+    iget v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mGeneration:I
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->current(I)Z
+    move-result v0
+    if-eqz v0, :done
+    iget-object v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mSource:Landroid/net/Uri;
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->armForUri(Landroid/net/Uri;)V
+    :try_start
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->resolve(Landroid/net/Uri;)Landroid/net/Uri;
+    move-result-object v1
+    iput-object v1, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mResolved:Landroid/net/Uri;
+    :try_end
+    .catch Ljava/lang/RuntimeException; {:try_start .. :try_end} :failed
+    goto :post_main
+    :failed
+    move-exception v1
+    const-string v2, "NOVA_WEAKNET"
+    const-string v3, "Network source could not be opened"
+    invoke-static {v2, v3, v1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+    move-result v2
+    :post_main
+    new-instance v0, Landroid/os/Handler;
+    invoke-static {}, Landroid/os/Looper;->getMainLooper()Landroid/os/Looper;
+    move-result-object v1
+    invoke-direct {v0, v1}, Landroid/os/Handler;-><init>(Landroid/os/Looper;)V
+    invoke-virtual {v0, p0}, Landroid/os/Handler;->post(Ljava/lang/Runnable;)Z
+    move-result v1
+    return-void
+
+    :apply
+    iget v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mGeneration:I
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/WeakStartProxy;->current(I)Z
+    move-result v0
+    if-eqz v0, :done
+    iget-object v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mResolved:Landroid/net/Uri;
+    if-eqz v0, :fail_main
+    iget-object v1, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mPlayer:Lcom/archos/mediacenter/video/player/Player;
+    const/4 v2, 0x0
+    invoke-virtual {v1, v0, v2}, Lcom/archos/mediacenter/video/player/Player;->setVideoURI(Landroid/net/Uri;Ljava/util/Map;)V
+    return-void
+    :fail_main
+    iget-object v0, p0, Lcom/archos/mediacenter/video/player/WeakStartProxy;->mPlayer:Lcom/archos/mediacenter/video/player/Player;
+    const/4 v1, 0x0
+    const/4 v2, 0x1
+    const/4 v3, 0x0
+    invoke-virtual {v0, v1, v2, v3, v1}, Lcom/archos/mediacenter/video/player/Player;->onError(Lcom/archos/medialib/IMediaPlayer;IILjava/lang/String;)Z
+    move-result v0
+    :done
+    return-void
+.end method
+'''
 
 FACTORY = r'''.class public final Lcom/archos/mediacenter/video/player/DirectPlayerFactory;
 .super Ljava/lang/Object;
@@ -456,6 +612,36 @@ def patch_player(text):
         raise RuntimeError("player factory anchor changed")
     return text.replace(old,new,1)
 
+
+def patch_service_async_start(text):
+    """Move WebDAV connection/ISO title scan off the Android main thread.
+
+    Only the already-existing initial setVideoURI(null headers) is rerouted.
+    Playback state, decoder setup, and normal non-WebDAV start stay on UI.
+    """
+    ms=[m for m in METHOD_RE.finditer(text)
+        if " onStreamingUriOK()V" in m.group(0).splitlines()[0]]
+    if len(ms)!=1:
+        raise RuntimeError("onStreamingUriOK missing")
+    m=ms[0]
+    body=m.group(0)
+    pattern=re.compile(
+        r'(?P<op>invoke-virtual) \{(?P<regs>[^}]+)\}, '
+        r'Lcom/archos/mediacenter/video/player/Player;->setVideoURI'
+        r'\(Landroid/net/Uri;Ljava/util/Map;\)V')
+    hits=list(pattern.finditer(body))
+    if len(hits)!=1:
+        raise RuntimeError("onStreamingUriOK initial video open ambiguous")
+    hit=hits[0]
+    regs=[part.strip() for part in hit.group("regs").split(",")]
+    if len(regs)!=3:
+        raise RuntimeError("onStreamingUriOK must pass Player, URI, null-map")
+    new=("invoke-static {"+regs[0]+", "+regs[1]+"}, "
+         "Lcom/archos/mediacenter/video/player/WeakStartProxy;->start"
+         "(Lcom/archos/mediacenter/video/player/Player;Landroid/net/Uri;)V")
+    body=body[:hit.start()]+new+body[hit.end():]
+    return text[:m.start()]+body+text[m.end():]
+
 def patch_service(text):
     wrapper=("Lcom/archos/mediacenter/video/player/DirectPlayerFactory;->seekTo"
              "(Lcom/archos/mediacenter/video/player/Player;I)V")
@@ -614,7 +800,7 @@ def main():
     player=one(root.glob("smali*/com/archos/mediacenter/video/player/Player.smali"),"Player")
     player.write_text(patch_player(player.read_text()))
     service=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerService.smali"),"PlayerService")
-    service.write_text(patch_service(service.read_text()))
+    service.write_text(patch_service_async_start(patch_service(service.read_text())))
     activity=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity.smali"),"PlayerActivity")
     activity_text=patch_activity_back(activity.read_text())
     activity.write_text(patch_activity_stop(activity_text))
@@ -626,6 +812,7 @@ def main():
     (smali_dir/"DirectTransportProxy.smali").write_text(PROXY_HEAD+PROXY_RESOLVE)
     (smali_dir/"DirectPlayerFactory.smali").write_text(FACTORY)
     (smali_dir/"DirectRedirectResolver.smali").write_text(REDIRECT_RESOLVER)
+    (smali_dir/"WeakStartProxy.smali").write_text(WEAK_START)
 
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
         src=args.native_root/abi/"libnova_transport.so"
