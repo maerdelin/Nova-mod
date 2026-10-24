@@ -11,26 +11,37 @@ RAW = '10-22 15:37:36.094 D avos_player: NOVA_RAW128_SEEK: target=4959941 result
 START = '10-22 15:37:36.362 D avos_player: avos_mp_start:\n'
 READ1 = '10-22 15:37:36.5 D avos_player: NOVA_RAW128: produced=35703238 consumed=27412218 eof=0\n'
 READ2 = '10-22 15:37:37.1 D avos_player: NOVA_RAW128: produced=51038662 consumed=42878714 eof=0\n'
+RENDER1 = '10-22 15:37:37.4 D avos_player: NOVA_FINAL_HEARTBEAT: rendered=89\n'
+RENDER2 = '10-22 15:37:38.4 D avos_player: NOVA_FINAL_HEARTBEAT: rendered=148\n'
 
 class SeekRaceEvidenceTests(unittest.TestCase):
     def test_run583_seek_progresses_without_optional_ui_timer(self):
-        event = seek_action_result(PREFIX + RAW + START + READ1 + READ2, 'M0', 1)
+        event = seek_action_result(PREFIX + RAW + START + READ1 + READ2 + RENDER1 + RENDER2, 'M0', 1)
         self.assertEqual((event['from'], event['to'], event['raw_generation']), (5366,10366,1))
         self.assertGreater(event['post_seek_consumed_delta'], 0)
     def test_old_or_missing_scope_cannot_pass(self):
-        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2, 'M1', 1))
-        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2 + '\nM1', 'M1', 1))
+        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2 + RENDER1 + RENDER2, 'M1', 1))
+        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2 + RENDER1 + RENDER2 + '\nM1', 'M1', 1))
     def test_seek_requires_native_seek_and_restart(self):
-        self.assertIsNone(seek_action_result(PREFIX + START + READ1 + READ2, 'M0', 1))
+        self.assertIsNone(seek_action_result(PREFIX + START + READ1 + READ2 + RENDER1 + RENDER2, 'M0', 1))
         self.assertIsNone(seek_action_result(PREFIX + RAW + READ1 + READ2, 'M0', 1))
-        self.assertIsNone(seek_action_result(PREFIX + RAW.replace('result=4959941','result=-1') + START + READ1 + READ2, 'M0', 1))
+        self.assertIsNone(seek_action_result(PREFIX + RAW.replace('result=4959941','result=-1') + START + READ1 + READ2 + RENDER1 + RENDER2, 'M0', 1))
     def test_seek_requires_real_consumption(self):
         self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1, 'M0', 1))
-        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ1, 'M0', 1))
+        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ1 + RENDER1 + RENDER2, 'M0', 1))
+    def test_seek_requires_actual_post_seek_render(self):
+        # Consumer bytes alone are not proof of a visible post-Seek frame.
+        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2, 'M0', 1))
+        stalled = PREFIX + RAW + START + READ1 + READ2 + RENDER1 + RENDER1
+        self.assertIsNone(seek_action_result(stalled, 'M0', 1))
+        poisoned = PREFIX + RAW + START + READ1 + READ2 + RENDER1 + (
+            '10-22 15:37:37.5 D avos_player: NOVA_RAW_RETRY: error=-1414092869 generation=2 used=0\n'
+        ) + RENDER2
+        self.assertIsNone(seek_action_result(poisoned, 'M0', 1))
     def test_seek_direction(self):
-        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2, 'M0', -1))
+        self.assertIsNone(seek_action_result(PREFIX + RAW + START + READ1 + READ2 + RENDER1 + RENDER2, 'M0', -1))
         backward = PREFIX.replace('current_pos=5366 to pos=10366','current_pos=10366 to pos=5366')
-        self.assertEqual(seek_action_result(backward + RAW + START + READ1 + READ2,'M0',-1)['to'],5366)
+        self.assertEqual(seek_action_result(backward + RAW + START + READ1 + READ2 + RENDER1 + RENDER2,'M0',-1)['to'],5366)
 
 if __name__ == '__main__':
     unittest.main()
