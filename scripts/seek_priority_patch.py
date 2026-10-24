@@ -84,9 +84,7 @@ void nova_stream_seek_preempt(STREAM *s)
     FF_PRIV *p=(FF_PRIV*)s->parser_priv;
     NOVA_RAW_PREFETCH *raw=&p->raw;
     if (!raw->enabled) return;
-    __atomic_store_n(&raw->seek_preempt, 1, __ATOMIC_RELEASE);
-    if (raw->direct_transport && raw->direct_preempt_read)
-        raw->direct_preempt_read(raw->transport_generation);
+    /* Wake parser for seek, but preempt network only on cache miss. */
     pthread_mutex_lock(&raw->mutex);
     pthread_cond_broadcast(&raw->can_read);
     pthread_cond_broadcast(&raw->can_write);
@@ -181,6 +179,15 @@ def patch_parser(p):
           "        raw->direct_preempt_read(raw->transport_generation);\n"
           "    // Serialize the actual source protocol. The producer never holds the raw\n",
           "seek start preemption")
+    s=rep(s,
+          "    pthread_mutex_lock(&raw->source_mutex);\n    int64_t result = avio_seek(raw->source, target, SEEK_SET);\n",
+          "    pthread_mutex_lock(&raw->source_mutex);\n"
+          "    /* Old I/O is quiesced. Reenable interrupts before NEW HTTP Seek. */\n"
+          "    if(raw->direct_transport && raw->direct_clear_preempt)\n"
+          "        raw->direct_clear_preempt(raw->transport_generation);\n"
+          "    __atomic_store_n(&raw->seek_preempt, 0, __ATOMIC_RELEASE);\n"
+          "    int64_t result = avio_seek(raw->source, target, SEEK_SET);\n",
+          "unblock new HTTP seek")
     end_anchor="    pthread_mutex_unlock(&raw->source_mutex);\n    return result;\n}\n\nstatic void nova_raw_stats"
     s=rep(s,end_anchor,
           "    if(raw->direct_transport && raw->direct_clear_preempt)\n"
