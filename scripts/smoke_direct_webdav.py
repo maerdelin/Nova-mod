@@ -151,6 +151,16 @@ def main():
                 40,
                 "direct WebDAV transport open, RAW128 and first frame",
             )
+            # The signed APK must actually emit the new cold-start trace from
+            # its native hardware rendering path, not merely compile the text.
+            trace = wait_for(
+                lambda t: (
+                    "NOVA_SYNC_BOOT:" in t
+                    and "NOVA_SYNC_RENDER_CLOCK:" in t
+                ),
+                20, "new startup timebase trace and renderer clock snapshot",
+            )
+            report["native_clock_trace"] = True
             if "Unable to open direct native transport" in text:
                 raise RuntimeError("Direct transport proxy reported open failure")
             if "BlurayIsoProxy" in text or "libnova_iso" in text:
@@ -173,6 +183,7 @@ def main():
                     seek_marker in t
                     and "NOVA_RAW128_SEEK:" in t[t.rfind(seek_marker):]
                     and "NovaTransport: SEEK generation=" in t[t.rfind(seek_marker):]
+                    and "NOVA_SYNC_SEEK_RESET:" in t[t.rfind(seek_marker):]
                 ),
                 20,
                 "direct WebDAV seek through RAW128 and native upstream",
@@ -227,6 +238,8 @@ def main():
                 back_abort=True,
                 back_close_complete=True,
                 reopen_first_frame=True,
+                first_frame_trace=True,
+                seek_reset_trace=True,
                 back_presses=back_presses,
                 post_abort_raw_retry=False,
                 request_count=len(requests),
