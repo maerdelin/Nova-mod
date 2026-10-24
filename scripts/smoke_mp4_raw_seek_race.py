@@ -186,8 +186,8 @@ def main():
                 raise RuntimeError('MP4 parser failure after seek stress')
             raw_seek_count=final.count('NOVA_RAW128_SEEK:')
             cache_seek_count=final.count('NOVA_RAW_CACHE_SEEK_V1:')
-            if 'NOVA_SEEK_SAFE_SERIAL_V2: seek_finish' not in final:
-                raise RuntimeError('Safe serialized seek did not execute; wrong APK?')
+            if 'NOVA_RAW_CACHE_SEEK_V1:' in final or 'NOVA_SEEK_PREEMPT_V1:' in final:
+                raise RuntimeError('Experimental Seek path unexpectedly present in rollback build')
             if 'NOVA_RAW_RETRY: error=-1414092869' in final:
                 raise RuntimeError('Seek cancellation poisoned AVIO: AVERROR_EXIT retry observed')
             if raw_seek_count + cache_seek_count < 8:
