@@ -134,7 +134,8 @@ int main(void) {
     transport_close(7, 1);
     assert(g_session && g_session->generation == 8);
     transport_close(8, 1);
-    assert(!g_session && aborted == 2 && closed == 2 && freed == 2);
+    /* Pending open was released without a published CLOSE event. */
+    assert(!g_session && aborted == 2 && closed == 2 && freed == 3);
     puts("native close: drain, detach, idempotence, stale generation PASS");
 }
 '''
