@@ -253,6 +253,8 @@ static int nova_upstream_read_some_retry(nova_session *s, uint8_t *dst, int byte
     unsigned failures = 0;
     /* Keep the expected byte offset even when a failed read closes the
      * AVIOContext and resets upstream_pos to -1. */
+    if (s->stopping)
+        return AVERROR_EXIT;
     const int64_t at = s->upstream_pos;
     if (at < 0)
         return AVERROR(EINVAL);
