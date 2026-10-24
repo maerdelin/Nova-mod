@@ -251,12 +251,16 @@ static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
 static int nova_upstream_read_some_retry(nova_session *s, uint8_t *dst, int bytes)
 {
     unsigned failures = 0;
+    /* Keep the expected byte offset even when a failed read closes the
+     * AVIOContext and resets upstream_pos to -1. */
+    const int64_t at = s->upstream_pos;
+    if (at < 0)
+        return AVERROR(EINVAL);
     while (!s->stopping) {
-        if (s->upstream_size > 0 && s->upstream_pos >= s->upstream_size)
+        if (s->upstream_size > 0 && at >= s->upstream_size)
             return AVERROR_EOF;
-        int64_t at = s->upstream_pos;
-        if (at < 0 || nova_upstream_seek_retry(s, at) < 0)
-            return AVERROR(EIO);
+        if (nova_upstream_seek_retry(s, at) < 0)
+            return s->stopping ? AVERROR_EXIT : AVERROR(EIO);
         int got = avio_read(s->upstream, dst, bytes);
         if (got > 0) {
             s->upstream_pos += got;
@@ -348,7 +352,8 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
         }
         nova_iso_meta_page *entry = &s->iso_meta_pages[hit];
         entry->touched = ++s->iso_meta_tick;
-        int offset = (int)(pos - aligned);
+        /* Hits can be older 4 MiB pages while new requests use 256 KiB. */
+        int offset = (int)(pos - entry->start);
         int available = entry->length - offset;
         if (available <= 0) {
             s->iso_meta_degraded = 1;
