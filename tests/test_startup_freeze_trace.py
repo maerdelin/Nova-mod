@@ -25,6 +25,7 @@ class StartupFreezeTraceTests(unittest.TestCase):
             "NOVA_SYNC_PCM_CORRECTION": trace.CORRECTION_LOG,
             "NOVA_SYNC_AUDIO_START": trace.AUDIO_START_LOG,
             "NOVA_SYNC_PCM_EVIDENCE": trace.PCM_EVIDENCE_LOG,
+            "NOVA_SYNC_MODE2_TRANSITION": trace.MODE2_TRANSITION,
         }
         for marker, source in markers.items():
             self.assertIn(marker + ":", source, marker)
