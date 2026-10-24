@@ -129,6 +129,22 @@ int main(void) {
     }
     assert(io.seeks >= old_seeks+7);
     assert(s.iso_meta_misses==(uint64_t)io.reads);
+    /* Fill all eight slots, then deliberately fail the next miss. The
+     * selected LRU slot must retain its old bytes and index on failure. */
+    mock_io io2 = {.pos=0, .size=(int64_t)48 * 1024 * 1024};
+    nova_session e = {.iso_meta_active=1, .upstream_size=io2.size,
+                      .upstream_pos=0, .upstream=&io2};
+    for (int i=0; i<8; i++)
+        assert(nova_iso_meta_read(&e,buf,i*page+2048,2048)==1);
+    assert(io2.reads==8 && e.iso_meta_misses==8);
+    io2.fail_reads = 1;
+    assert(nova_iso_meta_read(&e,buf,10*page+2048,2048)==-1);
+    assert(e.iso_meta_degraded==1);
+    int keeps = io2.reads;
+    assert(nova_iso_meta_read(&e,buf,2048,2048)==1);
+    assert(io2.reads==keeps);
+    assert(buf[0]==(uint8_t)(2048%251));
+    nova_iso_meta_release(&e);
     nova_iso_meta_release(&s);
     assert(!s.iso_meta_active);
     for(int i=0;i<NOVA_ISO_META_PAGE_COUNT;++i)
