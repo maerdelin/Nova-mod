@@ -60,9 +60,66 @@ def main():
     assert text.count('static int sfdec_max_frames = 2;')==1, 'Wrapper count must remain original two'
     assert 'NOVA_SFDEC2_NO_OUTPUT_RETURN_V1' not in text
     text=text.replace(FIND,NEW,1)
+    # Track synthetic empty-wrapper returns. The normal engine sink counter
+    # is decremented for rendered frames; a no-output return did NOT pass
+    # through videosink_put and must not decrement that counter.
+    from_='''\tint num_frames;
+\tint reorder_pts;'''
+    into='''\tint num_frames;
+\tuint32_t nova_no_output_return_mask; /* V1 ownership bookkeeping */
+\tint reorder_pts;'''
+    assert text.count(from_)==1
+    text=text.replace(from_,into,1)
+    from_='''\t\t\t\tframe_q_put(&p->locked.get_q, f);
+\t\t\t\tpthread_cond_broadcast(&p->locked.cond);'''
+    into='''\t\t\t\tif (f->index >= 0 && f->index < 32)
+\t\t\t\t\tp->nova_no_output_return_mask |= 1U << f->index;
+\t\t\t\tframe_q_put(&p->locked.get_q, f);
+\t\t\t\tpthread_cond_broadcast(&p->locked.cond);'''
+    assert text.count(from_)==1
+    text=text.replace(from_,into,1)
+    hook='''static int videodec_flush(STREAM_DEC_VIDEO *dec)'''
+    helper='''/* NOVA_SFDEC2_NO_OUTPUT_LEASE_V1: the normal _queue_sink_frames()
+ * decrements sinkOutstanding for a *rendered* frame. These no-output
+ * wrappers went from dec_q directly to get_q, never through sink.put,
+ * so claim them explicitly to avoid making sinkOutstanding negative. */
+int nova_sfdec2_claim_no_output_return(STREAM *s, VIDEO_FRAME *f)
+{
+    if (!s || !s->video_dec || !s->video_dec->name ||
+        strcmp(s->video_dec->name, "sfdec2") || !s->video_dec->priv ||
+        !f || f->index < 0 || f->index >= 32)
+        return 0;
+    priv_t *p=(priv_t*)s->video_dec->priv;
+    pthread_mutex_lock(&p->locked.mtx);
+    unsigned mask=1U << f->index;
+    int claimed = !!(p->nova_no_output_return_mask & mask);
+    p->nova_no_output_return_mask &= ~mask;
+    pthread_mutex_unlock(&p->locked.mtx);
+    return claimed;
+}
+
+'''
+    assert text.count(hook)==1
+    text=text.replace(hook,helper+hook,1)
     assert text.count('frame_q_put(&p->locked.get_q, f);')>=2
     assert text.count('NOVA_SFDEC2_NO_OUTPUT_RETURN_V1')==1
     file.write_text(text)
-    print('NOVA_SFDEC2_NO_OUTPUT_RETURN_V1=PATCHED original_wrapper_count=2')
+    engine=a.native/'Source/stream_video.c'
+    text=engine.read_text()
+    before='''\t\ts->video_sink_count--;'''
+    after='''\t\t/* Do not debit the displayed-frame count for a codec no-output
+\t\t * wrapper returned to the engine without ever entering the sink. */
+\t\textern int nova_sfdec2_claim_no_output_return(STREAM *, VIDEO_FRAME *);
+\t\tif (!nova_sfdec2_claim_no_output_return(s, frame))
+\t\t\ts->video_sink_count--;'''
+    assert text.count(before)>=1
+    # Precisely modify _queue_sink_frames(), NOT any other counter use.
+    begin=text.index('static void _queue_sink_frames( STREAM *s )\\n{')
+    end=text.index('static void _free_all_frames( STREAM *s )', begin)
+    region=text[begin:end]
+    assert region.count(before)==1
+    text=text[:begin]+region.replace(before,after,1)+text[end:]
+    engine.write_text(text)
+    print('NOVA_SFDEC2_NO_OUTPUT_RETURN_V1=PATCHED wrapper_count=2 sink_accounting=SAFE')
 
 if __name__=='__main__':main()
