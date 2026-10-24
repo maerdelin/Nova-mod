@@ -115,6 +115,19 @@ RENDER_CLOCK_LOG = r'''
             }
 '''
 
+MODE2_TRANSITION = r'''
+                if (s) {
+                    serprintf("NOVA_SYNC_MODE2_TRANSITION: wallMs=%lld epoch=%d active=%d smooth=%d hardReanchor=%d entryDeltaUs=%lld audioMs=%d videoMs=%d frameMs=%d offsetNs=%lld targetNs=%lld pendingSeek=%d\n",
+                        (long long)atime64(), s->seek_epoch,
+                        mode2_dynamic_active, smooth_entry, hard_reanchor,
+                        (long long)(entry_delta_ns / 1000),
+                        s->audio_time, s->video_time, f->time,
+                        (long long)p->render_offset_ns,
+                        (long long)p->target_offset_ns,
+                        p->pending_seek_reanchor);
+                }
+'''
+
 CAPTURE_RENDER_ANCHORS = r'''
         INT64 nova_trace_offset_ns = p->render_offset_ns;
         INT64 nova_trace_target_ns = p->target_offset_ns;
@@ -219,6 +232,9 @@ def patch_codec(path):
         ("publisher sampler",
          'DBGSI2 serprintf("[[put %8d|%4d|%4lld]]", time, dt, (long long)dr );',
          PUT_LOG + 'DBGSI2 serprintf("[[put %8d|%4d|%4lld]]", time, dt, (long long)dr );'),
+        ("mode2 clock transition event",
+         "\t\t\t\tint hard_reanchor = mode2_dynamic_active && !smooth_entry;\n",
+         "\t\t\t\tint hard_reanchor = mode2_dynamic_active && !smooth_entry;\n" + MODE2_TRANSITION),
         ("video first-frame marker",
          "\t\t\tf = frame_q_peek(&p->locked.venc_q);\n",
          "\t\t\tf = frame_q_peek(&p->locked.venc_q);\n" + BOOT_LOG),
@@ -280,7 +296,7 @@ def main():
         "late_episode_interval_ms": 1000,
         "events": ["NOVA_SYNC_BOOT", "NOVA_SYNC_PUT", "NOVA_SYNC_RENDER_CLOCK",
                    "NOVA_SYNC_LATE", "NOVA_SYNC_LATE_END", "NOVA_SYNC_SEEK_RESET",
-                   "NOVA_SYNC_PCM_CORRECTION", "NOVA_SYNC_PCM_EVIDENCE",
+                   "NOVA_SYNC_PCM_CORRECTION", "NOVA_SYNC_PCM_EVIDENCE", "NOVA_SYNC_MODE2_TRANSITION",
                    "NOVA_SYNC_AUDIO_START"],
         "raw128_logic_changed": False,
         "video_drop_threshold_changed": False,
