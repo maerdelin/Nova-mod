@@ -21,7 +21,7 @@ NOVA_PGS_HISTORY_BYPASS_AB_V1
 typedef struct NOVA_RAW_PREFETCH {
     nova_transport_abort_fn direct_abort;
 } NOVA_RAW_PREFETCH;
-raw->transport_handle, "nova_transport_abort");
+        raw->transport_handle, "nova_transport_abort");
     int ret = avformat_seek_file( fmt, -1, seek_min, new_pos, seek_max, av_flags);
 """)
             bridge.write_text("""__attribute__((visibility("default")))
@@ -29,7 +29,8 @@ int64_t nova_transport_size(uint64_t generation)
 """)
             cmd=[sys.executable,str(ROOT/"scripts/iso_index_seek_patch.py"),
                  "--native",str(native),"--transport",str(bridge)]
-            subprocess.run(cmd,check=True,capture_output=True,text=True)
+            result=subprocess.run(cmd,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+"\n"+result.stderr)
             patched=parser.read_text()
             t=bridge.read_text()
             self.assertIn("NOVA_ISO_INDEX_SEEK_V2",patched)
