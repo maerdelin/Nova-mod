@@ -134,7 +134,7 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
 
 PROXY_RESOLVE = r'''
 .method public static resolve(Landroid/net/Uri;)Landroid/net/Uri;
-    .locals 14
+    .locals 16
     if-eqz p0, :return_original
     # Already resolved on a background worker: never close/reopen it on UI.
     invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
@@ -204,6 +204,10 @@ PROXY_RESOLVE = r'''
     invoke-virtual {v10}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v3
     :open
+    # Preserve canonical logical WebDAV origin and its own-origin credential.
+    # The final CDN redirect may expire during long playback.
+    move-object v14, v2
+    move-object v15, v3
     invoke-static {v2, v3}, Lcom/archos/mediacenter/video/player/DirectRedirectResolver;->resolve(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;
     move-result-object v12
     if-eqz v12, :fail
@@ -245,7 +249,7 @@ PROXY_RESOLVE = r'''
     :native_not_iso
     const/4 v0, 0x0
     :native_iso_ready
-    invoke-static {v2, v3, v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
+    invoke-static {v2, v3, v0, v14, v15}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;)Ljava/lang/String;
     move-result-object v2
     if-eqz v2, :fail
     invoke-static {v2}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
@@ -260,7 +264,7 @@ PROXY_RESOLVE = r'''
     return-object p0
 .end method
 
-.method private static native nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
+.method private static native nativeOpen(Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;)Ljava/lang/String;
 .end method
 .method public static native nativeClose()V
 .end method

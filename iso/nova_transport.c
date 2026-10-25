@@ -57,7 +57,6 @@ typedef struct nova_session {
     /* NOVA_NONISO_SEEK_HEAL_V1: committed media cursor survives transient
      * HTTP Range errors; only a successful seek/read may update it. */
     int64_t file_cursor;
-    int file_range_probe_done; /* One non-ISO diagnostic per file playback. */
     int64_t upstream_size;
     BLURAY *bd;
     uint64_t output_size;
@@ -67,6 +66,15 @@ typedef struct nova_session {
     int iso_meta_degraded;
     char *upstream_url;
     char *upstream_headers;
+    /* NOVA_FILE_ORIGIN_FRESH_V1: keep the canonical WebDAV URL. The
+     * initially resolved redirect target can expire during playback.
+     * Refresh only FILE; ISO continues to use Run680's fixed path. */
+    char *origin_url;
+    char *origin_auth;
+    JavaVM *resolver_vm;
+    jclass resolver_class;
+    jmethodID resolver_method;
+    int requires_origin_refresh;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
     uint64_t iso_meta_tick;
     uint64_t iso_meta_reads;
@@ -79,6 +87,9 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static nova_session *g_session = NULL;
 static nova_session *g_opening_session = NULL;
 static uint64_t g_generation = 0;
+static JavaVM *g_java_vm = NULL;
+/* Implemented after the ISO metadata helpers, isolated from UDF/CLPI. */
+static int nova_file_open_fresh_at(nova_session *s, int64_t target);
 
 static int transport_interrupt(void *opaque)
 {
@@ -259,62 +270,28 @@ static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
  * Never reuse the failed AVIOContext; never advance file_cursor on error.
  * The ISO CLPI/time seek path remains separate and unmodified.
  */
-/* NOVA_HTTP_RANGE_ROOT_DIAG_V1: independent protocol diagnosis, never
- * a retry or seek fallback. At the first EINVAL on a valid FILE seek,
- * issue two separate HTTP GETs (Range target and Range zero), compare
- * 32 bytes, and log only result codes/sizes. The active reader, offsets,
- * credentials and the established ISO seek are never altered. */
-static int nova_file_sample_at(nova_session *s,int64_t offset,
-                               uint8_t sample[32],int64_t *size)
-{
-    AVIOContext *probe=NULL;
-    AVDictionary *opts=NULL;
-    char pos[40];
-    snprintf(pos,sizeof(pos),"%" PRId64,offset);
-    if(s->upstream_headers && *s->upstream_headers)
-        av_dict_set(&opts,"headers",s->upstream_headers,0);
-    av_dict_set(&opts,"offset",pos,0);
-    av_dict_set(&opts,"reconnect","0",0);
-    av_dict_set(&opts,"rw_timeout","5000000",0);
-    AVIOInterruptCB cb={.callback=transport_interrupt,.opaque=s};
-    int rc=avio_open2(&probe,s->upstream_url,AVIO_FLAG_READ,&cb,&opts);
-    av_dict_free(&opts);
-    if(rc<0 || !probe){
-        if(probe) avio_closep(&probe);
-        return rc<0?rc:AVERROR(EIO);
-    }
-    *size=avio_size(probe);
-    int got=avio_read(probe,sample,32);
-    avio_closep(&probe);
-    return got;
-}
-
-static void nova_file_probe_first_range_failure(nova_session *s,
-    int64_t target,int64_t seek_rc,int original_error,
-    int original_eof,int64_t original_tell)
-{
-    if(s->file_range_probe_done || s->stopping ||
-       target<32 || target>=s->upstream_size) return;
-    s->file_range_probe_done=1;
-    uint8_t at[32]={0},zero[32]={0};
-    int64_t at_size=-1,zero_size=-1;
-    int at_rc=nova_file_sample_at(s,target,at,&at_size);
-    int zero_rc=nova_file_sample_at(s,0,zero,&zero_size);
-    int same=(at_rc==32 && zero_rc==32) ?
-             (memcmp(at,zero,32)==0) : -1;
-    LOGI("NOVA_HTTP_RANGE_ROOT_DIAG_V1: offset=%" PRId64
-         " seek_rc=%" PRId64 " orig_err=%d orig_eof=%d"
-         " orig_tell=%" PRId64 " fresh_at=%d fresh_zero=%d"
-         " same32=%d expected_size=%" PRId64
-         " at_size=%" PRId64 " zero_size=%" PRId64,
-         target,seek_rc,original_error,original_eof,original_tell,
-         at_rc,zero_rc,same,s->upstream_size,at_size,zero_size);
-}
-
 static int nova_file_seek_retry(nova_session *s, int64_t target)
 {
     if (target<0 || target>s->upstream_size) return AVERROR(EINVAL);
+    /* Logical EOF seek is legal: no HTTP Range=bytes=size- request (416). */
+    if(target==s->upstream_size){
+        s->upstream_pos=target;
+        return 0;
+    }
     for (unsigned attempt=1; attempt<=3 && !s->stopping; ++attempt) {
+        /* Refresh the logical WebDAV redirect BEFORE a new byte-range
+         * request, not as a retry of an already expired signed URL. */
+        if (s->requires_origin_refresh &&
+            (!s->upstream || s->upstream_pos!=target ||
+             s->upstream->error || s->upstream->eof_reached)) {
+            int rc=nova_file_open_fresh_at(s,target);
+            if(rc==0) return 0;
+            LOGI("NOVA_FILE_FRESH_RANGE_FAIL_V1: at=%" PRId64
+                 " result=%d",target,rc);
+            if(nova_weak_terminal_error(rc)) return rc;
+            if(attempt<3) nova_weak_backoff(s,attempt);
+            continue;
+        }
         if (s->upstream &&
             (s->upstream->error || s->upstream->eof_reached)) {
             LOGI("NOVA_FILE_AVIO_REOPEN: at=%" PRId64
@@ -333,9 +310,6 @@ static int nova_file_seek_retry(nova_session *s, int64_t target)
             }
         }
         if (s->upstream_pos==target) return 0;
-        int original_error=s->upstream->error;
-        int original_eof=s->upstream->eof_reached;
-        int64_t original_tell=avio_tell(s->upstream);
         int64_t moved=avio_seek(s->upstream,target,SEEK_SET);
         if (moved==target) {
             s->upstream_pos=target;
@@ -346,9 +320,6 @@ static int nova_file_seek_retry(nova_session *s, int64_t target)
         }
         LOGI("NOVA_FILE_SEEK_RETRY: phase=seek at=%" PRId64
              " attempt=%u rc=%" PRId64,target,attempt,moved);
-        if(moved==AVERROR(EINVAL))
-            nova_file_probe_first_range_failure(s,target,moved,
-                original_error,original_eof,original_tell);
         /* Even a failed HTTP seek can change protocol state. Drop it. */
         nova_upstream_drop(s);
         if (moved==AVERROR_HTTP_BAD_REQUEST ||
@@ -569,6 +540,137 @@ static int select_main_title(nova_session *s)
 }
 
 
+/* NOVA_FILE_ORIGIN_FRESH_V1: do not reuse the one-time redirect obtained
+ * before playback. Java performs redirect resolution using the *original*
+ * WebDAV URL and its Basic credential and strips Authorization on cross-
+ * origin redirects. This prevents leaking the original WebDAV password to
+ * a third-party CDN. Only FILE sessions hold these JNI references.
+ */
+static JNIEnv *nova_file_get_env(JavaVM *vm,int *needs_detach)
+{
+    *needs_detach=0;
+    if(!vm) return NULL;
+    JNIEnv *env=NULL;
+    jint rc=(*vm)->GetEnv(vm,(void **)&env,JNI_VERSION_1_6);
+    if(rc==JNI_OK) return env;
+    if(rc!=JNI_EDETACHED) return NULL;
+    if((*vm)->AttachCurrentThread(vm,&env,NULL)!=JNI_OK) return NULL;
+    *needs_detach=1;
+    return env;
+}
+
+static void nova_file_release_java(nova_session *s)
+{
+    if(s->resolver_class && s->resolver_vm){
+        int detach=0;
+        JNIEnv *env=nova_file_get_env(s->resolver_vm,&detach);
+        if(env)(*env)->DeleteGlobalRef(env,s->resolver_class);
+        if(detach)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+        s->resolver_class=NULL;
+    }
+    free(s->origin_url);
+    free(s->origin_auth);
+}
+
+static int nova_file_refresh_origin(nova_session *s)
+{
+    if(s->mode!=NOVA_MODE_FILE || !s->requires_origin_refresh)
+        return 0;
+    if(!s->resolver_vm || !s->resolver_class ||
+       !s->resolver_method || !s->origin_url)
+        return AVERROR(EINVAL);
+    int detached=0,ret=AVERROR(EIO);
+    JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
+    if(!env)return ret;
+    jstring src=(*env)->NewStringUTF(env,s->origin_url);
+    jstring auth=(*env)->NewStringUTF(env,
+                         s->origin_auth ? s->origin_auth : "");
+    jobjectArray pair=NULL;
+    jstring jurl=NULL,jauth=NULL;
+    char *url=NULL,*headers=NULL;
+    if(src && auth)
+        pair=(jobjectArray)(*env)->CallStaticObjectMethod(env,
+                  s->resolver_class,s->resolver_method,src,auth);
+    if((*env)->ExceptionCheck(env)){
+        (*env)->ExceptionClear(env);
+        pair=NULL;
+    }
+    if(pair && (*env)->GetArrayLength(env,pair)>=2){
+        jurl=(jstring)(*env)->GetObjectArrayElement(env,pair,0);
+        jauth=(jstring)(*env)->GetObjectArrayElement(env,pair,1);
+    }
+    if(jurl){
+        const char *value=(*env)->GetStringUTFChars(env,jurl,NULL);
+        if(value && *value)url=strdup(value);
+        if(value)(*env)->ReleaseStringUTFChars(env,jurl,value);
+    }
+    if(jauth){
+        const char *value=(*env)->GetStringUTFChars(env,jauth,NULL);
+        if(value){
+            size_t n=strlen(value);
+            if(n && n<8192){
+                headers=malloc(n+18);
+                if(headers)snprintf(headers,n+18,
+                                     "Authorization: %s\r\n",value);
+            }
+            (*env)->ReleaseStringUTFChars(env,jauth,value);
+        }
+    }
+    if(!headers)headers=strdup("");
+    if(url && headers){
+        free(s->upstream_url);
+        free(s->upstream_headers);
+        s->upstream_url=url;
+        s->upstream_headers=headers;
+        url=headers=NULL;
+        ret=0;
+    }
+    free(url);free(headers);
+    if(jauth)(*env)->DeleteLocalRef(env,jauth);
+    if(jurl)(*env)->DeleteLocalRef(env,jurl);
+    if(pair)(*env)->DeleteLocalRef(env,pair);
+    if(auth)(*env)->DeleteLocalRef(env,auth);
+    if(src)(*env)->DeleteLocalRef(env,src);
+    if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+    if(ret==0)LOGI("NOVA_FILE_ORIGIN_REFRESH_V1: refreshed=1");
+    return ret;
+}
+
+/* One fresh HTTP 206 connection opened AT the requested absolute byte.
+ * Avoids a redundant GET-at-zero followed by a second range seek.
+ * The committed FILE cursor is only advanced after an opened connection.
+ * ISO's existing avio_seek/bd_seek path is NOT used or modified here. */
+static int nova_file_open_fresh_at(nova_session *s,int64_t target)
+{
+    if(s->mode!=NOVA_MODE_FILE || target<0 ||
+       target>=s->upstream_size)return AVERROR(EINVAL);
+    int rc=nova_file_refresh_origin(s);
+    if(rc<0)return rc;
+    AVIOContext *fresh=NULL;
+    AVDictionary *opts=NULL;
+    char at[40];
+    snprintf(at,sizeof(at),"%" PRId64,target);
+    if(s->upstream_headers && *s->upstream_headers)
+        av_dict_set(&opts,"headers",s->upstream_headers,0);
+    av_dict_set(&opts,"offset",at,0);
+    av_dict_set(&opts,"reconnect","0",0);
+    av_dict_set(&opts,"rw_timeout","5000000",0);
+    AVIOInterruptCB interrupt={
+        .callback=transport_interrupt,.opaque=s
+    };
+    rc=avio_open2(&fresh,s->upstream_url,AVIO_FLAG_READ,&interrupt,&opts);
+    av_dict_free(&opts);
+    if(rc<0 || !fresh){
+        if(fresh)avio_closep(&fresh);
+        return rc<0?rc:AVERROR(EIO);
+    }
+    if(s->upstream)avio_closep(&s->upstream);
+    s->upstream=fresh;
+    s->upstream_pos=target;
+    LOGI("NOVA_FILE_FRESH_RANGE_V1: at=%" PRId64 " result=ok",target);
+    return 0;
+}
+
 static nova_session *session_acquire(uint64_t generation)
 {
     pthread_mutex_lock(&g_lock);
@@ -621,6 +723,7 @@ static void session_free(nova_session *s)
     pthread_cond_destroy(&s->idle);
     free(s->upstream_url);
     free(s->upstream_headers);
+    nova_file_release_java(s);
     free(s);
 }
 
@@ -827,9 +930,9 @@ int nova_transport_abort(uint64_t generation)
 
 JNIEXPORT jstring JNICALL
 Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
-        JNIEnv *env, jclass cls, jstring jurl, jstring jheaders, jboolean jiso)
+        JNIEnv *env, jclass cls, jstring jurl, jstring jheaders, jboolean jiso,
+        jstring jorigin_url, jstring jorigin_auth)
 {
-    (void)cls;
     if (!jurl)
         return NULL;
 
@@ -838,6 +941,44 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
         ? (*env)->GetStringUTFChars(env, jheaders, NULL) : NULL;
 
     nova_session *fresh = session_create(url, headers ? headers : "", jiso ? 1 : 0);
+    /* ISO remains on original session_create/nova_transport_seek path.
+     * On redirected FILE playback, retain logical origin and safe Java
+     * resolver so every NEW range can get a fresh signed download URL. */
+    if(fresh && !jiso && jorigin_url){
+        const char *origin=(*env)->GetStringUTFChars(env,jorigin_url,NULL);
+        const char *original_auth=jorigin_auth ?
+          (*env)->GetStringUTFChars(env,jorigin_auth,NULL) : NULL;
+        if(origin && *origin && strcmp(origin,url)!=0){
+            fresh->origin_url=strdup(origin);
+            fresh->origin_auth=strdup(original_auth ? original_auth : "");
+            fresh->resolver_vm=g_java_vm;
+            jclass local=(*env)->FindClass(env,
+                  "com/archos/mediacenter/video/player/DirectRedirectResolver");
+            if(local){
+                fresh->resolver_class=(jclass)(*env)->NewGlobalRef(env,local);
+                (*env)->DeleteLocalRef(env,local);
+            }else if((*env)->ExceptionCheck(env)){
+                (*env)->ExceptionClear(env);
+            }
+            if(fresh->resolver_class)
+                fresh->resolver_method=(*env)->GetStaticMethodID(env,
+                    fresh->resolver_class,"resolve",
+                    "(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;");
+            if((*env)->ExceptionCheck(env))
+                (*env)->ExceptionClear(env);
+            if(!fresh->origin_url || !fresh->origin_auth ||
+               !fresh->resolver_class || !fresh->resolver_method){
+                LOGE("NOVA_FILE_ORIGIN_REFRESH_UNAVAILABLE_V1");
+                session_free(fresh);
+                fresh=NULL;
+            }else{
+                fresh->requires_origin_refresh=1;
+                LOGI("NOVA_FILE_ORIGIN_FRESH_V1: enabled=1");
+            }
+        }
+        if(original_auth)(*env)->ReleaseStringUTFChars(env,jorigin_auth,original_auth);
+        if(origin)(*env)->ReleaseStringUTFChars(env,jorigin_url,origin);
+    }
 
     if (headers)
         (*env)->ReleaseStringUTFChars(env, jheaders, headers);
@@ -931,7 +1072,7 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeClose(
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
-    (void)vm;
+    g_java_vm=vm;
     (void)reserved;
     return JNI_VERSION_1_6;
 }

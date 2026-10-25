@@ -54,6 +54,7 @@ typedef struct nova_session {
     int64_t upstream_size;
     int64_t upstream_pos;
     int64_t file_cursor;
+    int requires_origin_refresh;
 } nova_session;
 static int open_count, fail_open_once, fail_open_404;
 static int seek_count, fail_seek_once, fail_seek_einval_once, fail_seek_einval_always;
@@ -105,6 +106,16 @@ static int avio_read(AVIOContext *io, uint8_t *dst, int bytes) {
         dst[j] = (uint8_t)((io->pos + j) % 251);
     io->pos += got;
     return got;
+}
+static int fresh_origin_opens;
+static int nova_file_open_fresh_at(nova_session *s,int64_t at){
+    ++fresh_origin_opens;
+    avio_closep(&s->upstream);
+    s->upstream=calloc(1,sizeof(*s->upstream));
+    assert(s->upstream);
+    s->upstream->pos=at;
+    s->upstream_pos=at;
+    return 0;
 }
 static void expect_data(const uint8_t *data, int64_t offset, int n) {
     for (int i = 0; i < n; i++)
@@ -159,6 +170,20 @@ int main(void) {
     fail_seek_einval_always = 0;
     assert(nova_file_seek_retry(&s, 730000) == 0);
     s.file_cursor = 730000;
+
+    /* A stale signed redirect must NEVER be reused for a new FILE range:
+     * it refreshes the canonical logical resource and opens at the
+     * requested offset BEFORE any attempt on the old URL. */
+    s.requires_origin_refresh=1;
+    previous_opens=fresh_origin_opens;
+    assert(nova_file_seek_retry(&s, 780000)==0);
+    assert(fresh_origin_opens==previous_opens+1);
+    assert(s.upstream_pos==780000);
+    s.file_cursor=780000;
+    assert(nova_upstream_read_some_retry(&s,buf,4096)==4096);
+    expect_data(buf,780000,4096);
+    assert(fresh_origin_opens==previous_opens+1);
+    s.requires_origin_refresh=0;
 
     fail_seek_once = 1;
     assert(nova_upstream_seek_retry(&s, 700000) == 0);

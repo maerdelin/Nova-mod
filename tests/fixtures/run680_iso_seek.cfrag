@@ -1,0 +1,26 @@
+if (s->mode == NOVA_MODE_BLURAY_ISO) {
+            int64_t current = bd_tell(s->bd);
+            int64_t target = offset;
+            if (whence == SEEK_CUR)
+                target = current + offset;
+            else if (whence == SEEK_END)
+                target = (int64_t)s->output_size + offset;
+            else if (whence != SEEK_SET)
+                target = -1;
+
+            if (target >= 0 && (uint64_t)target <= s->output_size) {
+                ret = bd_seek(s->bd, (uint64_t)target);
+                if (ret >= 0 && ret < target) {
+                    uint8_t discard[64 * 1024];
+                    while (ret < target) {
+                        int ask = (int)((target - ret) < (int64_t)sizeof(discard)
+                                        ? (target - ret) : (int64_t)sizeof(discard));
+                        int got = bd_read(s->bd, discard, ask);
+                        if (got <= 0) {
+                            ret = AVERROR(EIO);
+                            break;
+                        }
+                        ret += got;
+                    }
+                }
+            }

@@ -85,6 +85,7 @@ static void log_event(const char *format, ...) {
 }
 #define LOGI(...) log_event(__VA_ARGS__)
 static void bd_close(void *p) { (void)p; }
+static void nova_file_release_java(nova_session *s) { (void)s; }
 static void avio_closep(void **p) {
     *p = NULL;
     pthread_mutex_lock(&evidence_lock);
