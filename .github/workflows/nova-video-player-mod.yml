@@ -48,10 +48,11 @@ jobs:
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
           python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
+          python3 -m unittest discover -s tests -p test_iso_index_seek_v2.py -v
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
-          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/seek_priority_patch.py scripts/seek_cache_window_patch.py scripts/seek_video_index_patch.py scripts/smoke_mp4_raw_seek_race.py scripts/disable_all_subtitle_history_patch.py scripts/late_stall_self_heal_patch.py scripts/seek_safe_serial_v2_patch.py scripts/seek_engine_diag_patch.py scripts/seek_sfdec2_frame_return_patch.py scripts/seek_codec_pool_diag_patch.py
+          python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/seek_priority_patch.py scripts/seek_cache_window_patch.py scripts/seek_video_index_patch.py scripts/smoke_mp4_raw_seek_race.py scripts/disable_all_subtitle_history_patch.py scripts/late_stall_self_heal_patch.py scripts/seek_safe_serial_v2_patch.py scripts/seek_engine_diag_patch.py scripts/seek_sfdec2_frame_return_patch.py scripts/seek_codec_pool_diag_patch.py scripts/iso_index_seek_patch.py
           echo 'CI preflight: apktool download (max 120s)'
           timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
@@ -108,6 +109,11 @@ jobs:
           grep -Fq 'NOVA_LATE_STALL_SELF_HEAL_V1' native-src/native/avos/Source/codec_sfdec2.c
           if grep -Eq '_cache_subtitle_packet\(|_subtitle_recovery_point\(' native-src/native/avos/Source/stream_parser_ffmpeg.c; then echo '::error::History code still compiled'; exit 1; fi
           grep -Fq 'NOVA_MP4_SEEK_SLOW_READ_GRACE_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          # ISO-only root fix: use libbluray CLPI time-to-byte mapping,
+          # preserving the RAW producer position and FFmpeg fallback.
+          python3 scripts/iso_index_seek_patch.py --native native-src/native/avos --transport iso/nova_transport.c
+          grep -Fq 'NOVA_ISO_INDEX_SEEK_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'NOVA_ISO_INDEX_MAP_V2' iso/nova_transport.c
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
           # AVOS base/full differ only by which FFmpeg directory is linked; no
           # AVOS source feature macro depends on LIBAV_CONFIG. Alias the same
@@ -153,6 +159,10 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:?ANDROID_NDK_LATEST_HOME is not set}"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           bash scripts/build_transport_native.sh work/transport-native
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            grep -aq 'NOVA_ISO_INDEX_MAP_V2' "work/transport-native/$abi/libnova_transport.so" || exit 1
+            grep -aq 'NOVA_ISO_INDEX_SEEK_V2' "native-src/native/avos/libs/$abi/libavos.so" || exit 1
+          done
 
       - name: Apply instruction and XML-property patches to latest APK
         env:

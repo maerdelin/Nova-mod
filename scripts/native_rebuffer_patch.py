@@ -57,7 +57,7 @@ REBUFFER_THREAD = r'''
 //
 //  Raw-source buffering controller
 //
-//  The pre-demux raw producer has one fixed 128 MiB warehouse wall. 2X/5X
+//  The pre-demux raw producer has one fixed 128 MiB warehouse wall. 1.5X/3X
 //  are playback pause/resume thresholds only. They never throttle, pause or
 //  accelerate network production. As long as RAW used bytes are below 128 MiB,
 //  the producer keeps pulling regardless of play/pause/rebuffer/decoder state.
@@ -773,7 +773,7 @@ DYNAMIC_POLICY = r'''
 	s->duration = ff_p->duration;
 	s->size     = ff_p->size;
 
-    // X = average source bytes/second. 2X/5X control playback only.
+    // X = average source bytes/second. 1.5X/3X control playback only.
     // Network production has a separate fixed 128 MiB warehouse wall.
     uint64_t nova_x = 0;
     const uint64_t nova_max_x = (uint64_t)(INT_MAX / 5);
@@ -888,8 +888,8 @@ DYNAMIC_POLICY = r'''
         uint64_t requested_resume = resume;
 
         if (nova_x > 0) {
-            requested_low = 2 * nova_x;
-            requested_resume = 5 * nova_x;
+            requested_low = nova_x + nova_x / 2; /* 1.5 X, no floating point */
+            requested_resume = 3 * nova_x;
             low = requested_low > (uint64_t)INT_MAX ?
                 INT_MAX : (int)requested_low;
             resume = requested_resume > (uint64_t)INT_MAX ?
@@ -1273,7 +1273,7 @@ static int ff_force_seek'''
         text,
         "\ts->duration = ff_p->duration;\n\ts->size     = ff_p->size;\n",
         DYNAMIC_POLICY,
-        "install source-layer dynamic 2X/5X with fixed 128MiB producer wall",
+        "install source-layer dynamic 1.5X/3X with fixed 128MiB producer wall",
     )
 
     # Custom AVIO is owned by us because AVFMT_FLAG_CUSTOM_IO prevents lavf

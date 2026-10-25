@@ -8,7 +8,7 @@ def once(s,a,b):
     return s.replace(a,b,1)
 
 BRIDGE=r'''
-/* NOVA_ISO_INDEX_MAP_V1: CLPI seek index, preserving ongoing read position. */
+/* NOVA_ISO_INDEX_MAP_V2: CLPI seek index, preserving ongoing read position. */
 __attribute__((visibility("default")))
 int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
 {
@@ -22,12 +22,25 @@ int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
         int64_t byte=bd_seek_time(s->bd,(uint64_t)ms*90ULL);
         int64_t actual=(int64_t)(bd_tell_time(s->bd)/90ULL);
         int64_t restored=bd_seek(s->bd,(uint64_t)before);
+        /* bd_seek() may round to an earlier TS packet. Restore the exact
+         * producer position before giving control back to the RAW reader.
+         * Never return a fast mapping when restoring the source failed. */
+        if (restored>=0 && restored<before && before-restored<=65536) {
+            uint8_t skip[4096];
+            while (restored<before) {
+                int ask=(int)((before-restored)<(int64_t)sizeof(skip)
+                              ? (before-restored):(int64_t)sizeof(skip));
+                int got=bd_read(s->bd,skip,ask);
+                if (got<=0) break;
+                restored=(int64_t)bd_tell(s->bd);
+            }
+        }
         int64_t delta=actual-ms;
         if(delta<0)delta=-delta;
         if(restored==before && byte>=0 &&
            (uint64_t)byte<s->output_size && delta<=5000)
             answer=byte;
-        LOGI("NOVA_ISO_INDEX_MAP_V1: targetMs=%" PRId64
+        LOGI("NOVA_ISO_INDEX_MAP_V2: targetMs=%" PRId64
              " indexedMs=%" PRId64 " byte=%" PRId64
              " restore=%" PRId64 " answer=%" PRId64,
              ms,actual,byte,restored,answer);
@@ -39,7 +52,7 @@ int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
 
 '''
 SEEK=r'''
-    /* NOVA_ISO_INDEX_SEEK_V1: only verified single-clip ISO, never MP4/MKV. */
+    /* NOVA_ISO_INDEX_SEEK_V2: only verified single-clip ISO, never MP4/MKV. */
     int ret=-1;
     if(ff_p->nova_iso_time_mode && time>0 && s->video->valid &&
        ff_p->raw.direct_transport && ff_p->raw.direct_time_to_byte) {
@@ -49,12 +62,17 @@ SEEK=r'''
         pthread_mutex_unlock(&ff_p->raw.source_mutex);
         if(idx>=0 && (uint64_t)idx<s->size) {
             ret=av_seek_frame(fmt,-1,idx,AVSEEK_FLAG_BYTE|AVSEEK_FLAG_BACKWARD);
-            serprintf("NOVA_ISO_INDEX_SEEK_V1: timeMs=%d byte=%lld ret=%d\n",
+            serprintf("NOVA_ISO_INDEX_SEEK_V2: timeMs=%d byte=%lld ret=%d\n",
                       time,(long long)idx,ret);
         }
     }
-    if(ret<0)
+    if(ret<0) {
+        /* Unindexed, multi-clip, failed mapping or unsupported BYTE seek:
+         * keep the old timestamp behavior. Do not approximate with bitrate. */
+        if(ff_p->nova_iso_time_mode && time>0)
+            serprintf("NOVA_ISO_INDEX_FALLBACK_V2: timeMs=%d\n",time);
         ret=avformat_seek_file(fmt,-1,seek_min,new_pos,seek_max,av_flags);
+    }
 '''
 
 def main():
@@ -81,7 +99,7 @@ def main():
        BRIDGE+'__attribute__((visibility("default")))\nint64_t nova_transport_size(uint64_t generation)')
     f.write_text(s)
     a.transport.write_text(t)
-    print('NOVA_ISO_INDEX_SEEK_V1=PATCHED')
+    print('NOVA_ISO_INDEX_SEEK_V2=PATCHED')
 
 if __name__=='__main__':
     main()
