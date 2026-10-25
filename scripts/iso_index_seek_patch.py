@@ -22,17 +22,22 @@ int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
         int64_t byte=bd_seek_time(s->bd,(uint64_t)ms*90ULL);
         int64_t actual=(int64_t)(bd_tell_time(s->bd)/90ULL);
         int64_t restored=bd_seek(s->bd,(uint64_t)before);
-        /* bd_seek() may round to an earlier TS packet. Restore the exact
-         * producer position before giving control back to the RAW reader.
-         * Never return a fast mapping when restoring the source failed. */
-        if (restored>=0 && restored<before && before-restored<=65536) {
-            uint8_t skip[4096];
-            while (restored<before) {
+        /* A title position is normally between Blu-ray index entries.
+         * bd_seek() rolls back to a keyframe, often many MiB away. Always
+         * replay precisely to the producer's old byte position before
+         * releasing its I/O lock. A 64-KiB cap silently invalidates almost
+         * every non-zero position and leaves the active reader corrupted. */
+        int64_t restored_from=restored;
+        if(restored>=0 && restored<before) {
+            uint8_t skip[64*1024];
+            while(restored<before && !s->stopping) {
                 int ask=(int)((before-restored)<(int64_t)sizeof(skip)
                               ? (before-restored):(int64_t)sizeof(skip));
                 int got=bd_read(s->bd,skip,ask);
-                if (got<=0) break;
-                restored=(int64_t)bd_tell(s->bd);
+                if(got<=0) {restored=AVERROR(EIO);break;}
+                int64_t next=(int64_t)bd_tell(s->bd);
+                if(next<=restored) {restored=AVERROR(EIO);break;}
+                restored=next;
             }
         }
         int64_t delta=actual-ms;
@@ -42,8 +47,8 @@ int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
             answer=byte;
         LOGI("NOVA_ISO_INDEX_MAP_V2: targetMs=%" PRId64
              " indexedMs=%" PRId64 " byte=%" PRId64
-             " restore=%" PRId64 " answer=%" PRId64,
-             ms,actual,byte,restored,answer);
+             " restore=%" PRId64 " restoredFrom=%" PRId64 " answer=%" PRId64,
+             ms,actual,byte,restored,restored_from,answer);
     }
     pthread_mutex_unlock(&s->io_lock);
     session_release(s);
