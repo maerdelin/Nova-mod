@@ -17,7 +17,7 @@ class ISOIndexSeekV3Tests(unittest.TestCase):
             parser=native/"Source"/"stream_parser_ffmpeg.c"
             bridge=root/"transport.c"
             parser.write_text("""
-NOVA_PGS_HISTORY_BYPASS_AB_V1
+NOVA_SUB_HISTORY_DISABLED_ALL_V1
 typedef struct NOVA_RAW_PREFETCH {
     nova_transport_abort_fn direct_abort;
 } NOVA_RAW_PREFETCH;
