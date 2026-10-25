@@ -44,8 +44,10 @@ typedef struct avio_interrupt {
     int (*callback)(void *);
     void *opaque;
 } AVIOInterruptCB;
+#define NOVA_MODE_FILE 0
 typedef struct nova_session {
     volatile int stopping;
+    int mode;
     AVIOContext *upstream;
     char *upstream_url;
     char *upstream_headers;
