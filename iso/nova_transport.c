@@ -372,6 +372,15 @@ static int nova_upstream_read_some_retry(nova_session *s, uint8_t *dst, int byte
         if(got>0){
             s->file_cursor=at+got;
             s->upstream_pos=at+got;
+        }else{
+            /* An HTTP Content-Length stream may end prematurely even
+             * after valid first bytes. Its next read MUST use a fresh
+             * single GET at the exact committed cursor. Never reuse a
+             * half-closed socket or advance the byte position. */
+            LOGI("NOVA_NONISO_TRUNCATED_RANGE_V1: at=%" PRId64
+                 " rc=%d",at,got);
+            nova_file_java_close_active(s);
+            s->upstream_pos=-1;
         }
         return got;
     }
@@ -1127,7 +1136,17 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
     if(g_opening_session)g_opening_session->stopping=1;
     g_opening_session=s;
     pthread_mutex_unlock(&g_lock);
-    if(nova_file_java_open_at(s,0)<0 || s->upstream_size<=0){
+    /* A temporary HTTP 503 at the first request cannot destroy playback
+     * startup. The original logical resource remains authoritative;
+     * only retry transient I/O, never 401/403/404 or corrupt ranges. */
+    int startup_rc=AVERROR(EIO);
+    for(int attempt=1;attempt<=3 && !s->stopping;++attempt){
+        startup_rc=nova_file_java_open_at(s,0);
+        if(startup_rc==0)break;
+        if(nova_weak_terminal_error(startup_rc))break;
+        if(attempt<3)nova_weak_backoff(s,(unsigned)attempt);
+    }
+    if(startup_rc<0 || s->upstream_size<=0){
         session_free(s);
         return NULL;
     }

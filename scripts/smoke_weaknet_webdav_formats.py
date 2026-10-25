@@ -6,8 +6,8 @@ DirectTransport -> RAW128 -> FFmpeg -> actual video render, rather than testing
 plain HTTP playback or a mocked C helper.
 
 Faults per format:
-  1) first Range 0-0 probe returns HTTP 503 (Java background retry)
-  2) first real media Range response closes early (native reconnect/resume)
+  1) first actual Range bytes=0- GET returns HTTP 503 (non-ISO source startup recovery)
+  2) next successful media Range response closes early (exact committed-cursor reconnect)
 Both faults MUST be observed on the server and a frame MUST be rendered.
 """
 import argparse
@@ -102,10 +102,15 @@ def test_one(fmt, root, report_dir):
                 return
             with lock:
                 requests.append({"range": value, "offset": start})
-                inject_503 = is_probe and not faults["probe_503"]
+                # Run689: the redesigned non-ISO client performs NO
+                # sacrificial bytes=0-0 GET. Inject a transient HTTP 503
+                # on the first REAL media GET (bytes=0-), then truncate
+                # the first successful range response to require an
+                # exact-cursor resume. Both failures must be observed.
+                inject_503 = not faults["probe_503"]
                 if inject_503:
                     faults["probe_503"] += 1
-                inject_short = (not is_probe) and not faults["short_body"]
+                inject_short = (not inject_503) and not faults["short_body"]
                 if inject_short:
                     faults["short_body"] += 1
             if inject_503:
