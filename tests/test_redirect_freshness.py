@@ -34,8 +34,8 @@ class CanonicalWebdavFreshnessTests(unittest.TestCase):
     def test_run680_iso_seek_is_byte_identical(self):
         src=(ROOT/"iso/nova_transport.c").read_text()
         ref=(ROOT/"tests/fixtures/run680_iso_seek.cfrag").read_text()
-        st=src.index("if (s->mode == NOVA_MODE_BLURAY_ISO) {\\n            int64_t current = bd_tell")
-        en=src.index("        } else {\\n            int64_t target = offset;",st)
+        st=src.index("if (s->mode == NOVA_MODE_BLURAY_ISO) {\n            int64_t current = bd_tell")
+        en=src.index("        } else {\n            int64_t target = offset;",st)
         self.assertEqual(src[st:en],ref)
 
 if __name__=="__main__":unittest.main()
