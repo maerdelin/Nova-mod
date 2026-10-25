@@ -52,6 +52,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_noniso_seek_avio.py -v
+          python3 -m unittest discover -s tests -p test_noniso_ts_duration.py -v
           python3 -m unittest discover -s tests -p test_redirect_freshness.py -v
           python3 -m py_compile scripts/smoke_noniso_single_get_android.py
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
@@ -91,6 +92,7 @@ jobs:
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
+          python3 scripts/noniso_ts_duration_patch.py --native native-src/native/avos
           python3 scripts/ts_resume_fallback_patch.py native-src/native/avos --report reports/ts-resume-fallback.json
           python3 scripts/iso_fast_probe_patch.py native-src/native/avos --report reports/iso-fast-probe.json
           python3 scripts/iso_seek_ui_patch.py --native native-src/native/avos --report reports/iso-timeline.json
