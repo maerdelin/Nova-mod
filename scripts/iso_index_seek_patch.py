@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test-only indexed single-clip Blu-ray ISO seek. Original time seek fallback."""
+"""Non-mutating CLPI-indexed single-clip Blu-ray seek with timestamp fallback."""
 import argparse
 from pathlib import Path
 
@@ -8,7 +8,10 @@ def once(s,a,b):
     return s.replace(a,b,1)
 
 BRIDGE=r'''
-/* NOVA_ISO_INDEX_MAP_V2: CLPI seek index, preserving ongoing read position. */
+/* NOVA_ISO_INDEX_MAP_V3: non-mutating Blu-ray CLPI time index.
+ * The active libbluray reader, AVIO source and ring generation are untouched.
+ */
+extern int64_t bd_nova_map_time_to_byte(BLURAY *, uint64_t, uint64_t *);
 __attribute__((visibility("default")))
 int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
 {
@@ -16,39 +19,19 @@ int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
     if (!s) return AVERROR_EXIT;
     int64_t answer=AVERROR(ENOSYS);
     pthread_mutex_lock(&s->io_lock);
-    if (!s->stopping && s->mode==NOVA_MODE_BLURAY_ISO && s->bd &&
-        s->clip_count==1 && ms>0 && (uint64_t)ms<s->duration_us/1000) {
-        int64_t before=bd_tell(s->bd);
-        int64_t byte=bd_seek_time(s->bd,(uint64_t)ms*90ULL);
-        int64_t actual=(int64_t)(bd_tell_time(s->bd)/90ULL);
-        int64_t restored=bd_seek(s->bd,(uint64_t)before);
-        /* A title position is normally between Blu-ray index entries.
-         * bd_seek() rolls back to a keyframe, often many MiB away. Always
-         * replay precisely to the producer's old byte position before
-         * releasing its I/O lock. A 64-KiB cap silently invalidates almost
-         * every non-zero position and leaves the active reader corrupted. */
-        int64_t restored_from=restored;
-        if(restored>=0 && restored<before) {
-            uint8_t skip[64*1024];
-            while(restored<before && !s->stopping) {
-                int ask=(int)((before-restored)<(int64_t)sizeof(skip)
-                              ? (before-restored):(int64_t)sizeof(skip));
-                int got=bd_read(s->bd,skip,ask);
-                if(got<=0) {restored=AVERROR(EIO);break;}
-                int64_t next=(int64_t)bd_tell(s->bd);
-                if(next<=restored) {restored=AVERROR(EIO);break;}
-                restored=next;
-            }
-        }
+    if(!s->stopping && s->mode==NOVA_MODE_BLURAY_ISO && s->bd &&
+       s->clip_count==1 && ms>0 && (uint64_t)ms<s->duration_us/1000) {
+        uint64_t indexed_tick=0;
+        int64_t byte=bd_nova_map_time_to_byte(s->bd,(uint64_t)ms*90ULL,
+                                              &indexed_tick);
+        int64_t actual=(int64_t)(indexed_tick/90ULL);
         int64_t delta=actual-ms;
         if(delta<0)delta=-delta;
-        if(restored==before && byte>=0 &&
-           (uint64_t)byte<s->output_size && delta<=5000)
+        if(byte>=0 && (uint64_t)byte<s->output_size && delta<=5000)
             answer=byte;
-        LOGI("NOVA_ISO_INDEX_MAP_V2: targetMs=%" PRId64
+        LOGI("NOVA_ISO_INDEX_MAP_V3: targetMs=%" PRId64
              " indexedMs=%" PRId64 " byte=%" PRId64
-             " restore=%" PRId64 " restoredFrom=%" PRId64 " answer=%" PRId64,
-             ms,actual,byte,restored,restored_from,answer);
+             " answer=%" PRId64,ms,actual,byte,answer);
     }
     pthread_mutex_unlock(&s->io_lock);
     session_release(s);
@@ -57,7 +40,7 @@ int64_t nova_transport_time_to_byte(uint64_t generation, int64_t ms)
 
 '''
 SEEK=r'''
-    /* NOVA_ISO_INDEX_SEEK_V2: only verified single-clip ISO, never MP4/MKV. */
+    /* NOVA_ISO_INDEX_SEEK_V3: only verified single-clip ISO, never MP4/MKV. */
     int ret=-1;
     if(ff_p->nova_iso_time_mode && time>0 && s->video->valid &&
        ff_p->raw.direct_transport && ff_p->raw.direct_time_to_byte) {
@@ -67,7 +50,7 @@ SEEK=r'''
         pthread_mutex_unlock(&ff_p->raw.source_mutex);
         if(idx>=0 && (uint64_t)idx<s->size) {
             ret=av_seek_frame(fmt,-1,idx,AVSEEK_FLAG_BYTE|AVSEEK_FLAG_BACKWARD);
-            serprintf("NOVA_ISO_INDEX_SEEK_V2: timeMs=%d byte=%lld ret=%d\n",
+            serprintf("NOVA_ISO_INDEX_SEEK_V3: timeMs=%d byte=%lld ret=%d\n",
                       time,(long long)idx,ret);
         }
     }
@@ -75,7 +58,7 @@ SEEK=r'''
         /* Unindexed, multi-clip, failed mapping or unsupported BYTE seek:
          * keep the old timestamp behavior. Do not approximate with bitrate. */
         if(ff_p->nova_iso_time_mode && time>0)
-            serprintf("NOVA_ISO_INDEX_FALLBACK_V2: timeMs=%d\n",time);
+            serprintf("NOVA_ISO_INDEX_FALLBACK_V3: timeMs=%d\n",time);
         ret=avformat_seek_file(fmt,-1,seek_min,new_pos,seek_max,av_flags);
     }
 '''
@@ -104,7 +87,7 @@ def main():
        BRIDGE+'__attribute__((visibility("default")))\nint64_t nova_transport_size(uint64_t generation)')
     f.write_text(s)
     a.transport.write_text(t)
-    print('NOVA_ISO_INDEX_SEEK_V2=PATCHED')
+    print('NOVA_ISO_INDEX_SEEK_V3=PATCHED')
 
 if __name__=='__main__':
     main()

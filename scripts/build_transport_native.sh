@@ -14,6 +14,10 @@ mkdir -p "$OUT" "$WORK"
 git clone --quiet https://github.com/zhongflyTeam/libbluray.git "$SRC"
 git -C "$SRC" checkout --quiet "$PIN"
 git -C "$SRC" submodule update --init --recursive --quiet
+# Read-only time-to-byte navigation index: modify ONLY pinned libbluray.
+python3 "$ROOT/scripts/libbluray_iso_index_patch.py" "$SRC/src/libbluray/bluray.c"
+grep -Fq 'NOVA_BD_READONLY_TIME_INDEX_V3' "$SRC/src/libbluray/bluray.c"
+
 
 NDK_ROOT="$ANDROID_NDK_ROOT"
 if [[ -z "$NDK_ROOT" ]]; then NDK_ROOT="$ANDROID_NDK_HOME"; fi

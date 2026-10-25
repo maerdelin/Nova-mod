@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 
-class ISOIndexSeekV2Tests(unittest.TestCase):
+class ISOIndexSeekV3Tests(unittest.TestCase):
     def test_source_patch_and_reapplication_guard(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
@@ -33,19 +33,34 @@ int64_t nova_transport_size(uint64_t generation)
             self.assertEqual(result.returncode,0,result.stdout+"\n"+result.stderr)
             patched=parser.read_text()
             t=bridge.read_text()
-            self.assertIn("NOVA_ISO_INDEX_SEEK_V2",patched)
-            self.assertIn("NOVA_ISO_INDEX_MAP_V2",t)
-            self.assertIn("bd_seek_time(s->bd",t)
+            self.assertIn("NOVA_ISO_INDEX_SEEK_V3",patched)
+            self.assertIn("NOVA_ISO_INDEX_MAP_V3",t)
+            self.assertIn("bd_nova_map_time_to_byte(s->bd",t)
             self.assertIn("AVSEEK_FLAG_BYTE|AVSEEK_FLAG_BACKWARD",patched)
-            self.assertIn("int64_t next=(int64_t)bd_tell(s->bd)",t)
-            self.assertIn("restored=next;",t)
-            self.assertNotIn("before-restored<=65536",t)
-            self.assertIn("if(restored==before",t)
+            self.assertNotIn("bd_seek_time(",t)
+            self.assertNotIn("bd_seek(s->bd",t)
+            self.assertIn("delta<=5000",t)
             self.assertIn("ret=avformat_seek_file(fmt,-1,seek_min,new_pos,seek_max,av_flags)",patched)
             self.assertIn("ff_p->nova_iso_time_mode && time>0",patched)
             self.assertIn("s->clip_count==1",t)
             # Refuse to silently apply the same patch twice.
             self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
+
+    def test_libbluray_navigation_lookup_is_read_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            f=Path(d)/"bluray.c"
+            f.write_text("uint64_t bd_tell_time(BLURAY *bd)\n{\nreturn 0;\n}\n")
+            script=[sys.executable,str(ROOT/"scripts/libbluray_iso_index_patch.py"),str(f)]
+            result=subprocess.run(script,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            s=f.read_text()
+            self.assertIn("NOVA_BD_READONLY_TIME_INDEX_V3",s)
+            self.assertIn("nav_time_search(bd->title",s)
+            self.assertIn("nav_packet_search(",s)
+            self.assertNotIn("bd_seek_time(",s)
+            self.assertNotIn("_seek_internal(",s)
+            self.assertIn("bd_mutex_lock(&bd->mutex)",s)
+            self.assertNotEqual(subprocess.run(script,capture_output=True).returncode,0)
 
     def test_threshold_formula_and_scope(self):
         source=(ROOT/"scripts/native_rebuffer_patch.py").read_text()
