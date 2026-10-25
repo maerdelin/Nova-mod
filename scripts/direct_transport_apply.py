@@ -97,7 +97,7 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
     :store
     sput-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
     sput-boolean v1, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
-    sput-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sSkipInitialZeroSeek:Z
+    sput-boolean v1, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sSkipInitialZeroSeek:Z
     return-void
 .end method
 
@@ -109,7 +109,7 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
 
 .method public static shouldSkipInitialZeroSeek(I)Z
     .locals 1
-    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
     if-eqz v0, :no
     sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sSkipInitialZeroSeek:Z
     if-eqz v0, :no
@@ -132,153 +132,12 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
 '''
 
 
-# NOVA_NONISO_SINGLE_GET_V1: Java owns the one actual data GET and its
-# InputStream. Redirections never forward Authorization across origin.
-# Native transport owns the returned live connection until the next seek.
-DIRECT_RANGE_HTTP = r'''.class public final Lcom/archos/mediacenter/video/player/DirectRangeHttp;
-.super Ljava/lang/Object;
-.source "DirectRangeHttp.java"
-
-.method private constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
-
-.method public static open(Ljava/lang/String;Ljava/lang/String;J)Ljava/net/HttpURLConnection;
-    .locals 14
-    if-eqz p0, :fail
-    new-instance v0, Ljava/net/URL;
-    invoke-direct {v0, p0}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
-    move-object v1, v0
-    const/4 v2, 0x0
-
-    :redirect_loop
-    const/4 v3, 0x6
-    if-ge v2, v3, :fail
-    invoke-virtual {v1}, Ljava/net/URL;->openConnection()Ljava/net/URLConnection;
-    move-result-object v4
-    check-cast v4, Ljava/net/HttpURLConnection;
-    const/4 v5, 0x0
-    invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setInstanceFollowRedirects(Z)V
-    const/16 v5, 0x2710
-    invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
-    invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setReadTimeout(I)V
-    const-string v5, "GET"
-    invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
-    new-instance v8, Ljava/lang/StringBuilder;
-    invoke-direct {v8}, Ljava/lang/StringBuilder;-><init>()V
-    const-string v9, "bytes="
-    invoke-virtual {v8, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    move-result-object v8
-    move-wide/from16 v11, p2
-    invoke-virtual {v8, v11, v12}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
-    move-result-object v8
-    const-string v9, "-"
-    invoke-virtual {v8, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-    move-result-object v8
-    invoke-virtual {v8}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-    move-result-object v9
-    const-string v5, "Range"
-    invoke-virtual {v4, v5, v9}, Ljava/net/URLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
-    if-eqz p1, :response
-    invoke-virtual {p1}, Ljava/lang/String;->isEmpty()Z
-    move-result v5
-    if-nez v5, :response
-    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/player/DirectRedirectResolver;->sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
-    move-result v5
-    if-eqz v5, :response
-    const-string v5, "Authorization"
-    invoke-virtual {v4, v5, p1}, Ljava/net/URLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
-
-    :response
-    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I
-    move-result v6
-    const/16 v7, 0x12d
-    if-eq v6, v7, :redirect
-    const/16 v7, 0x12e
-    if-eq v6, v7, :redirect
-    const/16 v7, 0x12f
-    if-eq v6, v7, :redirect
-    const/16 v7, 0x133
-    if-eq v6, v7, :redirect
-    const/16 v7, 0x134
-    if-eq v6, v7, :redirect
-    return-object v4
-
-    :redirect
-    const-string v7, "Location"
-    invoke-virtual {v4, v7}, Ljava/net/URLConnection;->getHeaderField(Ljava/lang/String;)Ljava/lang/String;
-    move-result-object v7
-    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
-    if-eqz v7, :fail
-    new-instance v8, Ljava/net/URL;
-    invoke-direct {v8, v1, v7}, Ljava/net/URL;-><init>(Ljava/net/URL;Ljava/lang/String;)V
-    move-object v1, v8
-    add-int/lit8 v2, v2, 0x1
-    goto :redirect_loop
-
-    :fail
-    const/4 v0, 0x0
-    return-object v0
-.end method
-
-# Real Android app_process smoke entrypoint: checks that a redirect token is
-# used once by the *actual rebuilt Smali*, and that the returned bytes match.
-.method public static main([Ljava/lang/String;)V
-    .locals 11
-    const/4 v0, 0x0
-    aget-object v1, p0, v0
-    const/4 v0, 0x1
-    aget-object v2, p0, v0
-    const/4 v0, 0x2
-    aget-object v6, p0, v0
-    invoke-static {v6}, Ljava/lang/Long;->parseLong(Ljava/lang/String;)J
-    move-result-wide v3
-    invoke-static {v1, v2, v3, v4}, Lcom/archos/mediacenter/video/player/DirectRangeHttp;->open(Ljava/lang/String;Ljava/lang/String;J)Ljava/net/HttpURLConnection;
-    move-result-object v5
-    if-eqz v5, :failure
-    invoke-virtual {v5}, Ljava/net/HttpURLConnection;->getResponseCode()I
-    move-result v6
-    const/16 v7, 0xce
-    if-ne v6, v7, :failure
-    invoke-virtual {v5}, Ljava/net/URLConnection;->getInputStream()Ljava/io/InputStream;
-    move-result-object v6
-    const/4 v0, 0x1
-    new-array v7, v0, [B
-    const/4 v8, 0x0
-    invoke-virtual {v6, v7, v8, v0}, Ljava/io/InputStream;->read([BII)I
-    move-result v9
-    if-ne v9, v0, :failure
-    aget-byte v9, v7, v8
-    and-int/lit16 v9, v9, 0xff
-    const/4 v0, 0x3
-    aget-object v10, p0, v0
-    invoke-static {v10}, Ljava/lang/Integer;->parseInt(Ljava/lang/String;)I
-    move-result v10
-    if-ne v9, v10, :failure
-    invoke-virtual {v6}, Ljava/io/InputStream;->close()V
-    invoke-virtual {v5}, Ljava/net/HttpURLConnection;->disconnect()V
-    sget-object v0, Ljava/lang/System;->out:Ljava/io/PrintStream;
-    const-string v1, "NOVA_SINGLE_GET_ANDROID_PASS"
-    invoke-virtual {v0, v1}, Ljava/io/PrintStream;->println(Ljava/lang/String;)V
-    return-void
-    :failure
-    new-instance v0, Ljava/lang/RuntimeException;
-    const-string v1, "NOVA_SINGLE_GET_ANDROID_FAILED"
-    invoke-direct {v0, v1}, Ljava/lang/RuntimeException;-><init>(Ljava/lang/String;)V
-    throw v0
-.end method
-
-'''
-
 PROXY_RESOLVE = r'''
 .method public static resolve(Landroid/net/Uri;)Landroid/net/Uri;
-    .locals 16
+    .locals 14
     if-eqz p0, :return_original
     # Already resolved on a background worker: never close/reopen it on UI.
-    move-object/from16 v6, p0
-    invoke-virtual {v6}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
     move-result-object v0
     if-eqz v0, :return_original
     const-string v1, "novatransport"
@@ -295,8 +154,7 @@ PROXY_RESOLVE = r'''
     if-eqz v1, :return_original
     :open_direct
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeClose()V
-    move-object/from16 v6, p0
-    invoke-static {v6}, Lcom/archos/filecorelibrary/webdav/WebdavFile2;->uriToHttp(Landroid/net/Uri;)Landroid/net/Uri;
+    invoke-static {p0}, Lcom/archos/filecorelibrary/webdav/WebdavFile2;->uriToHttp(Landroid/net/Uri;)Landroid/net/Uri;
     move-result-object v1
     if-eqz v1, :fail
     invoke-virtual {v1}, Landroid/net/Uri;->toString()Ljava/lang/String;
@@ -304,8 +162,7 @@ PROXY_RESOLVE = r'''
     const-string v3, ""
     invoke-static {}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getInstance()Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;
     move-result-object v4
-    move-object/from16 v6, p0
-    invoke-virtual {v6}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    invoke-virtual {p0}, Landroid/net/Uri;->toString()Ljava/lang/String;
     move-result-object v5
     invoke-virtual {v4, v5}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getCredential(Ljava/lang/String;)Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;
     move-result-object v6
@@ -347,21 +204,6 @@ PROXY_RESOLVE = r'''
     invoke-virtual {v10}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v3
     :open
-    # Both origins are preserved. Only ISO enters the proven Run680 resolver;
-    # MKV/MP4/AVI use a single credential-scoped ranged GET at the data byte.
-    move-object v14, v2
-    move-object v15, v3
-    move-object/from16 v6, p0
-    invoke-virtual {v6}, Landroid/net/Uri;->getPath()Ljava/lang/String;
-    move-result-object v0
-    if-eqz v0, :nova_file_single_get
-    sget-object v13, Ljava/util/Locale;->ROOT:Ljava/util/Locale;
-    invoke-virtual {v0, v13}, Ljava/lang/String;->toLowerCase(Ljava/util/Locale;)Ljava/lang/String;
-    move-result-object v0
-    const-string v13, ".iso"
-    invoke-virtual {v0, v13}, Ljava/lang/String;->endsWith(Ljava/lang/String;)Z
-    move-result v0
-    if-eqz v0, :nova_file_single_get
     invoke-static {v2, v3}, Lcom/archos/mediacenter/video/player/DirectRedirectResolver;->resolve(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;
     move-result-object v12
     if-eqz v12, :fail
@@ -390,8 +232,7 @@ PROXY_RESOLVE = r'''
     const-string v3, ""
     :native_open
     # Avoid races with another pending source changing global sIso.
-    move-object/from16 v6, p0
-    invoke-virtual {v6}, Landroid/net/Uri;->getPath()Ljava/lang/String;
+    invoke-virtual {p0}, Landroid/net/Uri;->getPath()Ljava/lang/String;
     move-result-object v0
     if-eqz v0, :native_not_iso
     sget-object v13, Ljava/util/Locale;->ROOT:Ljava/util/Locale;
@@ -404,17 +245,12 @@ PROXY_RESOLVE = r'''
     :native_not_iso
     const/4 v0, 0x0
     :native_iso_ready
-    invoke-static {v2, v3, v0, v14, v15}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    invoke-static {v2, v3, v0}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
     move-result-object v2
     if-eqz v2, :fail
     invoke-static {v2}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
     move-result-object p0
     return-object p0
-    :nova_file_single_get
-    const/4 v0, 0x0
-    move-object v2, v14
-    const-string v3, ""
-    goto :native_iso_ready
     :fail
     new-instance v0, Ljava/lang/RuntimeException;
     const-string v1, "Unable to open direct native transport"
@@ -424,7 +260,7 @@ PROXY_RESOLVE = r'''
     return-object p0
 .end method
 
-.method private static native nativeOpen(Ljava/lang/String;Ljava/lang/String;ZLjava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+.method private static native nativeOpen(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;
 .end method
 .method public static native nativeClose()V
 .end method
@@ -638,7 +474,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     return-void
 .end method
 
-.method public static sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
+.method private static sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
     .locals 4
     if-eqz p0, :no
     if-eqz p1, :no
@@ -1055,7 +891,6 @@ def main():
     (smali_dir/"DirectTransportProxy.smali").write_text(PROXY_HEAD+PROXY_RESOLVE)
     (smali_dir/"DirectPlayerFactory.smali").write_text(FACTORY)
     (smali_dir/"DirectRedirectResolver.smali").write_text(REDIRECT_RESOLVER)
-    (smali_dir/"DirectRangeHttp.smali").write_text(DIRECT_RANGE_HTTP)
     (smali_dir/"WeakStartProxy.smali").write_text(WEAK_START)
 
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):

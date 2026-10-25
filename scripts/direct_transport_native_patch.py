@@ -30,14 +30,7 @@ static int nova_direct_read(void *opaque, uint8_t *dst, int size)
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
     if (!raw->direct_read || !raw->transport_generation)
         return AVERROR_EXIT;
-    int got = raw->direct_read(raw->transport_generation, dst, size);
-    /* Non-ISO AVIO's direct mode must clear FFmpeg's sticky error when
-     * the protocol reconnect succeeds. Only RAW's source reader owns it. */
-    if (got > 0 && raw->source && raw->source->direct) {
-        raw->source->error = 0;
-        raw->source->eof_reached = 0;
-    }
-    return got;
+    return raw->direct_read(raw->transport_generation, dst, size);
 }
 
 static int64_t nova_direct_seek(void *opaque, int64_t off, int whence)
@@ -82,19 +75,11 @@ static int nova_direct_source_open(NOVA_RAW_PREFETCH *raw, const char *url)
         return AVERROR(ENOMEM);
     }
     raw->source->seekable = AVIO_SEEKABLE_NORMAL;
-    /* NOVA_NONISO_AVIO_UNLATCH_V1: direct read bypasses FFmpeg's cached
-     * EOF/error, so later retries actually call the FILE data source.
-     * ISO /main.m2ts remains in established buffered mode, unchanged. */
-    if (strstr(url, "/stream?") != NULL)
-        raw->source->direct = 1;
     raw->source_size = raw->direct_size(raw->transport_generation);
     raw->direct_transport = 1;
     serprintf("NOVA_DIRECT_SOURCE_OPEN: generation=%llu size=%lld\n",
         (unsigned long long)raw->transport_generation,
         (long long)raw->source_size);
-    if (raw->source->direct)
-        serprintf("NOVA_NONISO_AVIO_UNLATCH_V1: generation=%llu direct=1\n",
-            (unsigned long long)raw->transport_generation);
     return 0;
 }
 
