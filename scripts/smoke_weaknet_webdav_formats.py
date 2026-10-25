@@ -51,6 +51,11 @@ def test_one(fmt, root, report_dir):
     requests = []
     all_requests = []
     faults = {"probe_503": 0, "short_body": 0}
+    # MKV: issuing two GETs on one signed URL must produce HTTP 403.
+    # DirectRangeHttp must follow the redirect within the SAME data GET.
+    oneuse_next = 0
+    oneuse_used = set()
+    oneuse_records = []
     server = None
     port = None
 
@@ -79,9 +84,37 @@ def test_one(fmt, root, report_dir):
             self.send_error(404)
 
         def do_GET(self):
+            nonlocal oneuse_next
             with lock:
                 all_requests.append({"method": "GET", "path": self.path, "range": self.headers.get("Range", "")})
-            if self.path.split("?", 1)[0] != "/" + media.name:
+            path = self.path.split("?",1)[0]
+            if fmt == "mkv" and path == "/" + media.name:
+                with lock:
+                    oneuse_next += 1
+                    ticket = oneuse_next
+                # One newly issued URL per GET, never reusable after a GET.
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{port}/ticket/{ticket}")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
+            if fmt == "mkv" and path.startswith("/ticket/"):
+                try:
+                    ticket = int(path.split("/",2)[-1])
+                except ValueError:
+                    self.send_error(404)
+                    return
+                with lock:
+                    reused = ticket in oneuse_used
+                    oneuse_used.add(ticket)
+                    oneuse_records.append({"ticket":ticket,"reused":reused,
+                                          "range":self.headers.get("Range","")})
+                if reused:
+                    self.send_error(403)
+                    return
+            elif path != "/" + media.name:
                 self.send_error(404)
                 return
             value = self.headers.get("Range", "")
@@ -191,6 +224,34 @@ def test_one(fmt, root, report_dir):
                                + " all_requests=" + repr(all_snapshot[:16]))
         if len(snapshot) < 3:
             raise RuntimeError(fmt + " did not generate recovery reads")
+        if fmt == "mkv":
+            with lock:
+                oneuse_snapshot = list(oneuse_records)
+            if len(oneuse_snapshot) < 3 or any(e["reused"] for e in oneuse_snapshot):
+                raise RuntimeError("one-use MKV redirected GET was reused: "
+                                   + repr(oneuse_snapshot[:12]))
+            if any(e["range"].strip() == "bytes=0-0" for e in oneuse_snapshot):
+                raise RuntimeError("MKV still performs sacrificial GET bytes=0-0")
+            if "NOVA_NONISO_SINGLE_GET_V1:" not in log:
+                raise RuntimeError("MKV did not use live one-GET Android JNI transport")
+            # The remote MKV must actually seek through its Cues, rather than
+            # merely open/first-frame. Match direct WebDAV DPAD focus strategy.
+            adb("shell","input","keyevent","20")
+            time.sleep(0.4)
+            adb("shell","input","keyevent","20")
+            time.sleep(0.4)
+            seek_marker = "NOVA_MKV_BBC_TEST_" + str(time.monotonic_ns())
+            adb("shell","log","-p","i","-t","NOVA_MKV_BBC_TEST",seek_marker)
+            adb("shell","input","keyevent","22")
+            seeklog = wait_for(
+                lambda t: (
+                    seek_marker in t and
+                    "NOVA_MKV_BBC_CUE_SEEK_V1:" in t[t.rfind(seek_marker):] and
+                    "NOVA_RAW128_SEEK:" in t[t.rfind(seek_marker):]
+                ),40,"actual MKV Cues Seek on redirected WebDAV")
+            log = seeklog
+            print("NOVA_MKV_ONEUSE_WEBDAV_SEEK_SMOKE=PASS: "
+                  "single-use redirects, 503, short body, indexed seek")
         result = {
             "status": "PASS",
             "format": fmt,
@@ -203,6 +264,8 @@ def test_one(fmt, root, report_dir):
             "native_retry_log": "NOVA_WEAKNET_RETRY" in log,
             "java_retry_log": "NOVA_WEAKNET" in log,
             "native_open_ready": True,
+            "one_use_redirects": len(oneuse_records) if fmt=="mkv" else None,
+            "mkv_indexed_seek": fmt=="mkv",
         }
         (report_dir / ("weaknet-" + fmt + "-logcat.txt")).write_text(log)
         print("WEAKNET_WEBDAV_FORMAT_PASS " + json.dumps(result))

@@ -279,9 +279,9 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
             python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
-            # Check actual one-use redirect Smali on a clean idle emulator,
-            # before allocating RAW128/player resources in playback tests.
-            python3 scripts/smoke_noniso_single_get_android.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+            # The actual signed player's WebDAV MKV weak-network test below
+            # verifies one-use signed redirects, first frame, Range and Seek.
+            # A standalone app_process on Android 11 was OOM-killed twice.
             python3 scripts/smoke_direct_webdav.py --reports reports
             python3 scripts/smoke_weaknet_webdav_formats.py --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
