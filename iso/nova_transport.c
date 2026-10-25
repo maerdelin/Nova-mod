@@ -54,6 +54,9 @@ typedef struct nova_session {
     nova_mode mode;
     AVIOContext *upstream;
     int64_t upstream_pos;
+    /* NOVA_NONISO_SEEK_HEAL_V1: committed media cursor survives transient
+     * HTTP Range errors; only a successful seek/read may update it. */
+    int64_t file_cursor;
     int64_t upstream_size;
     BLURAY *bd;
     uint64_t output_size;
@@ -134,7 +137,9 @@ static int nova_upstream_connect(nova_session *s)
     av_dict_set(&opts, "reconnect_streamed", "1", 0);
     av_dict_set(&opts, "reconnect_at_eof", "0", 0);
     av_dict_set(&opts, "reconnect_delay_max", "3", 0);
-    av_dict_set(&opts, "rw_timeout", "15000000", 0);
+    /* Reduce lock-holding time on a failed non-ISO range read only. */
+    av_dict_set(&opts, "rw_timeout",
+                s->mode == NOVA_MODE_FILE ? "5000000" : "15000000", 0);
     AVIOInterruptCB cb = { .callback = transport_interrupt, .opaque = s };
     int rc = avio_open2(&fresh, s->upstream_url, AVIO_FLAG_READ, &cb, &opts);
     av_dict_free(&opts);
@@ -248,35 +253,93 @@ static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
     return done == bytes ? done : -1;
 }
 
+/* NOVA_NONISO_SEEK_HEAL_V1: file-only transactional seek and reconnect.
+ * A valid in-range byte seek can fail EINVAL after a stale HTTP Range stream.
+ * Never reuse the failed AVIOContext; never advance file_cursor on error.
+ * The ISO CLPI/time seek path remains separate and unmodified.
+ */
+static int nova_file_seek_retry(nova_session *s, int64_t target)
+{
+    if (target<0 || target>s->upstream_size) return AVERROR(EINVAL);
+    for (unsigned attempt=1; attempt<=3 && !s->stopping; ++attempt) {
+        if (s->upstream &&
+            (s->upstream->error || s->upstream->eof_reached)) {
+            LOGI("NOVA_FILE_AVIO_REOPEN: at=%" PRId64
+                 " err=%d eof=%d attempt=%u",target,
+                 s->upstream->error,s->upstream->eof_reached,attempt);
+            nova_upstream_drop(s);
+        }
+        if (!s->upstream) {
+            int rc=nova_upstream_connect(s);
+            if (rc<0) {
+                LOGI("NOVA_FILE_SEEK_RETRY: phase=open at=%" PRId64
+                     " attempt=%u rc=%d",target,attempt,rc);
+                if (nova_weak_terminal_error(rc)) return rc;
+                if (attempt<3) nova_weak_backoff(s,attempt);
+                continue;
+            }
+        }
+        if (s->upstream_pos==target) return 0;
+        int64_t moved=avio_seek(s->upstream,target,SEEK_SET);
+        if (moved==target) {
+            s->upstream_pos=target;
+            if (attempt>1)
+                LOGI("NOVA_FILE_SEEK_RECOVERED: at=%" PRId64
+                     " attempt=%u",target,attempt);
+            return 0;
+        }
+        LOGI("NOVA_FILE_SEEK_RETRY: phase=seek at=%" PRId64
+             " attempt=%u rc=%" PRId64,target,attempt,moved);
+        /* Even a failed HTTP seek can change protocol state. Drop it. */
+        nova_upstream_drop(s);
+        if (moved==AVERROR_HTTP_BAD_REQUEST ||
+            moved==AVERROR_HTTP_UNAUTHORIZED ||
+            moved==AVERROR_HTTP_FORBIDDEN ||
+            moved==AVERROR_HTTP_NOT_FOUND ||
+            moved==AVERROR(EACCES) || moved==AVERROR(ENOENT) ||
+            moved==AVERROR(ENOSYS)) return (int)moved;
+        if (attempt<3) nova_weak_backoff(s,attempt);
+    }
+    /* A finite error frees source_mutex so a new remote seek can proceed. */
+    return s->stopping ? AVERROR_EXIT : AVERROR(EAGAIN);
+}
+
 static int nova_upstream_read_some_retry(nova_session *s, uint8_t *dst, int bytes)
 {
-    unsigned failures = 0;
-    /* Keep the expected byte offset even when a failed read closes the
-     * AVIOContext and resets upstream_pos to -1. */
-    if (s->stopping)
-        return AVERROR_EXIT;
-    const int64_t at = s->upstream_pos;
-    if (at < 0)
-        return AVERROR(EINVAL);
-    while (!s->stopping) {
-        if (s->upstream_size > 0 && at >= s->upstream_size)
-            return AVERROR_EOF;
-        if (nova_upstream_seek_retry(s, at) < 0)
-            return s->stopping ? AVERROR_EXIT : AVERROR(EIO);
-        int got = avio_read(s->upstream, dst, bytes);
-        if (got > 0) {
-            s->upstream_pos += got;
+    if (s->stopping) return AVERROR_EXIT;
+    if (!dst || bytes<=0) return AVERROR(EINVAL);
+    const int64_t at=s->file_cursor;
+    if (at<0 || at>s->upstream_size) return AVERROR(EINVAL);
+    if (at==s->upstream_size) return AVERROR_EOF;
+    for (unsigned attempt=1; attempt<=3 && !s->stopping; ++attempt) {
+        int rc=nova_file_seek_retry(s,at);
+        if (rc<0) {
+            LOGI("NOVA_FILE_READ_RETRY: phase=seek at=%" PRId64
+                 " attempt=%u rc=%d",at,attempt,rc);
+            if (rc==AVERROR_HTTP_UNAUTHORIZED ||
+                rc==AVERROR_HTTP_FORBIDDEN ||
+                rc==AVERROR_HTTP_NOT_FOUND ||
+                rc==AVERROR(EACCES) || rc==AVERROR(ENOENT) ||
+                rc==AVERROR(ENOSYS)) return rc;
+            return s->stopping ? AVERROR_EXIT : AVERROR(EAGAIN);
+        }
+        int got=avio_read(s->upstream,dst,bytes);
+        if (got>0) {
+            s->upstream_pos=at+got;
+            s->file_cursor=at+got;
             return got;
         }
-        if (got < 0 && nova_weak_terminal_error(got))
-            return got;
-        ++failures;
-        LOGI("NOVA_WEAKNET_RETRY phase=file_read count=%u at=%" PRId64
-             " rc=%d", failures, at, got);
+        if (got==AVERROR_HTTP_UNAUTHORIZED ||
+            got==AVERROR_HTTP_FORBIDDEN ||
+            got==AVERROR_HTTP_NOT_FOUND ||
+            got==AVERROR(EACCES) || got==AVERROR(ENOENT)) return got;
+        /* Early EOF below known file size is a broken stream, not EOF. */
+        LOGI("NOVA_FILE_READ_RETRY: phase=read at=%" PRId64
+             " attempt=%u rc=%d",at,attempt,got);
         nova_upstream_drop(s);
-        nova_weak_backoff(s, failures);
+        if (attempt<3) nova_weak_backoff(s,attempt);
     }
-    return AVERROR_EXIT;
+    return s->stopping ? AVERROR_EXIT : AVERROR(EAGAIN);
 }
 
 /* ISO_META_CACHE_BEGIN
@@ -650,14 +713,23 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
         } else {
             int64_t target = offset;
             if (whence == SEEK_CUR)
-                target = s->upstream_pos + offset;
+                target = s->file_cursor + offset;
             else if (whence == SEEK_END)
                 target = s->upstream_size + offset;
             else if (whence != SEEK_SET)
                 target = -1;
-            if (target >= 0 && target <= s->upstream_size &&
-                nova_upstream_seek_retry(s, target) == 0)
-                ret = target;
+            if (target>=0 && target<=s->upstream_size) {
+                int rc=nova_file_seek_retry(s,target);
+                if (rc==0) {
+                    s->file_cursor=target;
+                    ret=target;
+                } else {
+                    ret=rc;
+                    LOGI("NOVA_FILE_SEEK_FAIL: requested=%" PRId64
+                         " committed=%" PRId64 " rc=%d",
+                         target,s->file_cursor,rc);
+                }
+            }
         }
     }
     if (whence != AVSEEK_SIZE)

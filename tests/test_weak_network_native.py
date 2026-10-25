@@ -38,7 +38,7 @@ class NativeWeakNetworkTests(unittest.TestCase):
 #define NOVA_WEAK_RETRY_MAX_DELAY_MS 3000
 #define LOGI(...) do {} while (0)
 #define LOGE(...) do {} while (0)
-typedef struct avio { int64_t pos; } AVIOContext;
+typedef struct avio { int64_t pos; int error; int eof_reached; } AVIOContext;
 typedef struct dict { int unused; } AVDictionary;
 typedef struct avio_interrupt {
     int (*callback)(void *);
@@ -51,9 +51,10 @@ typedef struct nova_session {
     char *upstream_headers;
     int64_t upstream_size;
     int64_t upstream_pos;
+    int64_t file_cursor;
 } nova_session;
 static int open_count, fail_open_once, fail_open_404;
-static int seek_count, fail_seek_once;
+static int seek_count, fail_seek_once, fail_seek_einval_once, fail_seek_einval_always;
 static int read_count, read_mode;
 static int transport_interrupt(void *opaque) {
     return ((nova_session *)opaque)->stopping;
@@ -76,12 +77,23 @@ static int64_t avio_seek(AVIOContext *io, int64_t p, int whence) {
     assert(whence == SEEK_SET);
     seek_count++;
     if (fail_seek_once) { fail_seek_once = 0; return -EIO; }
+    if (fail_seek_einval_once || fail_seek_einval_always) {
+        fail_seek_einval_once = 0;
+        io->error = -EINVAL;
+        io->eof_reached = 1;
+        return -EINVAL;
+    }
     if (p < 0 || p >= 1024 * 1024) return -EINVAL;
     io->pos = p; return p;
 }
 static int avio_read(AVIOContext *io, uint8_t *dst, int bytes) {
     read_count++;
-    if (read_mode == 2) { read_mode = 0; return -EIO; }
+    if (io->error) return io->error;
+    if (io->eof_reached) return AVERROR_EOF;
+    if (read_mode == 2) {
+        read_mode = 0; io->error = -EIO; io->eof_reached = 1;
+        return -EIO;
+    }
     int got = bytes;
     if (got > 4096) got = 4096;
     if (read_mode == 1) { if (got > 1000) got = 1000; read_mode = 2; }
@@ -118,11 +130,33 @@ int main(void) {
     /* File playback read retries must not lose the old offset when the
      * AVIOContext is dropped and upstream_pos temporarily becomes -1. */
     assert(nova_upstream_seek_retry(&s, 650000) == 0);
+    s.file_cursor = 650000;
     read_mode = 2;
     int previous_opens = open_count;
     assert(nova_upstream_read_some_retry(&s, buf, 4096) == 4096);
     expect_data(buf, 650000, 4096);
-    assert(open_count == previous_opens + 1 && s.upstream_pos == 654096);
+    assert(open_count == previous_opens + 1 &&
+           s.upstream_pos == 654096 && s.file_cursor == 654096);
+
+    /* Exact failure from logs: valid in-range EINVAL, stale AVIO EOF. */
+    previous_opens = open_count;
+    fail_seek_einval_once = 1;
+    assert(nova_file_seek_retry(&s, 720000) == 0);
+    assert(open_count > previous_opens && s.upstream_pos == 720000);
+    s.file_cursor = 720000;
+    assert(nova_upstream_read_some_retry(&s, buf, 4096) == 4096);
+    expect_data(buf, 720000, 4096);
+    assert(s.file_cursor == 724096);
+
+    /* Even a persistent invalid-range response must be bounded and must
+     * never corrupt the previous committed position or block exit. */
+    int64_t committed = s.file_cursor;
+    fail_seek_einval_always = 1;
+    assert(nova_file_seek_retry(&s, 730000) == AVERROR(EAGAIN));
+    assert(s.file_cursor == committed);
+    fail_seek_einval_always = 0;
+    assert(nova_file_seek_retry(&s, 730000) == 0);
+    s.file_cursor = 730000;
 
     fail_seek_once = 1;
     assert(nova_upstream_seek_retry(&s, 700000) == 0);
