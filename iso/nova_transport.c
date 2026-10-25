@@ -922,6 +922,28 @@ static int nova_file_java_read(nova_session *s,uint8_t *dst,int bytes)
 /* NOVA_MKV_SINGLE_GET_V2: MKV only. Run687 TS/MP4/ISO AVIO remains unchanged.
  * Restart truncated reads exactly at committed byte, never at the old probe.
  */
+
+/* NOVA_MKV_RANGE_RETRY_V2: three attempts for a transient GET failure only.
+ * A terminal 401/403/404 returns immediately, without scanning old data.
+ * The committed media cursor is updated by the caller on success only. */
+static int nova_mkv_seek_retry(nova_session *s,int64_t target)
+{
+    if(target<0 || target>s->upstream_size)return AVERROR(EINVAL);
+    if(target==s->upstream_size)return 0;
+    if(s->file_stream && target==s->file_cursor &&
+       s->upstream_pos==target)return 0;
+    int rc=AVERROR(EIO);
+    for(unsigned attempt=1;attempt<=3 && !s->stopping;++attempt){
+        rc=nova_file_java_open_at(s,target);
+        if(rc==0)return 0;
+        LOGI("NOVA_MKV_RANGE_RETRY_V2: at=%" PRId64
+             " attempt=%u rc=%d",target,attempt,rc);
+        if(nova_weak_terminal_error(rc))return rc;
+        if(attempt<3)nova_weak_backoff(s,attempt);
+    }
+    return s->stopping ? AVERROR_EXIT : rc;
+}
+
 static int nova_mkv_single_get_read(nova_session *s, uint8_t *dst, int bytes)
 {
     if(s->stopping)return AVERROR_EXIT;
@@ -1231,9 +1253,8 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
             else if (whence != SEEK_SET)
                 target = -1;
             if (target>=0 && target<=s->upstream_size) {
-                int rc=s->file_http_mode ?
-                  (target==s->upstream_size ? 0 : nova_file_java_open_at(s,target)) :
-                  nova_file_seek_retry(s,target);
+                int rc=s->file_http_mode ? nova_mkv_seek_retry(s,target) :
+                                         nova_file_seek_retry(s,target);
                 if (rc==0) {
                     s->file_cursor=target;
                     ret=target;

@@ -20,6 +20,8 @@ class BbcMkvRegression(unittest.TestCase):
         self.assertIn('first!=target || last<first',n)
         self.assertIn('total<=0 || last>=total',n)
         self.assertIn('sameOrigin(Ljava/net/URL;Ljava/net/URL;)',java)
+        self.assertIn('NOVA_MKV_RANGE_RETRY_V2',n)
+        self.assertIn('if(nova_weak_terminal_error(rc))return rc;',n)
 
     def test_run680_iso_seek_fragment_is_unchanged(self):
         n=src("iso/nova_transport.c")

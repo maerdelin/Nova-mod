@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -85,6 +86,10 @@ def run(apk,report):
     try:
         subprocess.run(["adb","push",str(apk),"/data/local/tmp/nova-singleget.apk"],
                        check=True,timeout=120,capture_output=True,text=True)
+        # Android 11 emulator memory can retain the prior two-launch player.
+        # Keep the Smali verifier isolated from the native RAW128 process.
+        subprocess.run(["adb","shell","am","force-stop","org.courville.nova"],
+                       capture_output=True,text=True,timeout=20,check=False)
         results=[]
         for offset in OFFSETS:
             url=f"http://10.0.2.2:{origin.server_port}/dav/media.mkv"
@@ -94,6 +99,14 @@ def run(apk,report):
                   "com.archos.mediacenter.video.player.DirectRangeHttp",
                   url,AUTH,str(offset),str(offset%251)]
             r=subprocess.run(args,capture_output=True,text=True,timeout=45)
+            if r.returncode==137:
+                # Only a SIGKILL may be retried, never HTTP/Smali failures.
+                print(f"ANDROID_APP_PROCESS_KILLED: offset={offset}; memory retry once",
+                      flush=True)
+                subprocess.run(["adb","shell","am","force-stop","org.courville.nova"],
+                               capture_output=True,text=True,timeout=20,check=False)
+                time.sleep(2.0)
+                r=subprocess.run(args,capture_output=True,text=True,timeout=45)
             results.append({"offset":offset,"exit":r.returncode,
                             "stdout":r.stdout[-2000:],"stderr":r.stderr[-2000:]})
             if r.returncode or "NOVA_SINGLE_GET_ANDROID_PASS" not in r.stdout:
