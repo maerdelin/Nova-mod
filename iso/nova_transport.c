@@ -57,6 +57,7 @@ typedef struct nova_session {
     /* NOVA_NONISO_SEEK_HEAL_V1: committed media cursor survives transient
      * HTTP Range errors; only a successful seek/read may update it. */
     int64_t file_cursor;
+    int file_range_probe_done; /* One non-ISO diagnostic per file playback. */
     int64_t upstream_size;
     BLURAY *bd;
     uint64_t output_size;
@@ -258,6 +259,58 @@ static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
  * Never reuse the failed AVIOContext; never advance file_cursor on error.
  * The ISO CLPI/time seek path remains separate and unmodified.
  */
+/* NOVA_HTTP_RANGE_ROOT_DIAG_V1: independent protocol diagnosis, never
+ * a retry or seek fallback. At the first EINVAL on a valid FILE seek,
+ * issue two separate HTTP GETs (Range target and Range zero), compare
+ * 32 bytes, and log only result codes/sizes. The active reader, offsets,
+ * credentials and the established ISO seek are never altered. */
+static int nova_file_sample_at(nova_session *s,int64_t offset,
+                               uint8_t sample[32],int64_t *size)
+{
+    AVIOContext *probe=NULL;
+    AVDictionary *opts=NULL;
+    char pos[40];
+    snprintf(pos,sizeof(pos),"%" PRId64,offset);
+    if(s->upstream_headers && *s->upstream_headers)
+        av_dict_set(&opts,"headers",s->upstream_headers,0);
+    av_dict_set(&opts,"offset",pos,0);
+    av_dict_set(&opts,"reconnect","0",0);
+    av_dict_set(&opts,"rw_timeout","5000000",0);
+    AVIOInterruptCB cb={.callback=transport_interrupt,.opaque=s};
+    int rc=avio_open2(&probe,s->upstream_url,AVIO_FLAG_READ,&cb,&opts);
+    av_dict_free(&opts);
+    if(rc<0 || !probe){
+        if(probe) avio_closep(&probe);
+        return rc<0?rc:AVERROR(EIO);
+    }
+    *size=avio_size(probe);
+    int got=avio_read(probe,sample,32);
+    avio_closep(&probe);
+    return got;
+}
+
+static void nova_file_probe_first_range_failure(nova_session *s,
+    int64_t target,int64_t seek_rc,int original_error,
+    int original_eof,int64_t original_tell)
+{
+    if(s->file_range_probe_done || s->stopping ||
+       target<32 || target>=s->upstream_size) return;
+    s->file_range_probe_done=1;
+    uint8_t at[32]={0},zero[32]={0};
+    int64_t at_size=-1,zero_size=-1;
+    int at_rc=nova_file_sample_at(s,target,at,&at_size);
+    int zero_rc=nova_file_sample_at(s,0,zero,&zero_size);
+    int same=(at_rc==32 && zero_rc==32) ?
+             (memcmp(at,zero,32)==0) : -1;
+    LOGI("NOVA_HTTP_RANGE_ROOT_DIAG_V1: offset=%" PRId64
+         " seek_rc=%" PRId64 " orig_err=%d orig_eof=%d"
+         " orig_tell=%" PRId64 " fresh_at=%d fresh_zero=%d"
+         " same32=%d expected_size=%" PRId64
+         " at_size=%" PRId64 " zero_size=%" PRId64,
+         target,seek_rc,original_error,original_eof,original_tell,
+         at_rc,zero_rc,same,s->upstream_size,at_size,zero_size);
+}
+
 static int nova_file_seek_retry(nova_session *s, int64_t target)
 {
     if (target<0 || target>s->upstream_size) return AVERROR(EINVAL);
@@ -280,6 +333,9 @@ static int nova_file_seek_retry(nova_session *s, int64_t target)
             }
         }
         if (s->upstream_pos==target) return 0;
+        int original_error=s->upstream->error;
+        int original_eof=s->upstream->eof_reached;
+        int64_t original_tell=avio_tell(s->upstream);
         int64_t moved=avio_seek(s->upstream,target,SEEK_SET);
         if (moved==target) {
             s->upstream_pos=target;
@@ -290,6 +346,9 @@ static int nova_file_seek_retry(nova_session *s, int64_t target)
         }
         LOGI("NOVA_FILE_SEEK_RETRY: phase=seek at=%" PRId64
              " attempt=%u rc=%" PRId64,target,attempt,moved);
+        if(moved==AVERROR(EINVAL))
+            nova_file_probe_first_range_failure(s,target,moved,
+                original_error,original_eof,original_tell);
         /* Even a failed HTTP seek can change protocol state. Drop it. */
         nova_upstream_drop(s);
         if (moved==AVERROR_HTTP_BAD_REQUEST ||
