@@ -109,6 +109,7 @@ static int avio_read(AVIOContext *io, uint8_t *dst, int bytes) {
     io->pos += got;
     return got;
 }
+static void nova_file_java_close_active(nova_session *s){ s->file_stream=NULL; }
 static int java_single_get_opens;
 static int nova_file_java_open_at(nova_session *s,int64_t at){
     java_single_get_opens++;
