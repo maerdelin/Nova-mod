@@ -70,7 +70,7 @@ def main():
     a=ap.parse_args()
     f=a.native/'Source/stream_parser_ffmpeg.c'
     s=f.read_text()
-    assert 'NOVA_PGS_HISTORY_BYPASS_AB_V1' in s
+    assert 'NOVA_SUB_HISTORY_DISABLED_ALL_V1' in s
     s=once(s,'typedef struct NOVA_RAW_PREFETCH {',
        'typedef int64_t (*nova_transport_time_byte_fn)(uint64_t,int64_t);\n'
        'typedef struct NOVA_RAW_PREFETCH {')
