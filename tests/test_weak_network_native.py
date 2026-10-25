@@ -55,6 +55,8 @@ typedef struct nova_session {
     int64_t upstream_pos;
     int64_t file_cursor;
     int requires_origin_refresh;
+    int file_http_mode;
+    void *file_stream;
 } nova_session;
 static int open_count, fail_open_once, fail_open_404;
 static int seek_count, fail_seek_once, fail_seek_einval_once, fail_seek_einval_always;
@@ -105,6 +107,18 @@ static int avio_read(AVIOContext *io, uint8_t *dst, int bytes) {
     for (int j = 0; j < got; j++)
         dst[j] = (uint8_t)((io->pos + j) % 251);
     io->pos += got;
+    return got;
+}
+static int java_single_get_opens;
+static int nova_file_java_open_at(nova_session *s,int64_t at){
+    java_single_get_opens++;
+    s->file_stream=(void *)1;
+    s->upstream_pos=at;
+    return 0;
+}
+static int nova_file_java_read(nova_session *s,uint8_t *dst,int n){
+    int got=n>4096?4096:n;
+    for(int j=0;j<got;j++)dst[j]=(uint8_t)((s->file_cursor+j)%251);
     return got;
 }
 static int fresh_origin_opens;
@@ -184,6 +198,22 @@ int main(void) {
     expect_data(buf,780000,4096);
     assert(fresh_origin_opens==previous_opens+1);
     s.requires_origin_refresh=0;
+
+    /* New production path, not a failed-GET retry: ONE live data stream
+     * is opened at an exact arbitrary offset, then reused for reads.
+     * A large discontinuous second seek initiates a single new stream. */
+    s.file_http_mode=1;
+    int oldjava=java_single_get_opens;
+    assert(nova_file_seek_retry(&s,800000)==0);
+    assert(java_single_get_opens==oldjava+1);
+    s.file_cursor=800000;
+    assert(nova_upstream_read_some_retry(&s,buf,4096)==4096);
+    expect_data(buf,800000,4096);
+    assert(java_single_get_opens==oldjava+1);
+    assert(nova_file_seek_retry(&s,800000)==0);
+    assert(java_single_get_opens==oldjava+2);
+    s.file_http_mode=0;
+    s.file_stream=NULL;
 
     fail_seek_once = 1;
     assert(nova_upstream_seek_retry(&s, 700000) == 0);

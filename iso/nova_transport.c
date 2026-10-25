@@ -75,6 +75,16 @@ typedef struct nova_session {
     jclass resolver_class;
     jmethodID resolver_method;
     int requires_origin_refresh;
+    /* NOVA_NONISO_SINGLE_GET_V1: live one-GET HTTP range via JNI.
+     * ISO never uses these fields or callbacks. */
+    int file_http_mode;
+    jobject file_conn;
+    jobject file_stream;
+    jclass file_http_class;
+    jmethodID file_http_open;
+    jmethodID file_conn_disconnect;
+    jmethodID file_stream_read;
+    jmethodID file_stream_close;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
     uint64_t iso_meta_tick;
     uint64_t iso_meta_reads;
@@ -90,6 +100,9 @@ static uint64_t g_generation = 0;
 static JavaVM *g_java_vm = NULL;
 /* Implemented after the ISO metadata helpers, isolated from UDF/CLPI. */
 static int nova_file_open_fresh_at(nova_session *s, int64_t target);
+static int nova_file_java_open_at(nova_session *s,int64_t target);
+static int nova_file_java_read(nova_session *s,uint8_t *dst,int bytes);
+static void nova_file_java_close_active(nova_session *s);
 
 static int transport_interrupt(void *opaque)
 {
@@ -273,6 +286,15 @@ static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
 static int nova_file_seek_retry(nova_session *s, int64_t target)
 {
     if (target<0 || target>s->upstream_size) return AVERROR(EINVAL);
+    /* MKV/MP4 use FFmpeg's own container keyframe tables (Cues/stss).
+     * The transport makes ONE exact request; no stale signed redirect, no
+     * probe GET, no blind 3-try fallback on a valid byte position. */
+    if(s->file_http_mode){
+        if(target==s->upstream_size)return 0;
+        if(s->file_stream && target==s->file_cursor &&
+           s->upstream_pos==target)return 0;
+        return nova_file_java_open_at(s,target);
+    }
     /* Logical EOF seek is legal: no HTTP Range=bytes=size- request (416). */
     if(target==s->upstream_size){
         s->upstream_pos=target;
@@ -341,6 +363,18 @@ static int nova_upstream_read_some_retry(nova_session *s, uint8_t *dst, int byte
     const int64_t at=s->file_cursor;
     if (at<0 || at>s->upstream_size) return AVERROR(EINVAL);
     if (at==s->upstream_size) return AVERROR_EOF;
+    if(s->file_http_mode){
+        if(!s->file_stream || s->upstream_pos!=at){
+            int opened=nova_file_java_open_at(s,at);
+            if(opened<0)return opened;
+        }
+        int got=nova_file_java_read(s,dst,bytes);
+        if(got>0){
+            s->file_cursor=at+got;
+            s->upstream_pos=at+got;
+        }
+        return got;
+    }
     for (unsigned attempt=1; attempt<=3 && !s->stopping; ++attempt) {
         int rc=nova_file_seek_retry(s,at);
         if (rc<0) {
@@ -561,6 +595,16 @@ static JNIEnv *nova_file_get_env(JavaVM *vm,int *needs_detach)
 
 static void nova_file_release_java(nova_session *s)
 {
+    if(s->file_http_mode){
+        nova_file_java_close_active(s);
+        if(s->file_http_class && s->resolver_vm){
+            int detached=0;
+            JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
+            if(env)(*env)->DeleteGlobalRef(env,s->file_http_class);
+            if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+            s->file_http_class=NULL;
+        }
+    }
     if(s->resolver_class && s->resolver_vm){
         int detach=0;
         JNIEnv *env=nova_file_get_env(s->resolver_vm,&detach);
@@ -669,6 +713,236 @@ static int nova_file_open_fresh_at(nova_session *s,int64_t target)
     s->upstream_pos=target;
     LOGI("NOVA_FILE_FRESH_RANGE_V1: at=%" PRId64 " result=ok",target);
     return 0;
+}
+
+/* NOVA_NONISO_SINGLE_GET_V1
+ * A JNI-owned HttpURLConnection is already connected at EXACT Range target;
+ * Java returns its LIVE InputStream, not a short-lived signed URL. Therefore
+ * one-shot redirects are never consumed by a sacrificial GET 0-0 probe.
+ * Java explicitly strips Authorization outside the original scheme/host/port.
+ * FFmpeg sees the normal seekable AVIO source and owns the actual MKV/MP4
+ * Cues / sample-table keyframe lookup; no bitrate-to-byte approximation.
+ */
+static void nova_file_java_clear_exception(JNIEnv *env)
+{
+    if((*env)->ExceptionCheck(env)){
+        (*env)->ExceptionClear(env);
+    }
+}
+
+static void nova_file_java_close_active(nova_session *s)
+{
+    if(!s->file_conn && !s->file_stream)return;
+    int detached=0;
+    JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
+    if(env){
+        if(s->file_stream){
+            if(s->file_stream_close)
+                (*env)->CallVoidMethod(env,s->file_stream,s->file_stream_close);
+            nova_file_java_clear_exception(env);
+            (*env)->DeleteGlobalRef(env,s->file_stream);
+        }
+        if(s->file_conn){
+            if(s->file_conn_disconnect)
+                (*env)->CallVoidMethod(env,s->file_conn,s->file_conn_disconnect);
+            nova_file_java_clear_exception(env);
+            (*env)->DeleteGlobalRef(env,s->file_conn);
+        }
+    }
+    s->file_stream=NULL;
+    s->file_conn=NULL;
+    if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+}
+
+static int nova_file_java_http_error(jint code)
+{
+    switch(code){
+        case 400:return AVERROR_HTTP_BAD_REQUEST;
+        case 401:return AVERROR_HTTP_UNAUTHORIZED;
+        case 403:return AVERROR_HTTP_FORBIDDEN;
+        case 404:return AVERROR_HTTP_NOT_FOUND;
+        case 416:return AVERROR(EINVAL);
+        default:return AVERROR(EIO);
+    }
+}
+
+/* Verifies a real Content-Range START and immutable TOTAL before committing
+ * the new connection/cursor. HTTP 200 for offset>0 is always rejected. */
+static int nova_file_java_open_at(nova_session *s,int64_t target)
+{
+    if(!s->file_http_mode || !s->resolver_vm || !s->file_http_class ||
+       !s->file_http_open || !s->origin_url || s->stopping ||
+       target<0 || (s->upstream_size>=0 && target>=s->upstream_size))
+        return AVERROR(EINVAL);
+    int detached=0;
+    int ret=AVERROR(EIO);
+    JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
+    if(!env)return ret;
+    jstring origin=(*env)->NewStringUTF(env,s->origin_url);
+    jstring auth=(*env)->NewStringUTF(env,
+                     s->origin_auth ? s->origin_auth : "");
+    jobject conn=NULL,stream=NULL;
+    jclass conn_class=NULL,stream_class=NULL;
+    jstring header_name=NULL,content_range=NULL;
+    int64_t file_size=-1;
+    if(!origin || !auth)goto done;
+    conn=(*env)->CallStaticObjectMethod(env,s->file_http_class,
+           s->file_http_open,origin,auth,(jlong)target);
+    if((*env)->ExceptionCheck(env)){
+        nova_file_java_clear_exception(env);
+        goto done;
+    }
+    if(!conn)goto done;
+    conn_class=(*env)->GetObjectClass(env,conn);
+    if(!conn_class)goto done;
+    jmethodID get_code=(*env)->GetMethodID(env,conn_class,"getResponseCode","()I");
+    jmethodID get_header=(*env)->GetMethodID(env,conn_class,"getHeaderField",
+                                           "(Ljava/lang/String;)Ljava/lang/String;");
+    jmethodID get_length=(*env)->GetMethodID(env,conn_class,"getContentLengthLong","()J");
+    jmethodID get_input=(*env)->GetMethodID(env,conn_class,"getInputStream",
+                                          "()Ljava/io/InputStream;");
+    jmethodID disconnect=(*env)->GetMethodID(env,conn_class,"disconnect","()V");
+    if(!get_code || !get_header || !get_length || !get_input || !disconnect){
+        nova_file_java_clear_exception(env);
+        goto done;
+    }
+    jint status=(*env)->CallIntMethod(env,conn,get_code);
+    if((*env)->ExceptionCheck(env)){
+        nova_file_java_clear_exception(env);
+        goto done;
+    }
+    if(status!=206 && !(status==200 && target==0)){
+        ret=nova_file_java_http_error(status);
+        LOGI("NOVA_NONISO_SINGLE_GET_FAIL_V1: at=%" PRId64
+             " http=%d error=%d",target,(int)status,ret);
+        goto done;
+    }
+    header_name=(*env)->NewStringUTF(env,"Content-Range");
+    if(!header_name)goto done;
+    content_range=(jstring)(*env)->CallObjectMethod(env,conn,get_header,header_name);
+    if((*env)->ExceptionCheck(env)){
+        nova_file_java_clear_exception(env);
+        goto done;
+    }
+    if(status==206){
+        if(!content_range)goto done;
+        const char *v=(*env)->GetStringUTFChars(env,content_range,NULL);
+        if(!v)goto done;
+        int64_t first=-1,last=-1,total=-1;
+        int fields=sscanf(v,"bytes %" SCNd64 "-%" SCNd64 "/%" SCNd64,
+                           &first,&last,&total);
+        (*env)->ReleaseStringUTFChars(env,content_range,v);
+        if(fields!=3 || first!=target || last<first ||
+           total<=0 || last>=total){
+            LOGI("NOVA_NONISO_BAD_RANGE_V1: requested=%" PRId64
+                 " status=%d",target,(int)status);
+            ret=AVERROR(EINVAL);
+            goto done;
+        }
+        file_size=total;
+    }else{
+        jlong length=(*env)->CallLongMethod(env,conn,get_length);
+        if((*env)->ExceptionCheck(env)){
+            nova_file_java_clear_exception(env);
+            goto done;
+        }
+        file_size=(int64_t)length;
+        if(file_size<=0){
+            ret=AVERROR(EINVAL);
+            goto done;
+        }
+    }
+    if(s->upstream_size>0 && file_size!=s->upstream_size){
+        LOGI("NOVA_NONISO_SIZE_CHANGED_V1: expected=%" PRId64
+             " got=%" PRId64,s->upstream_size,file_size);
+        ret=AVERROR(EINVAL);
+        goto done;
+    }
+    stream=(*env)->CallObjectMethod(env,conn,get_input);
+    if((*env)->ExceptionCheck(env)){
+        nova_file_java_clear_exception(env);
+        goto done;
+    }
+    if(!stream)goto done;
+    stream_class=(*env)->GetObjectClass(env,stream);
+    if(!stream_class)goto done;
+    jmethodID read=(*env)->GetMethodID(env,stream_class,"read","([BII)I");
+    jmethodID close=(*env)->GetMethodID(env,stream_class,"close","()V");
+    if(!read || !close){
+        nova_file_java_clear_exception(env);
+        goto done;
+    }
+    jobject live_conn=(*env)->NewGlobalRef(env,conn);
+    jobject live_stream=(*env)->NewGlobalRef(env,stream);
+    if(!live_conn || !live_stream){
+        if(live_conn)(*env)->DeleteGlobalRef(env,live_conn);
+        if(live_stream)(*env)->DeleteGlobalRef(env,live_stream);
+        goto done;
+    }
+    /* Transactional commit: old connection stays valid until the fresh
+     * exact-byte response has been validated and its stream is live. */
+    nova_file_java_close_active(s);
+    s->file_conn=live_conn;
+    s->file_stream=live_stream;
+    s->file_conn_disconnect=disconnect;
+    s->file_stream_read=read;
+    s->file_stream_close=close;
+    s->upstream_size=file_size;
+    s->upstream_pos=target;
+    ret=0;
+    LOGI("NOVA_NONISO_SINGLE_GET_V1: at=%" PRId64
+         " http=%d size=%" PRId64,target,(int)status,file_size);
+done:
+    if(ret<0 && conn){
+        jmethodID disconnect=s->file_conn_disconnect;
+        if(!disconnect && conn_class)
+            disconnect=(*env)->GetMethodID(env,conn_class,"disconnect","()V");
+        if(disconnect)(*env)->CallVoidMethod(env,conn,disconnect);
+        nova_file_java_clear_exception(env);
+    }
+    if(stream)(*env)->DeleteLocalRef(env,stream);
+    if(conn)(*env)->DeleteLocalRef(env,conn);
+    if(stream_class)(*env)->DeleteLocalRef(env,stream_class);
+    if(conn_class)(*env)->DeleteLocalRef(env,conn_class);
+    if(content_range)(*env)->DeleteLocalRef(env,content_range);
+    if(header_name)(*env)->DeleteLocalRef(env,header_name);
+    if(origin)(*env)->DeleteLocalRef(env,origin);
+    if(auth)(*env)->DeleteLocalRef(env,auth);
+    if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+    return ret;
+}
+
+static int nova_file_java_read(nova_session *s,uint8_t *dst,int bytes)
+{
+    if(!s->file_stream || !s->file_stream_read || !dst ||
+       bytes<=0 || s->stopping)return AVERROR_EXIT;
+    int detached=0;
+    JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
+    if(!env)return AVERROR(EIO);
+    int ask=bytes>65536 ? 65536 : bytes;
+    if((int64_t)ask>s->upstream_size-s->file_cursor)
+        ask=(int)(s->upstream_size-s->file_cursor);
+    if(ask<=0){
+        if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+        return AVERROR_EOF;
+    }
+    jbyteArray buf=(*env)->NewByteArray(env,ask);
+    int ret=AVERROR(EIO);
+    if(buf){
+        jint got=(*env)->CallIntMethod(env,s->file_stream,
+                                    s->file_stream_read,buf,0,ask);
+        if(!(*env)->ExceptionCheck(env) && got>0 && got<=ask){
+            (*env)->GetByteArrayRegion(env,buf,0,got,(jbyte *)dst);
+            if(!(*env)->ExceptionCheck(env))ret=(int)got;
+        }else{
+            nova_file_java_clear_exception(env);
+            if(got==-1 && s->file_cursor>=s->upstream_size)ret=AVERROR_EOF;
+        }
+        (*env)->DeleteLocalRef(env,buf);
+    }
+    nova_file_java_clear_exception(env);
+    if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+    return ret;
 }
 
 static nova_session *session_acquire(uint64_t generation)
@@ -807,6 +1081,61 @@ static nova_session *session_create(const char *url, const char *headers, int is
     return s;
 }
 
+/* Non-ISO only: one authenticated GET from the canonical WebDAV resource,
+ * following redirects without cross-origin credentials and retaining the
+ * SAME live stream to read bytes. ISO calls session_create() unchanged. */
+static nova_session *session_create_file(JNIEnv *env,const char *url,
+                                         const char *auth)
+{
+    nova_session *s=calloc(1,sizeof(*s));
+    if(!s)return NULL;
+    s->mode=NOVA_MODE_FILE;
+    s->file_http_mode=1;
+    s->resolver_vm=g_java_vm;
+    s->upstream_pos=-1;
+    s->upstream_size=-1;
+    pthread_mutex_init(&s->io_lock,NULL);
+    pthread_cond_init(&s->idle,NULL);
+    s->origin_url=strdup(url ? url : "");
+    s->origin_auth=strdup(auth ? auth : "");
+    s->upstream_url=strdup(url ? url : "");
+    s->upstream_headers=strdup("");
+    if(!s->origin_url || !*s->origin_url || !s->origin_auth ||
+       !s->upstream_url || !s->upstream_headers){
+        session_free(s);
+        return NULL;
+    }
+    jclass local=(*env)->FindClass(env,
+        "com/archos/mediacenter/video/player/DirectRangeHttp");
+    if(local){
+        s->file_http_class=(jclass)(*env)->NewGlobalRef(env,local);
+        (*env)->DeleteLocalRef(env,local);
+    }else{
+        nova_file_java_clear_exception(env);
+    }
+    if(s->file_http_class){
+        s->file_http_open=(*env)->GetStaticMethodID(env,s->file_http_class,
+            "open","(Ljava/lang/String;Ljava/lang/String;J)Ljava/net/HttpURLConnection;");
+        nova_file_java_clear_exception(env);
+    }
+    if(!s->file_http_class || !s->file_http_open){
+        LOGE("NOVA_NONISO_JAVA_RANGE_CLASS_MISSING");
+        session_free(s);
+        return NULL;
+    }
+    pthread_mutex_lock(&g_lock);
+    if(g_opening_session)g_opening_session->stopping=1;
+    g_opening_session=s;
+    pthread_mutex_unlock(&g_lock);
+    if(nova_file_java_open_at(s,0)<0 || s->upstream_size<=0){
+        session_free(s);
+        return NULL;
+    }
+    s->output_size=(uint64_t)s->upstream_size;
+    s->file_cursor=0;
+    return s;
+}
+
 __attribute__((visibility("default")))
 int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
 {
@@ -940,45 +1269,21 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
     const char *headers = jheaders
         ? (*env)->GetStringUTFChars(env, jheaders, NULL) : NULL;
 
-    nova_session *fresh = session_create(url, headers ? headers : "", jiso ? 1 : 0);
-    /* ISO remains on original session_create/nova_transport_seek path.
-     * On redirected FILE playback, retain logical origin and safe Java
-     * resolver so every NEW range can get a fresh signed download URL. */
-    if(fresh && !jiso && jorigin_url){
-        const char *origin=(*env)->GetStringUTFChars(env,jorigin_url,NULL);
-        const char *original_auth=jorigin_auth ?
-          (*env)->GetStringUTFChars(env,jorigin_auth,NULL) : NULL;
-        if(origin && *origin && strcmp(origin,url)!=0){
-            fresh->origin_url=strdup(origin);
-            fresh->origin_auth=strdup(original_auth ? original_auth : "");
-            fresh->resolver_vm=g_java_vm;
-            jclass local=(*env)->FindClass(env,
-                  "com/archos/mediacenter/video/player/DirectRedirectResolver");
-            if(local){
-                fresh->resolver_class=(jclass)(*env)->NewGlobalRef(env,local);
-                (*env)->DeleteLocalRef(env,local);
-            }else if((*env)->ExceptionCheck(env)){
-                (*env)->ExceptionClear(env);
-            }
-            if(fresh->resolver_class)
-                fresh->resolver_method=(*env)->GetStaticMethodID(env,
-                    fresh->resolver_class,"resolve",
-                    "(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;");
-            if((*env)->ExceptionCheck(env))
-                (*env)->ExceptionClear(env);
-            if(!fresh->origin_url || !fresh->origin_auth ||
-               !fresh->resolver_class || !fresh->resolver_method){
-                LOGE("NOVA_FILE_ORIGIN_REFRESH_UNAVAILABLE_V1");
-                session_free(fresh);
-                fresh=NULL;
-            }else{
-                fresh->requires_origin_refresh=1;
-                LOGI("NOVA_FILE_ORIGIN_FRESH_V1: enabled=1");
-            }
-        }
-        if(original_auth)(*env)->ReleaseStringUTFChars(env,jorigin_auth,original_auth);
-        if(origin)(*env)->ReleaseStringUTFChars(env,jorigin_url,origin);
-    }
+    /* Preserve Run680 ISO creation. FILE bypasses eager GET 0-0 and
+     * opens the ORIGINAL WebDAV URI as a live single ranged GET. */
+    const char *canonical=NULL,*canonical_auth=NULL;
+    if(!jiso && jorigin_url)
+        canonical=(*env)->GetStringUTFChars(env,jorigin_url,NULL);
+    if(!jiso && jorigin_auth)
+        canonical_auth=(*env)->GetStringUTFChars(env,jorigin_auth,NULL);
+    nova_session *fresh=jiso ?
+        session_create(url,headers ? headers : "",1) :
+        session_create_file(env,canonical ? canonical : url,
+                            canonical_auth ? canonical_auth : "");
+    if(canonical_auth)
+        (*env)->ReleaseStringUTFChars(env,jorigin_auth,canonical_auth);
+    if(canonical)
+        (*env)->ReleaseStringUTFChars(env,jorigin_url,canonical);
 
     if (headers)
         (*env)->ReleaseStringUTFChars(env, jheaders, headers);
