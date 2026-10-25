@@ -137,7 +137,8 @@ PROXY_RESOLVE = r'''
     .locals 16
     if-eqz p0, :return_original
     # Already resolved on a background worker: never close/reopen it on UI.
-    invoke-virtual {p0}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
+    move-object/from16 v6, p0
+    invoke-virtual {v6}, Landroid/net/Uri;->getScheme()Ljava/lang/String;
     move-result-object v0
     if-eqz v0, :return_original
     const-string v1, "novatransport"
@@ -154,7 +155,8 @@ PROXY_RESOLVE = r'''
     if-eqz v1, :return_original
     :open_direct
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeClose()V
-    invoke-static {p0}, Lcom/archos/filecorelibrary/webdav/WebdavFile2;->uriToHttp(Landroid/net/Uri;)Landroid/net/Uri;
+    move-object/from16 v6, p0
+    invoke-static {v6}, Lcom/archos/filecorelibrary/webdav/WebdavFile2;->uriToHttp(Landroid/net/Uri;)Landroid/net/Uri;
     move-result-object v1
     if-eqz v1, :fail
     invoke-virtual {v1}, Landroid/net/Uri;->toString()Ljava/lang/String;
@@ -162,7 +164,8 @@ PROXY_RESOLVE = r'''
     const-string v3, ""
     invoke-static {}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getInstance()Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;
     move-result-object v4
-    invoke-virtual {p0}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-object/from16 v6, p0
+    invoke-virtual {v6}, Landroid/net/Uri;->toString()Ljava/lang/String;
     move-result-object v5
     invoke-virtual {v4, v5}, Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase;->getCredential(Ljava/lang/String;)Lcom/archos/filecorelibrary/samba/NetworkCredentialsDatabase$Credential;
     move-result-object v6
@@ -236,7 +239,8 @@ PROXY_RESOLVE = r'''
     const-string v3, ""
     :native_open
     # Avoid races with another pending source changing global sIso.
-    invoke-virtual {p0}, Landroid/net/Uri;->getPath()Ljava/lang/String;
+    move-object/from16 v6, p0
+    invoke-virtual {v6}, Landroid/net/Uri;->getPath()Ljava/lang/String;
     move-result-object v0
     if-eqz v0, :native_not_iso
     sget-object v13, Ljava/util/Locale;->ROOT:Ljava/util/Locale;
