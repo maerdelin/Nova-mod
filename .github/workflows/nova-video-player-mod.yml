@@ -335,6 +335,32 @@ jobs:
             case "$old" in nova-mod-*|v9.8.2-cloud-*) gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag ;; esac
           done
 
+      - name: Publish tested Test pre-release APK for direct downloads
+        if: github.ref == 'refs/heads/Test' && github.event_name != 'schedule'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for platform, path in [('Android 11', 'reports/installation.json'),
+                                 ('Android 14', 'reports/android14/installation.json')]:
+              record=json.loads(Path(path).read_text())
+              assert record['status']=='PASS', (platform, record)
+              assert len(record['launches'])==2, (platform, record)
+          PY
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          tag="nova-run-${GITHUB_RUN_NUMBER}-iso-index-1p5x3x"
+          gh release create "$tag" \
+            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Nova Test Run ${GITHUB_RUN_NUMBER}: read-only ISO index + 1.5X/3X" \
+            --prerelease \
+            --notes "Built from pinned Test sources. Android 11 and Android 14 clean install and both launcher checks passed; APK v1/v2 signature and ZIP alignment verified. Single-clip Blu-ray ISO CLPI lookup is non-mutating with FFmpeg fallback. Network ISO playback on the user's Amlogic device remains to be field-tested. Different signing certificates cannot update an installed previous APK. Back up settings before uninstalling."
+          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+
       - name: Upload diagnostics only - no intermediate APKs
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
