@@ -160,8 +160,19 @@ jobs:
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           bash scripts/build_transport_native.sh work/transport-native
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-            grep -aq 'NOVA_ISO_INDEX_MAP_V2' "work/transport-native/$abi/libnova_transport.so" || exit 1
-            grep -aq 'NOVA_ISO_INDEX_SEEK_V2' "native-src/native/avos/libs/$abi/libavos.so" || exit 1
+            transport="work/transport-native/$abi/libnova_transport.so"
+            avos="native-src/native/avos/libs/$abi/libavos.so"
+            if ! grep -aq 'NOVA_ISO_INDEX_MAP_V3' "$transport"; then
+              echo "::error::Run672 index mapping string absent from $transport"
+              strings "$transport" | grep -E '(NOVA_ISO|nova_transport_time_to_byte)' | head -20 || true
+              exit 1
+            fi
+            if ! grep -aq 'NOVA_ISO_INDEX_SEEK_V3' "$avos"; then
+              echo "::error::Run672 index seek string absent from $avos"
+              strings "$avos" | grep -E '(NOVA_ISO|NOVA_RAW_FIXED128_POLICY)' | head -20 || true
+              exit 1
+            fi
+            echo "RUN672_INDEX_SYMBOLS_PASS $abi"
           done
 
       - name: Apply instruction and XML-property patches to latest APK
