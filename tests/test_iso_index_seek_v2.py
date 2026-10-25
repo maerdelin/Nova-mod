@@ -22,7 +22,7 @@ typedef struct NOVA_RAW_PREFETCH {
     nova_transport_abort_fn direct_abort;
 } NOVA_RAW_PREFETCH;
         raw->transport_handle, "nova_transport_abort");
-    int ret = avformat_seek_file( fmt, -1, seek_min, new_pos, seek_max, av_flags);
+	int ret = avformat_seek_file( fmt, -1, seek_min, new_pos, seek_max, av_flags);
 """)
             bridge.write_text("""__attribute__((visibility("default")))
 int64_t nova_transport_size(uint64_t generation)
@@ -37,7 +37,10 @@ int64_t nova_transport_size(uint64_t generation)
             self.assertIn("NOVA_ISO_INDEX_MAP_V2",t)
             self.assertIn("bd_seek_time(s->bd",t)
             self.assertIn("AVSEEK_FLAG_BYTE|AVSEEK_FLAG_BACKWARD",patched)
-            self.assertIn("restored=(int64_t)bd_tell(s->bd)",t)
+            self.assertIn("int64_t next=(int64_t)bd_tell(s->bd)",t)
+            self.assertIn("restored=next;",t)
+            self.assertNotIn("before-restored<=65536",t)
+            self.assertIn("if(restored==before",t)
             self.assertIn("ret=avformat_seek_file(fmt,-1,seek_min,new_pos,seek_max,av_flags)",patched)
             self.assertIn("ff_p->nova_iso_time_mode && time>0",patched)
             self.assertIn("s->clip_count==1",t)
