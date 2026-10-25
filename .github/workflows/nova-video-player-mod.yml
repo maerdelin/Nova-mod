@@ -218,7 +218,10 @@ jobs:
           export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
           "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/Nova_Video_Player_mod_SIGNED.apk work/aligned-UNSIGNED.apk
           "$SIGNER" verify --min-sdk-version 23 --verbose --print-certs dist/Nova_Video_Player_mod_SIGNED.apk | tee reports/final-signature.txt
-          "$ALIGN" -c 4 dist/Nova_Video_Player_mod_SIGNED.apk
+          # Both stored resource alignment and native-library page alignment
+          # matter for PackageManager, not merely a valid ZIP signature.
+          "$ALIGN" -c -p 4 dist/Nova_Video_Player_mod_SIGNED.apk
+          unzip -tq dist/Nova_Video_Player_mod_SIGNED.apk
           python3 scripts/direct_transport_audit.py --apk dist/Nova_Video_Player_mod_SIGNED.apk
           echo "mode=$SIGNING_MODE" >> "$GITHUB_OUTPUT"
           printf '{"signing_mode":"%s"}\n' "$SIGNING_MODE" > reports/signing.json
@@ -257,6 +260,17 @@ jobs:
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
             python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
             python3 scripts/smoke_seek_eof_completion.py --reports reports
+
+      - name: Install and launch final APK on Android 14 (second independent package-manager check)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 
       - name: Verify official selection has not changed
         env:
