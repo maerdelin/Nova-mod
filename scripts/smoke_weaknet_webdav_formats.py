@@ -102,10 +102,13 @@ def test_one(fmt, root, report_dir):
                 return
             with lock:
                 requests.append({"range": value, "offset": start})
-                inject_503 = is_probe and not faults["probe_503"]
+                # Run687 MP4 probe behavior unchanged; MKV starts at real byte
+                # zero and must recover an initial 503 plus a truncated body.
+                first_mkv = fmt == "mkv" and start == 0
+                inject_503 = (is_probe or first_mkv) and not faults["probe_503"]
                 if inject_503:
                     faults["probe_503"] += 1
-                inject_short = (not is_probe) and not faults["short_body"]
+                inject_short = (not inject_503) and (not is_probe) and not faults["short_body"]
                 if inject_short:
                     faults["short_body"] += 1
             if inject_503:

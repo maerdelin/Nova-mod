@@ -219,6 +219,12 @@ typedef struct NOVA_RAW_PREFETCH {
     uint64_t last_log_produced;
     uint64_t last_log_consumed;
     int64_t last_log_us;
+    /* NOVA_MKV_BBC_SEEK_GUARD_V1: only MKV one-GET source. */
+    int mkv_single_get;
+    volatile int mkv_seek_active;
+    volatile int mkv_seek_failed;
+    int64_t mkv_seek_started_us;
+    uint64_t mkv_seek_bytes;
 } NOVA_RAW_PREFETCH;
 '''
 
@@ -446,6 +452,17 @@ static void *nova_raw_thread(void *opaque)
             break;
         }
 
+        /* A failed MKV target GET must wake the demuxer, not be hidden by
+         * an unbounded RAW producer retry while seekPause holds video. */
+        if( raw->mkv_single_get &&
+            __atomic_load_n(&raw->mkv_seek_active, __ATOMIC_ACQUIRE) ) {
+            __atomic_store_n(&raw->mkv_seek_failed, 1, __ATOMIC_RELEASE);
+            raw->error = got;
+            pthread_cond_broadcast(&raw->can_read);
+            pthread_mutex_unlock(&raw->mutex);
+            av_usleep(50000);
+            continue;
+        }
         /*
          * A real transient network read error remains retryable while the
          * stream is alive and the fixed 128 MiB warehouse has room.
@@ -461,6 +478,18 @@ static void *nova_raw_thread(void *opaque)
     return NULL;
 }
 
+static int nova_mkv_seek_guard_failed(NOVA_RAW_PREFETCH *raw)
+{
+    if( !raw->mkv_single_get ||
+        !__atomic_load_n(&raw->mkv_seek_active, __ATOMIC_ACQUIRE) )
+        return 0;
+    if( __atomic_load_n(&raw->mkv_seek_failed, __ATOMIC_ACQUIRE) )
+        return 1;
+    if( av_gettime_relative() - raw->mkv_seek_started_us > 12000000 )
+        return 1;
+    return raw->mkv_seek_bytes > (64ULL * 1024 * 1024);
+}
+
 static int nova_raw_read(void *opaque, uint8_t *dst, int size)
 {
     NOVA_RAW_PREFETCH *raw = (NOVA_RAW_PREFETCH *)opaque;
@@ -468,9 +497,29 @@ static int nova_raw_read(void *opaque, uint8_t *dst, int size)
         return AVERROR(EINVAL);
 
     pthread_mutex_lock(&raw->mutex);
+    if( nova_mkv_seek_guard_failed(raw) ) {
+        pthread_mutex_unlock(&raw->mutex);
+        return AVERROR(EIO);
+    }
     while( __atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) &&
            raw->used_bytes == 0 && !raw->eof ) {
-        pthread_cond_wait(&raw->can_read, &raw->mutex);
+        if( raw->mkv_single_get &&
+            __atomic_load_n(&raw->mkv_seek_active, __ATOMIC_ACQUIRE) ) {
+            struct timespec timeout;
+            clock_gettime(CLOCK_REALTIME, &timeout);
+            timeout.tv_nsec += 100000000L;
+            if( timeout.tv_nsec >= 1000000000L ) {
+                timeout.tv_sec++;
+                timeout.tv_nsec -= 1000000000L;
+            }
+            pthread_cond_timedwait(&raw->can_read, &raw->mutex, &timeout);
+            if( nova_mkv_seek_guard_failed(raw) ) {
+                pthread_mutex_unlock(&raw->mutex);
+                return AVERROR(EIO);
+            }
+        } else {
+            pthread_cond_wait(&raw->can_read, &raw->mutex);
+        }
     }
 
     if( raw->used_bytes == 0 ) {
@@ -497,6 +546,12 @@ static int nova_raw_read(void *opaque, uint8_t *dst, int size)
         copied += take;
     }
 
+    if( raw->mkv_single_get &&
+        __atomic_load_n(&raw->mkv_seek_active, __ATOMIC_ACQUIRE) ) {
+        raw->mkv_seek_bytes += (uint64_t)copied;
+        if( nova_mkv_seek_guard_failed(raw) )
+            __atomic_store_n(&raw->mkv_seek_failed, 1, __ATOMIC_RELEASE);
+    }
     nova_raw_log_locked(raw);
     pthread_cond_broadcast(&raw->can_write);
     pthread_mutex_unlock(&raw->mutex);
@@ -532,7 +587,15 @@ static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
     // queue mutex while blocked in network I/O, so seek cannot deadlock it.
     pthread_mutex_lock(&raw->source_mutex);
     int64_t result = avio_seek(raw->source, target, SEEK_SET);
+    if( result < 0 && raw->mkv_single_get &&
+        __atomic_load_n(&raw->mkv_seek_active, __ATOMIC_ACQUIRE) ) {
+        __atomic_store_n(&raw->mkv_seek_failed, 1, __ATOMIC_RELEASE);
+        serprintf("NOVA_MKV_RANGE_SEEK_FAIL_V1: target=%lld rc=%lld\n",
+                  (long long)target, (long long)result);
+    }
     if( result >= 0 ) {
+        if( raw->mkv_single_get )
+            __atomic_store_n(&raw->mkv_seek_failed, 0, __ATOMIC_RELEASE);
         pthread_mutex_lock(&raw->mutex);
         raw->generation++;
         unsigned generation = raw->generation;
@@ -582,6 +645,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
      */
     memset(raw, 0, sizeof(*raw));
     raw->s = s;
+    raw->mkv_single_get = strstr(url, "nova_mkv=1") != NULL;
     raw->source_size = -1;
     raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;
     raw->low_bytes = NOVA_RAW_FALLBACK_LOW_BYTES;
@@ -1187,6 +1251,12 @@ def patch_stream_parser_ffmpeg(path: Path) -> None:
         text, "#include <signal.h>\n",
         "#include <signal.h>\n#include <sched.h>\n#include <sys/resource.h>\n#include <unistd.h>\n",
         "parser scheduling includes",
+    )
+
+    text = replace_once(
+        text, "#include <sys/resource.h>\n",
+        "#include <sys/resource.h>\n#include <time.h>\n",
+        "mkv timed wait clock",
     )
 
     fd_type = '''typedef struct FD_INPUT {
