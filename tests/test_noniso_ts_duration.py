@@ -22,25 +22,30 @@ class FiniteTSDurationTests(unittest.TestCase):
             self.assertEqual(r.returncode,0,r.stderr+r.stdout)
             patched=c.read_text()
             self.assertIn("NOVA_NONISO_TS_DURATION_V1",patched)
-            self.assertIn('strstr(priv->s->src.url,"/stream?")',patched)
+            self.assertIn('strstr(priv->s->src.url,"/main.m2ts") == NULL',patched)
+            self.assertIn('(fmt->pb->seekable & AVIO_SEEKABLE_NORMAL)',patched)
             self.assertIn('priv->size_known',patched)
             self.assertIn('priv->s->no_duration=0;',patched)
             self.assertIn('etype != ETYPE_MPEG_TS || nova_finite_file_ts',patched)
             self.assertIn('24LL * 3600 * AV_TIME_BASE',patched)
-            self.assertNotIn('"/main.m2ts"',patched)
+            self.assertNotIn('strstr(priv->s->src.url,"/stream?")',patched)
             self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
-    def test_unrelated_media_is_not_promoted(self):
-        def eligible(etype,src,known,size,duration_us):
-            return etype=="MPEG_TS" and known and size>0 and 5000000<=duration_us<=86400000000 and "/stream?" in src
-        self.assertTrue(eligible("MPEG_TS","http://127.0.0.1/stream?g=7",True,11195400,42021333))
-        for input in [
-           ("MPEG_TS","http://127.0.0.1/main.m2ts?g=7",True,11195400,42021333),
-           ("MPEG_TS","http://127.0.0.1/stream?g=7",False,11195400,42021333),
-           ("MPEG_TS","http://127.0.0.1/stream?g=7",True,0,42021333),
-           ("MPEG_TS","http://127.0.0.1/stream?g=7",True,11195400,0),
-           ("MKV","http://127.0.0.1/stream?g=7",True,11195400,42021333),
+    def test_finite_files_do_not_depend_on_uri_path(self):
+        def eligible(etype,src,known,seekable,size,duration_us):
+            return (etype=="MPEG_TS" and known and seekable and size>0
+                and 5000000<=duration_us<=86400000000
+                and src is not None and "/main.m2ts" not in src)
+        self.assertTrue(eligible("MPEG_TS","http://127.0.0.1/ordinary.ts",True,True,12797160,48021333))
+        self.assertTrue(eligible("MPEG_TS","http://127.0.0.1/stream?g=7",True,True,11195400,42021333))
+        for args in [
+            ("MPEG_TS","http://127.0.0.1/main.m2ts?g=7",True,True,11195400,42021333),
+            ("MPEG_TS","http://127.0.0.1/ordinary.ts",False,True,11195400,42021333),
+            ("MPEG_TS","http://127.0.0.1/ordinary.ts",True,False,11195400,42021333),
+            ("MPEG_TS","http://127.0.0.1/ordinary.ts",True,True,0,42021333),
+            ("MPEG_TS","http://127.0.0.1/ordinary.ts",True,True,11195400,0),
+            ("MKV","http://127.0.0.1/ordinary.mkv",True,True,11195400,42021333),
         ]:
-            self.assertFalse(eligible(*input),input)
+            self.assertFalse(eligible(*args),args)
     def test_previously_verified_iso_source_kept(self):
         s=(ROOT/"iso/nova_transport.c").read_text()
         ref=(ROOT/"tests/fixtures/run680_iso_seek.cfrag").read_text()

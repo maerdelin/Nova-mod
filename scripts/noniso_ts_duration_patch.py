@@ -5,8 +5,9 @@ Upstream deliberately disables duration for ETYPE_MPEG_TS regardless of
 libavformat duration. For a finite and seekable *non-ISO* NOVA direct FILE,
 that makes the UI occasionally send millisecond positions to an AVOS
 permille-only seek method, yielding e.g. seek pos=7581 (invalid 0..1000).
-Only a known-size /stream? file with credible FFmpeg duration is promoted
-to time-domain seeking. ISO /main.m2ts and broadcasts retain upstream.
+Only known-size, seekable and finite files with credible FFmpeg durations are
+promoted to millisecond seeking. ISO /main.m2ts and broadcasts stay unchanged.
+An arbitrary HTTP URI filename must not determine the Seek unit.
 """
 from __future__ import annotations
 import argparse
@@ -14,18 +15,20 @@ from pathlib import Path
 
 MARK="NOVA_NONISO_TS_DURATION_V1"
 ANCHOR="if( fmt->duration != AV_NOPTS_VALUE && etype != ETYPE_MPEG_TS ) {"
-PATCH=r'''/* NOVA_NONISO_TS_DURATION_V1: /stream? only, never ISO /main.m2ts.
+PATCH=r'''/* NOVA_NONISO_TS_DURATION_V1: finite seekable media, never ISO /main.m2ts.
      * Matroska/MP4 retain their existing keyframe-index timestamp seek.
      * Live/no-size TS continues to use 0..1000 positional seeking.
      * Promote only a finite source for which FFmpeg knows the duration,
      * fixing the mismatch with PlayerController's millisecond seek mode. */
     const int nova_finite_file_ts =
         etype == ETYPE_MPEG_TS && priv->s && priv->size_known &&
-        priv->size > 0 && fmt->duration != AV_NOPTS_VALUE &&
+        priv->size > 0 && fmt->pb &&
+        (fmt->pb->seekable & AVIO_SEEKABLE_NORMAL) &&
+        fmt->duration != AV_NOPTS_VALUE &&
         fmt->duration >= 5LL * AV_TIME_BASE &&
         fmt->duration <= 24LL * 3600 * AV_TIME_BASE &&
         priv->s->src.url &&
-        strstr(priv->s->src.url,"/stream?") != NULL;
+        strstr(priv->s->src.url,"/main.m2ts") == NULL;
     if( fmt->duration != AV_NOPTS_VALUE &&
         (etype != ETYPE_MPEG_TS || nova_finite_file_ts) ) {
         if(nova_finite_file_ts){
