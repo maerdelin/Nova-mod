@@ -100,6 +100,18 @@ def main():
             text=wait_for(lambda t:'first_frame_sink' in t and 'ETYPE_MPEG_TS' in t,30,'ordinary TS first frame')
             if 'NOVA_ISO_TIMELINE_READY' in text or 'nova_iso=1' in text:
                 raise RuntimeError('Test accidentally entered ISO path')
+            # Run691: "first_frame_sink" only means the FIRST frame entered
+            # the decoder, not that media duration / position UI has settled.
+            # Previous attempts pressed RIGHT ~0.2 s after first frame and
+            # observed position domain corruption 17 -> 5421 and stream_seek
+            # pos err!, then the player exited. This is an input-readiness
+            # barrier, not a relaxed seek assertion; all EOS tests remain.
+            time.sleep(2.0)
+            ready=logs()
+            if 'NOVA_PLAYBACK_COMPLETE' in ready or 'stream_seek pos err!' in ready:
+                raise RuntimeError('Premature completion/seek error before first key')
+            if 'PlayerActivity' not in resumed():
+                raise RuntimeError('Player not foreground after seek-readiness barrier')
             # Ordinary MPEG-TS DPAD-right uses Nova's position domain
             # (0..1000). Drive the same non-ISO position-seek path repeatedly
             # until the log itself proves we reached the tail. No hidden test
@@ -124,6 +136,8 @@ def main():
                     text=wait_for(lambda t:seek_after(t,marker) is not None,
                                   1.0,'ordinary TS seek event step '+str(step))
                 except RuntimeError:
+                    if 'NOVA_PLAYBACK_COMPLETE' in logs():
+                        raise RuntimeError('Playback completed before verified near-tail seek')
                     time.sleep(.05)
                     continue
 
@@ -131,6 +145,9 @@ def main():
                 if 'NOVA_ISO_TIME_SEEK' in phase:
                     raise RuntimeError('ISO seek appeared in ordinary TS position test')
                 seeks.append([before,current_target,direction])
+                if current_target < 0 or current_target > 1000 or 'stream_seek pos err!' in phase:
+                    raise RuntimeError('Invalid position-domain Seek: '+repr(seeks[-1])+
+                                       '; stream error='+str('stream_seek pos err!' in phase))
 
                 if direction != 1:
                     # Do not count a RIGHT-key no-op/backward-classified event
