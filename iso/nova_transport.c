@@ -86,13 +86,6 @@ typedef struct nova_session {
     jmethodID file_conn_disconnect;
     jmethodID file_stream_read;
     jmethodID file_stream_close;
-    /* NOVA_MKV_STARTUP_PREFIX_V1: only small MKV, not ISO or large MKV. */
-    uint8_t *mkv_startup_prefix;
-    size_t mkv_startup_prefix_len;
-    size_t mkv_startup_prefix_cap;
-    int mkv_startup_tail_seen;
-    int mkv_startup_replay;
-    int mkv_startup_replay_done;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
     uint64_t iso_meta_tick;
     uint64_t iso_meta_reads;
@@ -957,25 +950,6 @@ static int nova_mkv_single_get_read(nova_session *s, uint8_t *dst, int bytes)
     if(s->file_cursor<0 || s->file_cursor>s->upstream_size)
         return AVERROR(EINVAL);
     if(s->file_cursor==s->upstream_size)return AVERROR_EOF;
-    /* Replay the original validated byte-zero GET after the Cues-at-EOF
-     * probe. Do not reopen an expiring redirect merely to read Cluster 0. */
-    if(s->mkv_startup_prefix && !s->mkv_startup_replay_done &&
-       s->file_cursor>=0 &&
-       (uint64_t)s->file_cursor<s->mkv_startup_prefix_len &&
-       (!s->mkv_startup_tail_seen || s->mkv_startup_replay)){
-        size_t available=s->mkv_startup_prefix_len-(size_t)s->file_cursor;
-        int take=(size_t)bytes<available ? bytes : (int)available;
-        memcpy(dst,s->mkv_startup_prefix+(size_t)s->file_cursor,(size_t)take);
-        s->file_cursor+=take;
-        if(s->mkv_startup_replay &&
-           (uint64_t)s->file_cursor>=s->mkv_startup_prefix_len){
-            s->mkv_startup_replay=0;
-            s->mkv_startup_replay_done=1;
-            LOGI("NOVA_MKV_STARTUP_PREFIX_DRAINED_V1: bytes=%zu",
-                 s->mkv_startup_prefix_len);
-        }
-        return take;
-    }
     for(unsigned attempt=1;attempt<=3 && !s->stopping;++attempt){
         int64_t at=s->file_cursor;
         if(!s->file_stream || s->upstream_pos!=at){
@@ -990,16 +964,6 @@ static int nova_mkv_single_get_read(nova_session *s, uint8_t *dst, int bytes)
         }
         int got=nova_file_java_read(s,dst,bytes);
         if(got>0){
-            if(s->mkv_startup_prefix && !s->mkv_startup_tail_seen &&
-               !s->mkv_startup_replay_done &&
-               at==(int64_t)s->mkv_startup_prefix_len &&
-               s->mkv_startup_prefix_len<s->mkv_startup_prefix_cap){
-                size_t remain=s->mkv_startup_prefix_cap-s->mkv_startup_prefix_len;
-                size_t copy=(size_t)got<remain ? (size_t)got : remain;
-                uint8_t *next=s->mkv_startup_prefix+s->mkv_startup_prefix_len;
-                if(dst!=next)memcpy(next,dst,copy);
-                s->mkv_startup_prefix_len+=copy;
-            }
             s->file_cursor=at+got;
             s->upstream_pos=at+got;
             return got;
@@ -1069,7 +1033,6 @@ static void session_free(nova_session *s)
     free(s->upstream_url);
     free(s->upstream_headers);
     nova_file_release_java(s);
-    free(s->mkv_startup_prefix);
     free(s);
 }
 
@@ -1212,42 +1175,6 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
     }
     s->output_size=(uint64_t)s->upstream_size;
     s->file_cursor=0;
-    /* Only MKV below 4 GiB. Warm 256 KiB from the already validated
-     * original Range GET (BBC frame-zero video packet is 149 KiB).
-     * Retain up to 1 MiB if normal reading naturally continues.
-     * Failed warmup aborts startup rather than skipping to 5.8 seconds. */
-    if(s->upstream_size>0 && s->upstream_size<=4LL*1024*1024*1024){
-        size_t cap=s->upstream_size<1024*1024 ?
-                   (size_t)s->upstream_size : (size_t)(1024*1024);
-        s->mkv_startup_prefix=malloc(cap);
-        if(!s->mkv_startup_prefix){
-            session_free(s);
-            return NULL;
-        }
-        s->mkv_startup_prefix_cap=cap;
-        size_t warm=cap<256*1024 ? cap : (size_t)(256*1024);
-        while(s->mkv_startup_prefix_len<warm && !s->stopping){
-            size_t left=warm-s->mkv_startup_prefix_len;
-            int want=left<128*1024 ? (int)left : 128*1024;
-            int got=nova_mkv_single_get_read(s,
-                s->mkv_startup_prefix+s->mkv_startup_prefix_len,want);
-            if(got<=0){
-                LOGE("NOVA_MKV_STARTUP_PREFIX_FAIL_V1: got=%d cached=%zu",
-                     got,s->mkv_startup_prefix_len);
-                session_free(s);
-                return NULL;
-            }
-        }
-        if(s->stopping){
-            session_free(s);
-            return NULL;
-        }
-        /* Leave the live GET at the warmed physical cursor; restore only
-         * the logical cursor. Replay will consume the exact cached bytes. */
-        s->file_cursor=0;
-        LOGI("NOVA_MKV_STARTUP_PREFIX_READY_V1: bytes=%zu cap=%zu",
-             s->mkv_startup_prefix_len,s->mkv_startup_prefix_cap);
-    }
     return s;
 }
 
@@ -1326,32 +1253,16 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
             else if (whence != SEEK_SET)
                 target = -1;
             if (target>=0 && target<=s->upstream_size) {
-                if(s->file_http_mode && s->mkv_startup_prefix &&
-                   !s->mkv_startup_replay_done &&
-                   (uint64_t)target<s->mkv_startup_prefix_len){
+                int rc=s->file_http_mode ? nova_mkv_seek_retry(s,target) :
+                                         nova_file_seek_retry(s,target);
+                if (rc==0) {
                     s->file_cursor=target;
-                    s->mkv_startup_replay=s->mkv_startup_tail_seen;
                     ret=target;
-                    LOGI("NOVA_MKV_STARTUP_ANCHOR_V1: at=%" PRId64
-                         " cached=%zu after_tail=%d",
-                         target,s->mkv_startup_prefix_len,
-                         s->mkv_startup_tail_seen);
-                }else{
-                    int rc=s->file_http_mode ? nova_mkv_seek_retry(s,target) :
-                                             nova_file_seek_retry(s,target);
-                    if (rc==0) {
-                        s->file_cursor=target;
-                        ret=target;
-                        if(s->file_http_mode && s->mkv_startup_prefix &&
-                           s->upstream_size>0 &&
-                           target>s->upstream_size/2)
-                            s->mkv_startup_tail_seen=1;
-                    } else {
-                        ret=rc;
-                        LOGI("NOVA_FILE_SEEK_FAIL: requested=%" PRId64
-                             " committed=%" PRId64 " rc=%d",
-                             target,s->file_cursor,rc);
-                    }
+                } else {
+                    ret=rc;
+                    LOGI("NOVA_FILE_SEEK_FAIL: requested=%" PRId64
+                         " committed=%" PRId64 " rc=%d",
+                         target,s->file_cursor,rc);
                 }
             }
         }

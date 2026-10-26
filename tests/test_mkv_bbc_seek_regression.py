@@ -23,20 +23,6 @@ class BbcMkvRegression(unittest.TestCase):
         self.assertIn('NOVA_MKV_RANGE_RETRY_V2',n)
         self.assertIn('if(nova_weak_terminal_error(rc))return rc;',n)
 
-    def test_small_mkv_first_frame_prefix_only(self):
-        n=src("iso/nova_transport.c")
-        self.assertIn("NOVA_MKV_STARTUP_PREFIX_READY_V1", n)
-        self.assertIn("NOVA_MKV_STARTUP_ANCHOR_V1", n)
-        self.assertIn("NOVA_MKV_STARTUP_PREFIX_FAIL_V1", n)
-        self.assertIn("NOVA_MKV_STARTUP_PREFIX_DRAINED_V1", n)
-        self.assertIn("s->upstream_size<=4LL*1024*1024*1024", n)
-        self.assertIn("size_t warm=cap<256*1024", n)
-        self.assertIn("free(s->mkv_startup_prefix)", n)
-        self.assertIn("if(s->file_http_mode && s->mkv_startup_prefix &&", n)
-        smoke=src("scripts/smoke_weaknet_webdav_formats.py")
-        self.assertIn("MKV startup skipped frame zero", smoke)
-        self.assertIn("Initial MKV Cues return missed cached anchor", smoke)
-
     def test_run680_iso_seek_fragment_is_unchanged(self):
         n=src("iso/nova_transport.c")
         ref=src("tests/fixtures/run680_iso_seek.cfrag")
