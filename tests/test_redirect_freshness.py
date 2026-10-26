@@ -15,6 +15,20 @@ class CanonicalWebdavFreshnessTests(unittest.TestCase):
         self.assertIn("sameOrigin(Ljava/net/URL;Ljava/net/URL;)",src)
         self.assertIn(":drop_auth",src)
 
+    def test_authenticated_mkv_direct_range_can_call_origin_guard(self):
+        # DirectRangeHttp is a distinct Dalvik class. An invoke-static to a
+        # private helper in DirectRedirectResolver raises IllegalAccessError
+        # when a WebDAV Authorization header is nonempty.
+        source=(ROOT/"scripts/direct_transport_apply.py").read_text()
+        http=source.split("DIRECT_RANGE_HTTP = r'''",1)[1].split("'''",1)[0]
+        resolver=source.split("REDIRECT_RESOLVER = r'''",1)[1].split("'''",1)[0]
+        sig="sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z"
+        self.assertIn("DirectRedirectResolver;->"+sig,http)
+        self.assertIn(".method public static "+sig,resolver)
+        self.assertNotIn(".method private static "+sig,resolver)
+        self.assertIn("if-nez v5, :response",http)
+        self.assertIn('const-string v5, "Authorization"',http)
+
     def test_fresh_connection_happens_before_stale_seek(self):
         src=(ROOT/"iso/nova_transport.c").read_text()
         idx=src.index("static int nova_file_seek_retry(nova_session *s, int64_t target)")

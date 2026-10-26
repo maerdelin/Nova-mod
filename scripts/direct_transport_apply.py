@@ -638,7 +638,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     return-void
 .end method
 
-.method private static sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
+.method public static sameOrigin(Ljava/net/URL;Ljava/net/URL;)Z
     .locals 4
     if-eqz p0, :no
     if-eqz p1, :no
