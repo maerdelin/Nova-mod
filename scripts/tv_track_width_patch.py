@@ -149,8 +149,10 @@ def card(s):
             '    invoke-virtual {v2, v10}, Landroid/view/View;->setTag(Ljava/lang/Object;)V\n\n'
             '    :nova_track_skip_slave_tag\n\n'+slave)
     m=replace1(m,slave,copied)
-    m=replace1(m,'    :cond_0\n\n    const/4 v2, 0x1',
-               '    :cond_0\n\n    invoke-direct {p0, p1}, '+CARD+'->novaOffsetTrackNeighbors(Z)V\n\n    const/4 v2, 0x1')
+    # Call from the stable focus(Z) entry instead of relying on a
+    # compiler-dependent branch-label/next-instruction pairing.
+    m=replace1(m,'    move v0, p1',
+               '    move v0, p1\n\n    invoke-direct {p0, p1}, '+CARD+'->novaOffsetTrackNeighbors(Z)V')
     anchor="    invoke-direct/range {v0 .. v9}, "+CARD[:-1]+"$ExpandAnimation;-><init>("
     additional="""    # NOVA_TV_TRACK_LAYOUT_V2: width 2x, header matches full expanded width
     invoke-virtual {p0}, Landroid/view/View;->getTag()Ljava/lang/Object;

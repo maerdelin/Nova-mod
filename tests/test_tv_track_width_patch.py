@@ -63,7 +63,20 @@ class PopupWidthTest(unittest.TestCase):
     def test_wrong_methods_fail_fast(self):
         with self.assertRaises(RuntimeError):p.player(self.sample_player().replace(".locals 10",".locals 9"))
         with self.assertRaises(RuntimeError):p.card(self.sample_card().replace(".locals 14",".locals 12"))
-        with self.assertRaises(RuntimeError):p.card(self.sample_card().replace(":cond_0",":cond_8"))
+        with self.assertRaises(RuntimeError):p.card(self.sample_card().replace("    move v0, p1","    move v9, p1"))
+    def test_branch_independent_real_apk_variant(self):
+        # #727 failed because instructions around :cond_0 differed in APK.
+        # An unrelated instruction inserted there must not disable the patch.
+        original=self.sample_card()
+        self.assertIn("    :cond_0\n\n    const/4 v2, 0x1",original)
+        changed=original.replace(
+            "    :cond_0\n\n    const/4 v2, 0x1",
+            "    :cond_0\n\n    nop\n\n    const/4 v2, 0x1")
+        result=p.card(changed)
+        self.assertIn("    nop",result)
+        self.assertEqual(result.count("->novaOffsetTrackNeighbors(Z)V"),1)
+        self.assertIn("int-to-float v5, v3",result)
+
     def test_real_application_changes_only_two_smali(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d); smali=root/"smali_classes2";smali.mkdir()
