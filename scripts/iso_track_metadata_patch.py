@@ -22,6 +22,11 @@ REPLACEMENT = r'''    /* NOVA_ISO_TRACK_LANG_V1: CLPI language -> FFmpeg AVStrea
                                                char *, unsigned);
         nova_iso_lang_lookup_fn lookup = (nova_iso_lang_lookup_fn)dlsym(
             ff_p->raw.transport_handle, "nova_transport_iso_track_language");
+        /* NOVA_ISO_CODEC_AUDIT_V2: read-only comparison of the two
+         * independent codec sources. Do not infer Atmos from TrueHD alone. */
+        typedef int (*nova_iso_codec_fn)(uint64_t,int,int);
+        nova_iso_codec_fn bd_codec = (nova_iso_codec_fn)dlsym(
+            ff_p->raw.transport_handle, "nova_transport_iso_track_codec");
         unsigned restored = 0, existing = 0, missing = 0;
         if (lookup) {
             for (unsigned track = 0; track < ff_p->fmt->nb_streams; ++track) {
@@ -30,6 +35,32 @@ REPLACEMENT = r'''    /* NOVA_ISO_TRACK_LANG_V1: CLPI language -> FFmpeg AVStrea
                 int kind = st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO ? 1 :
                     (st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE ? 2 : 0);
                 if (!kind) continue;
+                if (kind == 1) {
+                    int bd = bd_codec ? bd_codec(
+                        ff_p->raw.transport_generation, st->id, kind) : -1;
+                    int ff_id = st->codecpar->codec_id;
+                    int profile = st->codecpar->profile;
+                    int match = -1;
+                    switch(bd) {
+                    case 0x81: match = ff_id == AV_CODEC_ID_AC3; break;
+                    case 0x82:
+                    case 0x85:
+                    case 0x86: match = ff_id == AV_CODEC_ID_DTS; break;
+                    case 0x83: match = ff_id == AV_CODEC_ID_TRUEHD; break;
+                    case 0x84: match = ff_id == AV_CODEC_ID_EAC3; break;
+                    }
+                    const AVCodecDescriptor *desc =
+                        avcodec_descriptor_get(ff_id);
+                    int atmos_confirmed =
+                        ff_id == AV_CODEC_ID_TRUEHD &&
+                        profile == AV_PROFILE_TRUEHD_ATMOS;
+                    serprintf("NOVA_ISO_CODEC_AUDIT_V2: track=%u pid=0x%x bd=0x%x ff=%s profile=%d match=%d truehd_atmos=%d\n",
+                        track, st->id, bd, desc ? desc->name : "unknown",
+                        profile, match, atmos_confirmed);
+                    if (match == 0)
+                        serprintf("NOVA_ISO_CODEC_MISMATCH_V2: track=%u pid=0x%x bd=0x%x ff=%s\n",
+                            track, st->id, bd, desc ? desc->name : "unknown");
+                }
                 char lang[4] = {0};
                 if (lookup(ff_p->raw.transport_generation, st->id, kind,
                            lang, sizeof(lang))) {
