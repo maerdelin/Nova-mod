@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 TAG="nova_tv_track_wide_v1"
+SUBTITLE_TAG="nova_tv_subtitle_realign_v3"
 CARD="Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;"
 ACT="Lcom/archos/mediacenter/video/player/PlayerActivity;"
 def section(text,name):
@@ -25,6 +26,13 @@ def player(s):
                  "\n\n    move-result-object v2"+
                  "\n\n    check-cast v2, Landroid/view/View;"+
                  "\n\n    invoke-virtual {v1, v2}, "+CARD+"->setParentView(Landroid/view/View;)V")
+        if field=="mSubtitleTVCardView":
+            # A keyed tag distinguishes subtitles from audio without altering
+            # the shared wide-card tag, menu labels or accessibility text.
+            changed += (
+                "\n\n    sget v2, Lcom/archos/mediacenter/video/R$id;->card_view:I"
+                "\n\n    const-string v3, \"" + SUBTITLE_TAG + "\""
+                "\n\n    invoke-virtual {v1, v2, v3}, Landroid/view/View;->setTag(ILjava/lang/Object;)V")
         m=replace1(m,anchor,changed)
     return s[:start]+m+s[end:]
 
@@ -71,6 +79,31 @@ SPACING_METHOD = '''
     div-int/lit8 v4, v4, 0xa
 
     add-int/lit8 v4, v4, 0x18
+
+    # NOVA_TV_SUBTITLE_LEFT_EDGE_V3: the first subtitle card is clipped by
+    # about half its original width. Its right-hand sibling must be shifted
+    # by that SAME amount to preserve the V2 non-overlap spacing.
+    sget v8, Lcom/archos/mediacenter/video/R$id;->card_view:I
+
+    invoke-virtual {p0, v8}, Landroid/view/View;->getTag(I)Ljava/lang/Object;
+
+    move-result-object v8
+
+    const-string v9, "nova_tv_subtitle_realign_v3"
+
+    invoke-virtual {v9, v8}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+    move-result v9
+
+    if-eqz v9, :nova_subtitle_spacing_shift_done
+
+    iget v9, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalWidth:I
+
+    div-int/lit8 v9, v9, 0x2
+
+    add-int/2addr v4, v9
+
+    :nova_subtitle_spacing_shift_done
 
     iget v5, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalX:F
 
@@ -147,6 +180,13 @@ def card(s):
             '    if-eqz v10, :nova_track_skip_slave_tag\n\n'
             '    const-string v10, "'+TAG+'"\n\n'
             '    invoke-virtual {v2, v10}, Landroid/view/View;->setTag(Ljava/lang/Object;)V\n\n'
+            '    # The subtitle-only alignment marker is copied to mirrored cards.\n\n'
+            '    sget v10, Lcom/archos/mediacenter/video/R$id;->card_view:I\n\n'
+            '    invoke-virtual {p0, v10}, Landroid/view/View;->getTag(I)Ljava/lang/Object;\n\n'
+            '    move-result-object v11\n\n'
+            '    if-eqz v11, :nova_subtitle_slave_marker_done\n\n'
+            '    invoke-virtual {v2, v10, v11}, Landroid/view/View;->setTag(ILjava/lang/Object;)V\n\n'
+            '    :nova_subtitle_slave_marker_done\n\n'
             '    :nova_track_skip_slave_tag\n\n'+slave)
     m=replace1(m,slave,copied)
     # Call from the stable focus(Z) entry instead of relying on a
@@ -176,6 +216,32 @@ def card(s):
     # TopView's image/title region must be centered in the larger card.
     int-to-float v5, v3
 
+    # Subtitle is the first TV card. Its 2.4*W expanded left edge crosses
+    # the menu-parent clip boundary, hiding the left ~0.5*originalWidth.
+    # Audio is ALREADY correct and must never take this branch. Move the
+    # subtitle card ONLY, not its text, by half the original width.
+    sget v10, Lcom/archos/mediacenter/video/R$id;->card_view:I
+
+    invoke-virtual {p0, v10}, Landroid/view/View;->getTag(I)Ljava/lang/Object;
+
+    move-result-object v10
+
+    const-string v11, "nova_tv_subtitle_realign_v3"
+
+    invoke-virtual {v11, v10}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+    move-result v10
+
+    if-eqz v10, :nova_subtitle_left_edge_done
+
+    iget v10, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalWidth:I
+
+    div-int/lit8 v10, v10, 0x2
+
+    add-int/2addr v2, v10
+
+    :nova_subtitle_left_edge_done
+
     :nova_track_width_normal
 
 """
@@ -200,7 +266,7 @@ def apply(root,report):
            "TVCardView.smali":card(before["TVCardView.smali"])}
     for name,code in after.items():targets[name].write_text(code)
     report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_LAYOUT_V2",
+    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_LAYOUT_V3",
         "target":["mSubtitleTVCardView","mAudioTracksTVCardView"],"width_multiplier":2,
-        "header_centered":True,"neighbor_gap_px":24,"recenter":True,"other_card_widths_unchanged":True},indent=2))
-    print("NOVA_TV_TRACK_LAYOUT_V2=PASS")
+        "header_centered":True,"neighbor_gap_px":24,"recenter":True,"subtitle_left_edge_restored":True,"audio_x_unchanged":True,"other_card_widths_unchanged":True},indent=2))
+    print("NOVA_TV_TRACK_LAYOUT_V3=PASS; subtitle-left-edge restored; audio unchanged")
