@@ -42,7 +42,7 @@ def player(s):
 # ~44px. On focus(false), restore translations to zero.
 # Compare immutable originalX, not child order (bringToFront reorders it).
 SPACING_METHOD = '''
-.method private novaOffsetTrackNeighbors(Z)V
+.method private novaOffsetTrackNeighbors(ZI)V
     .locals 12
 
     # NOVA_TV_TRACK_LAYOUT_V2; only explicitly tagged track cards.
@@ -80,30 +80,13 @@ SPACING_METHOD = '''
 
     add-int/lit8 v4, v4, 0x18
 
-    # NOVA_TV_SUBTITLE_LEFT_EDGE_V3: the first subtitle card is clipped by
-    # about half its original width. Its right-hand sibling must be shifted
-    # by that SAME amount to preserve the V2 non-overlap spacing.
-    sget v8, Lcom/archos/mediacenter/video/R$id;->card_view:I
+    # NOVA_TV_DYNAMIC_CLIP_V4: exact left-edge deficit in p2, supplied
+    # by focus() from the live ExpandAnimation endX (v2).
+    if-eqz p1, :nova_track_dynamic_gap_done
 
-    invoke-virtual {p0, v8}, Landroid/view/View;->getTag(I)Ljava/lang/Object;
+    add-int/2addr v4, p2
 
-    move-result-object v8
-
-    const-string v9, "nova_tv_subtitle_realign_v3"
-
-    invoke-virtual {v9, v8}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
-
-    move-result v9
-
-    if-eqz v9, :nova_subtitle_spacing_shift_done
-
-    iget v9, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalWidth:I
-
-    div-int/lit8 v9, v9, 0x2
-
-    add-int/2addr v4, v9
-
-    :nova_subtitle_spacing_shift_done
+    :nova_track_dynamic_gap_done
 
     iget v5, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalX:F
 
@@ -191,8 +174,10 @@ def card(s):
     m=replace1(m,slave,copied)
     # Call from the stable focus(Z) entry instead of relying on a
     # compiler-dependent branch-label/next-instruction pairing.
+    # Restore neighbor positions on unfocus. On focus, the extra
+    # displacement is calculated from the real expanded X coordinate.
     m=replace1(m,'    move v0, p1',
-               '    move v0, p1\n\n    invoke-direct {p0, p1}, '+CARD+'->novaOffsetTrackNeighbors(Z)V')
+               '    move v0, p1\n\n    if-nez p1, :nova_track_reset_done\n\n    const/4 v10, 0x0\n\n    invoke-direct {p0, p1, v10}, '+CARD+'->novaOffsetTrackNeighbors(ZI)V\n\n    :nova_track_reset_done')
     anchor="    invoke-direct/range {v0 .. v9}, "+CARD[:-1]+"$ExpandAnimation;-><init>("
     additional="""    # NOVA_TV_TRACK_LAYOUT_V2: width 2x, header matches full expanded width
     invoke-virtual {p0}, Landroid/view/View;->getTag()Ljava/lang/Object;
@@ -216,10 +201,11 @@ def card(s):
     # TopView's image/title region must be centered in the larger card.
     int-to-float v5, v3
 
-    # Subtitle is the first TV card. Its 2.4*W expanded left edge crosses
-    # the menu-parent clip boundary, hiding the left ~0.5*originalWidth.
-    # Audio is ALREADY correct and must never take this branch. Move the
-    # subtitle card ONLY, not its text, by half the original width.
+    # NOVA_TV_DYNAMIC_CLIP_V4: both track cards share card_layout.xml.
+    # They already expand to the SAME width; only the first subtitle
+    # card can have a negative left edge clipped by the menu parent.
+    # Calculate from the actual, already-computed animation endX=v2:
+    # extra=max(0,-v2). This is independent of screen size and DPI.
     sget v10, Lcom/archos/mediacenter/video/R$id;->card_view:I
 
     invoke-virtual {p0, v10}, Landroid/view/View;->getTag(I)Ljava/lang/Object;
@@ -232,15 +218,25 @@ def card(s):
 
     move-result v10
 
-    if-eqz v10, :nova_subtitle_left_edge_done
+    if-eqz v10, :nova_subtitle_clip_delta_zero
 
-    iget v10, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalWidth:I
+    if-gez v2, :nova_subtitle_clip_delta_zero
 
-    div-int/lit8 v10, v10, 0x2
+    neg-int v10, v2
 
+    goto :nova_subtitle_clip_delta_ready
+
+    :nova_subtitle_clip_delta_zero
+    const/4 v10, 0x0
+
+    :nova_subtitle_clip_delta_ready
     add-int/2addr v2, v10
 
-    :nova_subtitle_left_edge_done
+    # Shift right neighbors by the EXACT same delta; 728's gap remains
+    # unchanged. Audio remains at its original correct X (delta=0).
+    const/4 v11, 0x1
+
+    invoke-direct {p0, v11, v10}, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->novaOffsetTrackNeighbors(ZI)V
 
     :nova_track_width_normal
 
@@ -266,7 +262,7 @@ def apply(root,report):
            "TVCardView.smali":card(before["TVCardView.smali"])}
     for name,code in after.items():targets[name].write_text(code)
     report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_LAYOUT_V3",
+    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_LAYOUT_V4",
         "target":["mSubtitleTVCardView","mAudioTracksTVCardView"],"width_multiplier":2,
-        "header_centered":True,"neighbor_gap_px":24,"recenter":True,"subtitle_left_edge_restored":True,"audio_x_unchanged":True,"other_card_widths_unchanged":True},indent=2))
-    print("NOVA_TV_TRACK_LAYOUT_V3=PASS; subtitle-left-edge restored; audio unchanged")
+        "header_centered":True,"neighbor_gap_px":24,"subtitle_clip_delta":"max(0,-expanded_left_px)","audio_x_unchanged":True,"other_card_widths_unchanged":True},indent=2))
+    print("NOVA_TV_TRACK_LAYOUT_V4=PASS; dynamic calculated subtitle visible width equals audio; audio unchanged")

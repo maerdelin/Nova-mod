@@ -39,17 +39,17 @@ class PopupWidthTest(unittest.TestCase):
         self.assertEqual(s.count("->setTag(ILjava/lang/Object;)V"),1)
     def test_focus_width_header_siblings_slave(self):
         s=p.card(self.sample_card())
-        self.assertIn("NOVA_TV_TRACK_LAYOUT_V3",p.__file__ and open(p.__file__).read())
-        self.assertIn("NOVA_TV_SUBTITLE_LEFT_EDGE_V3",s)
+        self.assertIn("NOVA_TV_TRACK_LAYOUT_V4",(ROOT/"scripts/tv_track_width_patch.py").read_text())
+        self.assertIn("NOVA_TV_DYNAMIC_CLIP_V4",s)
         self.assertIn("NOVA_TV_TRACK_LAYOUT_V2",s)
         self.assertIn("int-to-float v5, v3",s)
         self.assertIn("mul-int/lit8 v3, v3, 0x2",s)
-        self.assertEqual(s.count("->novaOffsetTrackNeighbors(Z)V"),1)
+        self.assertEqual(s.count("->novaOffsetTrackNeighbors(ZI)V"),2)
         self.assertEqual(s.count("->setTranslationX(F)V"),1)
         self.assertIn("nova_track_skip_slave_tag",s)
-        self.assertIn(":nova_subtitle_left_edge_done",s)
+        self.assertIn(":nova_subtitle_clip_delta_ready",s)
         self.assertIn("add-int/2addr v2, v10",s)
-        self.assertIn("nova_subtitle_spacing_shift_done",s)
+        self.assertIn("nova_track_dynamic_gap_done",s)
         self.assertIn("->getTag(I)Ljava/lang/Object;",s)
         self.assertIn("nova_subtitle_slave_marker_done",s)
         self.assertIn("->parentView:Landroid/view/View;",s)
@@ -69,31 +69,46 @@ class PopupWidthTest(unittest.TestCase):
             left_card_right=-20-delta
             selected_left=width/2-actual_width/2
             self.assertGreaterEqual(selected_left-left_card_right,20)
-    def test_subtitle_realign_geometry_and_audio_unchanged(self):
-        # The actual screenshots show 390px audio width, but only
-        # 313px of the equal-width subtitle card: 77px clipped on left.
-        # Header centers differ by 76px. The original 714 card width
-        # is 390/2.4=162.5px; the corrective delta is W/2 ~= 81px.
-        audio_width=390
-        visible_subtitle_width=313
-        missing_left=audio_width-visible_subtitle_width
-        self.assertEqual(missing_left,77)
-        original_width=round(audio_width/2.4)
-        correction=original_width//2
-        self.assertLessEqual(abs(correction-missing_left),6)
-        for width in (160,162,200,220,300,440):
-            base_shift=width*7//10+24
-            subtitle_shift=width//2
-            # Moving the selected subtitle RIGHT and all right siblings
-            # the SAME distance cannot reopen the overlap fixed by 728.
-            right_before=(width+20+base_shift)-(width/2+2*int(width*1.2)/2)
-            right_after=(width+20+base_shift+subtitle_shift)-(width/2+2*int(width*1.2)/2+subtitle_shift)
-            self.assertAlmostEqual(right_before,right_after)
-            self.assertGreaterEqual(right_after,20)
-        # Audio uses only the existing generic wide-card tag.
-        after=p.player(self.sample_player())
-        audio=after.split("mAudioTracksTVCardView")[1]
-        self.assertNotIn(p.SUBTITLE_TAG,audio)
+    def test_dynamic_clip_equals_actual_audio_width_all_densities(self):
+        # The two track cards share a 220dp base resource. The renderer
+        # converts that width to actual physical pixels using each screen DPI.
+        for dpi_scale in (0.75,1.0,1.25,1.5,2.0,2.5,3.0):
+            width=round(220*dpi_scale)
+            audio_expanded=2*int(width*1.2)
+            for initial_x in (0,30,60,80,100,120,160,240):
+                base_x=int(initial_x+(width-width*1.2)/2.0)
+                expanded_x=base_x-int(width*1.2)//2
+                missing_left=max(0,-expanded_x)
+                new_x=expanded_x+missing_left
+                subtitle_expanded=2*int(width*1.2)
+                self.assertGreaterEqual(new_x,0)
+                self.assertEqual(subtitle_expanded,audio_expanded)
+                self.assertEqual(
+                    subtitle_expanded-max(0,-new_x),audio_expanded)
+                self.assertEqual(missing_left,0 if expanded_x>=0 else -expanded_x)
+
+    def test_neighbor_gap_is_identical_after_subtitle_correction(self):
+        for dpi_scale in (0.75,1.0,1.5,2.0,3.0):
+            width=round(220*dpi_scale)
+            for x in (0,50,80,100,160,240):
+                expanded_x=int(x+(width-width*1.2)/2.0)-int(width*1.2)//2
+                delta=max(0,-expanded_x)
+                old_right=x+width+20+width*7//10+24
+                old_card_right=expanded_x+2*int(width*1.2)
+                new_right=old_right+delta
+                new_card_right=old_card_right+delta
+                self.assertEqual(new_right-new_card_right,
+                                 old_right-old_card_right)
+                self.assertGreaterEqual(new_right-new_card_right,20)
+
+    def test_no_guessed_halfwidth_or_screenshot_correction(self):
+        code=(ROOT/"scripts/tv_track_width_patch.py").read_text()
+        self.assertIn("neg-int v10, v2",code)
+        self.assertIn("add-int/2addr v4, p2",code)
+        self.assertIn("if-gez v2, :nova_subtitle_clip_delta_zero",code)
+        self.assertNotIn("div-int/lit8 v9, v9, 0x2",code)
+        self.assertNotIn("390px",code)
+        self.assertNotIn("77px",code)
 
     def test_wrong_methods_fail_fast(self):
         with self.assertRaises(RuntimeError):p.player(self.sample_player().replace(".locals 10",".locals 9"))
@@ -109,7 +124,7 @@ class PopupWidthTest(unittest.TestCase):
             "    :cond_0\n\n    nop\n\n    const/4 v2, 0x1")
         result=p.card(changed)
         self.assertIn("    nop",result)
-        self.assertEqual(result.count("->novaOffsetTrackNeighbors(Z)V"),1)
+        self.assertEqual(result.count("->novaOffsetTrackNeighbors(ZI)V"),2)
         self.assertIn("int-to-float v5, v3",result)
 
     def test_real_application_changes_only_two_smali(self):
@@ -120,8 +135,8 @@ class PopupWidthTest(unittest.TestCase):
             (smali/"TVMenuAdapter.smali").write_text("UNCHANGED")
             p.apply(root,root/"reports/result.json")
             report=json.loads((root/"reports/result.json").read_text())
-            self.assertEqual(report["marker"],"NOVA_TV_TRACK_LAYOUT_V3")
-            self.assertTrue(report["subtitle_left_edge_restored"])
+            self.assertEqual(report["marker"],"NOVA_TV_TRACK_LAYOUT_V4")
+            self.assertEqual(report["subtitle_clip_delta"],"max(0,-expanded_left_px)")
             self.assertTrue(report["audio_x_unchanged"])
             self.assertTrue(report["header_centered"])
             self.assertEqual(report["neighbor_gap_px"],24)
