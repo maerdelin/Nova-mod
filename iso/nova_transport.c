@@ -53,6 +53,7 @@ typedef enum {
 typedef struct nova_iso_track_lang {
     uint16_t pid;
     uint8_t kind; /* 1 = primary audio; 2 = presentation graphics */
+    uint8_t coding_type; /* Blu-ray STN/CLPI coding type */
     char lang[4];
 } nova_iso_track_lang;
 
@@ -538,6 +539,12 @@ static void nova_iso_capture_track_languages(nova_session *s,
             else if (ch >= 'A' && ch <= 'Z') lang[c] = (char)(ch + 'a' - 'A');
             else { valid = 0; break; }
         }
+        /* NOVA_ISO_CODEC_CLPI_V2: trace exact Blu-ray audio/subtitle coding
+         * type without an extra read or seek. Valid ISO639 is the existing
+         * criteria for storing menu-track metadata. */
+        LOGI("NOVA_ISO_CODEC_CLPI_V2: kind=%u index=%u pid=0x%x coding=0x%02x format=%u rate=%u lang=%s valid=%d",
+             kind, i, stream->pid, stream->coding_type,
+             stream->format, stream->rate, valid ? lang : "invalid", valid);
         if (!valid || !strcmp(lang, "und")) continue;
         int duplicate = 0;
         for (unsigned j = 0; j < s->iso_track_count; ++j) {
@@ -554,6 +561,7 @@ static void nova_iso_capture_track_languages(nova_session *s,
         nova_iso_track_lang *dst = &s->iso_tracks[s->iso_track_count++];
         dst->pid = stream->pid;
         dst->kind = (uint8_t)kind;
+        dst->coding_type = stream->coding_type;
         memcpy(dst->lang, lang, sizeof(lang));
         LOGI("NOVA_ISO_TRACK_CAPTURE_V1: kind=%u pid=0x%x lang=%s codec=0x%x",
              kind, stream->pid, lang, stream->coding_type);
@@ -1377,6 +1385,30 @@ int nova_transport_iso_track_language(uint64_t generation, int pid, int kind,
     }
     session_release(s);
     return found;
+}
+
+/* NOVA_ISO_CODEC_LOOKUP_V2: read-only main-playlist codec type by PID.
+ * Returns -1 for non-ISO, stale generation, or an absent track. No network
+ * I/O, playback state, seek state, or decoder operations are involved. */
+__attribute__((visibility("default")))
+int nova_transport_iso_track_codec(uint64_t generation, int pid, int kind)
+{
+    if (pid < 0 || pid >= 0x1fff || (kind != 1 && kind != 2))
+        return -1;
+    nova_session *s = session_acquire(generation);
+    if (!s) return -1;
+    int result = -1;
+    if (s->mode == NOVA_MODE_BLURAY_ISO) {
+        for (unsigned i = 0; i < s->iso_track_count; ++i) {
+            const nova_iso_track_lang *entry = &s->iso_tracks[i];
+            if (entry->pid == (uint16_t)pid && entry->kind == kind) {
+                result = entry->coding_type;
+                break;
+            }
+        }
+    }
+    session_release(s);
+    return result;
 }
 
 __attribute__((visibility("default")))
