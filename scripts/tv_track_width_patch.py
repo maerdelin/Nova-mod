@@ -23,7 +23,7 @@ def player(s):
 def card(s):
     start,end,m=section(s,"public focus(Z)V")
     if ".locals 14" not in m:raise RuntimeError("TVCardView locals changed")
-    anchor="    invoke-direct/range {v0 .. v9}, "+CARD+"$ExpandAnimation;-><init>("
+    anchor="    invoke-direct/range {v0 .. v9}, "+CARD[:-1]+"$ExpandAnimation;-><init>("
     additional="""    # NOVA_TV_TRACK_POPUP_WIDTH_2X_V1
     invoke-virtual {p0}, Landroid/view/View;->getTag()Ljava/lang/Object;
 
