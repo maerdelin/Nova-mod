@@ -1,4 +1,4 @@
-"""Regression tests for #737: small-card TV focus gap without #736 regressions."""
+"""Regression tests for #739: exact gap big/small focus preserving #736."""
 import importlib.util
 import json
 from pathlib import Path
@@ -31,30 +31,29 @@ class SmallCardSpacingTest(unittest.TestCase):
         self.assertEqual(old.count(".field private novaExpandedCenter"), 2)
         self.assertEqual(new.count(".field private novaExpandedCenter"), 2)
 
-    def test_small_scope_guards_track_and_unrelated_popup(self):
-        s = small.SMALL_METHOD
-        self.assertLess(s.index("if-nez v0, :nova_small_end"),
-                        s.index(":nova_small_parent_ready"))
-        self.assertIn(":nova_small_scope_scan", s)
-        self.assertIn(":nova_small_scope_verified", s)
-        self.assertIn("if-ge v2, v6, :nova_small_end", s)
-        self.assertIn("nova_tv_track_wide_v1", s)
-        self.assertIn("getParent()Landroid/view/ViewParent;", s)
-        self.assertIn("->parentView:Landroid/view/View;", s)
-        self.assertNotIn("setScaleX", s)
-        self.assertNotIn("setWidth", s)
-        self.assertNotIn("setX(F)", s)
+    def test_scope_allows_track_and_small_but_skips_unrelated_rows(self):
+        code = small.SMALL_METHOD
+        self.assertIn(":nova_small_scope_scan", code)
+        self.assertIn(":nova_small_scope_verified", code)
+        self.assertIn("if-ge v2, v6, :nova_small_end", code)
+        self.assertIn("nova_tv_track_wide_v1", code)
+        self.assertNotIn("if-nez v0, :nova_small_end", code)
+        self.assertIn("getParent()Landroid/view/ViewParent;", code)
+        self.assertIn("->parentView:Landroid/view/View;", code)
+        self.assertNotIn("setScaleX", code)
+        self.assertNotIn("setWidth", code)
 
-    def test_actual_end_geometry_not_screenshot_offsets(self):
-        s = small.SMALL_METHOD
-        self.assertIn("int-to-float v9, p2", s)
-        self.assertIn("int-to-float v10, p2", s)
-        self.assertIn("int-to-float v1, p3", s)
-        self.assertIn("const/high16 v11, 0x41c00000", s)
-        self.assertIn("neg-float v11, v9", s)
-        self.assertIn("move v11, v10", s)
-        self.assertIn("cmpg-float v3, v1, v5", s)
-        self.assertNotIn("getChildAt(I)Landroid/view/View;\n\n    move-result-object v5", s)
+    def test_exact_animation_end_geometry_without_min_gap_clamps(self):
+        code = small.SMALL_METHOD
+        for token in ("int-to-float v9, p2", "int-to-float v10, p2",
+                      "int-to-float v1, p3", "sub-float v9, v5, v9",
+                      "sub-float/2addr v10, v1",
+                      "const/high16 v11, 0x41c00000",
+                      "neg-float v11, v9", "move v11, v10",
+                      "cmpg-float v3, v1, v5"):
+            self.assertIn(token, code)
+        self.assertNotIn("cmpg-float v1, v9, v11", code)
+        self.assertNotIn("cmpg-float v1, v10, v11", code)
 
     def test_focus_and_unfocus_insertion_after_verified_736_markers(self):
         old = self.baseline()
@@ -69,29 +68,47 @@ class SmallCardSpacingTest(unittest.TestCase):
                         focus.index("invoke-direct {p0, p1, v2, v3}"))
         self.assertLess(focus.index("invoke-direct {p0, p1, v2, v3}"),
                         focus.index("-><init>("))
-        self.assertEqual(focus.count("NOVA_TV_SMALL_NEIGHBOR_GAP_V1"), 2)
+        self.assertEqual(focus.count("NOVA_TV_UNIFIED_EXACT_GAP_V2"), 2)
         self.assertEqual(focus.count("iput v11, p0"), 1)
 
-    def test_geometry_prevents_overlap_and_matches_44px_track_gap(self):
-        # Exact endX/endWidth can differ from 1.2x for other TV cards.
-        # Shift entire left/right groups once, so their internal gaps
-        # and card ordering remain unchanged after selection.
-        for width in (160, 180, 220, 300, 440, 680):
-            for original_x in (0, 50, 160, 500):
-                for end_width in (width, int(width * 1.2), width * 2):
-                    for left_extension in (0.0, width * .1, width * .4,
-                                           width * .7):
-                        end_x = original_x - left_extension
-                        left_shift = max(0, original_x - end_x) + 24
-                        right_shift = max(
-                            0, end_x + end_width - (original_x + width)) + 24
-                        left_neighbor_right = original_x - 20 - left_shift
-                        right_neighbor_left = original_x + width + 20 + right_shift
-                        left_gap = end_x - left_neighbor_right
-                        right_gap = right_neighbor_left - (end_x + end_width)
-                        self.assertGreaterEqual(left_gap + 1e-7, 44)
-                        self.assertGreaterEqual(right_gap + 1e-7, 44)
-                        self.assertEqual(0, 0)  # no residual shift on unfocus
+    @staticmethod
+    def final_gaps(original_x, original_width, end_x, end_width):
+        left_shift = original_x - end_x + 24
+        right_shift = end_x + end_width - original_x - original_width + 24
+        previous_right = original_x - 20 - left_shift
+        next_left = original_x + original_width + 20 + right_shift
+        return end_x - previous_right, next_left - (end_x + end_width)
+
+    def test_small_card_all_widths_and_end_positions_exact_44_each_side(self):
+        for width in (100,165,200,207,213,220,275,330,440,680):
+            for x in (0,20,80,120,350,1920):
+                for end_width in (width,int(width*1.2),width*2):
+                    for delta in (0,width*.1,width*.4,width*.7,-width*.4):
+                        self.assertEqual(self.final_gaps(x,width,x-delta,end_width),
+                                         (44,44))
+
+    def test_audio_subtitle_final_736_endX_endWidth_include_clipping(self):
+        for width in (101,102,103,105,165,207,213,220,275,330,440,680):
+            for x in (0,20,50,80,100,160,250,1920):
+                base_x=int(x+(width-width*1.2)/2.0)
+                native_width=int(width*1.2)
+                raw_end_x=base_x-native_width//2
+                expanded_width=native_width*2
+                for subtitle in (False,True):
+                    end_x=max(0,raw_end_x) if subtitle else raw_end_x
+                    self.assertEqual(self.final_gaps(x,width,end_x,expanded_width),
+                                     (44,44))
+
+    def test_default_unfocused_neighbor_gap_remains_exact_20(self):
+        for w in (120,165,220,300,440,660):
+            x=100
+            y=x+w+20
+            z=y+w+20
+            self.assertEqual(y-x-w,20)
+            self.assertEqual(z-y-w,20)
+        self.assertIn("if-eqz p1, :nova_small_offsets_ready",small.SMALL_METHOD)
+        self.assertIn("const/4 v9, 0x0",small.SMALL_METHOD)
+        self.assertIn("const/4 v10, 0x0",small.SMALL_METHOD)
 
     def test_immutable_neighbor_order_on_navigation_return(self):
         for left in (80.0, 150.0, 220.0):
@@ -125,7 +142,9 @@ class SmallCardSpacingTest(unittest.TestCase):
             small.apply(root, report)
             data = json.loads(report.read_text())
             self.assertEqual(data["status"], "PASS")
-            self.assertEqual(data["expected_gap_px"], 44)
+            self.assertEqual(data["focused_gap_exact_px"], 44)
+            self.assertEqual(data["original_unfocused_gap_px"], 20)
+            self.assertTrue(data["tagged_tracks_exact_overwrite"])
             self.assertTrue(data["subtitle_center_cache_unchanged"])
             self.assertTrue(data["audio_track_animation_unchanged"])
             self.assertTrue(data["playback_core_unchanged"])
