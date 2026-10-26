@@ -52,11 +52,9 @@ class IsoTrackLanguageTests(unittest.TestCase):
         self.assertIn("NOVA_ISO_TRUEHD_ATMOS_V2",P)
         self.assertIn("profile == AV_PROFILE_TRUEHD_ATMOS",P)
         self.assertIn("case 0x81: match = ff_id == AV_CODEC_ID_AC3",P)
-        self.assertIn("case 0x86: match = ff_id == AV_CODEC_ID_DTS",P) if False else None
         self.assertIn("WAVE_FORMAT_DTS_HD_MA",P)
         self.assertIn("WAVE_FORMAT_DTS_HD",P)
         self.assertIn('match == 1 && atmos_confirmed',P)
-        self.assertIn("const int profile",P) if False else None
         self.assertIn("return src.replace(ANCHOR, REPLACEMENT, 1)",P)
         self.assertNotIn('av_dict_set(&st->metadata, "title"',P)
 
