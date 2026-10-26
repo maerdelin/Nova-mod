@@ -152,7 +152,8 @@ def main():
     path = args.native / "Source/stream_parser_ffmpeg.c"
     old = path.read_text(encoding="utf-8")
     new = transform(old)
-    assert new.replace(REPLACEMENT, ANCHOR, 1) == old
+    assert new.count("NOVA_ISO_CODEC_LABEL_V2") == 1
+    assert new.count("NOVA_ISO_TRACK_APPLIED_V1") >= 2
     path.write_text(new, encoding="utf-8")
     print("NOVA_ISO_TRACK_LANG_V1=PATCHED")
 
