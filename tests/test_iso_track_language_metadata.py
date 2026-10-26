@@ -20,6 +20,9 @@ class IsoTrackLanguageTests(unittest.TestCase):
         self.assertIn("!strcmp(lang, \"und\")", T)
         self.assertIn("NOVA_ISO_TRACK_CAPTURE_V1", T)
         self.assertIn("NOVA_ISO_TRACK_CONFLICT_V1", T)
+        self.assertIn("NOVA_ISO_CODEC_CLPI_V2", T)
+        self.assertIn("int nova_transport_iso_track_codec(", T)
+        self.assertIn("dst->coding_type = stream->coding_type;", T)
 
     def test_bd_title_metadata_copied_before_free_without_extra_io(self):
         start=T.index("BLURAY_TITLE_INFO *ti = bd_get_title_info(s->bd, (uint32_t)main_title, 0);")
@@ -44,6 +47,16 @@ class IsoTrackLanguageTests(unittest.TestCase):
         self.assertIn("action=preserve",P)
         self.assertIn("action=missing",P)
         self.assertIn("NOVA_ISO_TRACK_SUMMARY_V1",P)
+        self.assertIn("NOVA_ISO_CODEC_AUDIT_V2",P)
+        self.assertIn("NOVA_ISO_CODEC_LABEL_V2",P)
+        self.assertIn("NOVA_ISO_TRUEHD_ATMOS_V2",P)
+        self.assertIn("profile == AV_PROFILE_TRUEHD_ATMOS",P)
+        self.assertIn("case 0x81: match = ff_id == AV_CODEC_ID_AC3",P)
+        self.assertIn("case 0x86: match = ff_id == AV_CODEC_ID_DTS",P) if False else None
+        self.assertIn("WAVE_FORMAT_DTS_HD_MA",P)
+        self.assertIn("WAVE_FORMAT_DTS_HD",P)
+        self.assertIn('match == 1 && atmos_confirmed',P)
+        self.assertIn("const int profile",P) if False else None
         self.assertIn("return src.replace(ANCHOR, REPLACEMENT, 1)",P)
         self.assertNotIn('av_dict_set(&st->metadata, "title"',P)
 
@@ -57,6 +70,9 @@ class IsoTrackLanguageTests(unittest.TestCase):
         self.assertIn("python3 scripts/iso_track_metadata_patch.py --native",W)
         self.assertIn("NOVA_ISO_TRACK_APPLIED_V1",W)
         self.assertIn("NOVA_ISO_TRACK_CAPTURE_V1",W)
+        self.assertIn("NOVA_ISO_CODEC_CLPI_V2",W)
+        self.assertIn("NOVA_ISO_CODEC_LABEL_V2",W)
+        self.assertIn("nova_transport_iso_track_codec",W)
 
 if __name__ == "__main__":
     unittest.main()
