@@ -151,6 +151,11 @@ def main():
                 40,
                 "direct WebDAV transport open, RAW128 and first frame",
             )
+            if ("java.lang.VerifyError" in text
+                    or "Verifier rejected class" in text
+                    or "FATAL EXCEPTION: main" in text):
+                raise RuntimeError("PlayerActivity VerifyError or FATAL during playback")
+
             # The signed APK must actually emit the new cold-start trace from
             # its native hardware rendering path, not merely compile the text.
             trace = wait_for(
