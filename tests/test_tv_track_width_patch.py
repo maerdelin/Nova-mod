@@ -37,6 +37,49 @@ class PopupWidthTest(unittest.TestCase):
         self.assertIn("mPlayModeTVCardView",s)
         self.assertEqual(s.count(p.SUBTITLE_TAG),1)
         self.assertEqual(s.count("->setTag(ILjava/lang/Object;)V"),1)
+        self.assertIn("    .locals 12",s)
+        self.assertNotIn("    const-string v3, \"nova_",s)
+        self.assertEqual(s.count("NOVA_TV_REGISTER_SAFE_V5"),2)
+        self.assertIn('    const-string v11, "'+p.SUBTITLE_TAG+'"',s)
+    def test_android_verifier_theme_register_survives_player_patch(self):
+        # 730 shipped a broken APK: the tag was loaded with const-string v3,
+        # while the later instructions still used v3 as Resources$Theme.
+        # Preserve the ORIGINAL method body and use extra v10/v11 locals.
+        original=self.sample_player()
+        original=original.replace(
+            ".end method",
+            """    invoke-static {v3}, Landroid/content/res/Resources$Theme;->getClass()Ljava/lang/Class;
+
+.end method""")
+        patched=p.player(original)
+        self.assertIn("    .locals 12",patched)
+        self.assertIn("invoke-static {v3}",patched)
+        self.assertNotIn("const-string v3",patched)
+        self.assertNotIn("move-result-object v3",patched)
+        self.assertIn("const-string v10",patched)
+        self.assertIn("const-string v11",patched)
+        self.assertNotIn("const-string v2",patched)
+        for reg in ("v10","v11"):
+            self.assertNotIn(reg,original)
+        # The old original instructions must all survive in original order;
+        # changes are only at the two anchor spots and .locals count.
+        self.assertEqual(patched.count("->mPlayModeTVCardView:"),1)
+
+    def test_new_scratch_registers_fit_in_smali_4bit_invoke(self):
+        patched=p.player(self.sample_player())
+        self.assertIn(".locals 12",patched)
+        self.assertIn("invoke-virtual {v1, v10, v11}",patched)
+        self.assertLessEqual(max((10,11,12)),15) # p0 shifts to v12
+        self.assertNotIn("const-string v3, \"nova_",patched)
+        self.assertNotIn("const-string v2, \"nova_",patched)
+        self.assertEqual(patched.count("->setParentView(Landroid/view/View;)V"),2)
+
+    def test_fail_closed_if_original_uses_scratch_register(self):
+        original=self.sample_player().replace(
+            ".end method","    move-object v10, p0\n.end method")
+        with self.assertRaisesRegex(RuntimeError,"reserved scratch"):
+            p.player(original)
+
     def test_focus_width_header_siblings_slave(self):
         s=p.card(self.sample_card())
         self.assertIn("NOVA_TV_TRACK_LAYOUT_V4",(ROOT/"scripts/tv_track_width_patch.py").read_text())
@@ -135,7 +178,7 @@ class PopupWidthTest(unittest.TestCase):
             (smali/"TVMenuAdapter.smali").write_text("UNCHANGED")
             p.apply(root,root/"reports/result.json")
             report=json.loads((root/"reports/result.json").read_text())
-            self.assertEqual(report["marker"],"NOVA_TV_TRACK_LAYOUT_V4")
+            self.assertEqual(report["marker"],"NOVA_TV_TRACK_REGISTER_SAFE_V5")
             self.assertEqual(report["subtitle_clip_delta"],"max(0,-expanded_left_px)")
             self.assertTrue(report["audio_x_unchanged"])
             self.assertTrue(report["header_centered"])

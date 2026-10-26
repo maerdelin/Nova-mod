@@ -16,24 +16,38 @@ def replace1(s,a,b):
     return s.replace(a,b,1)
 def player(s):
     start,end,m=section(s,"public createPlayerTVMenu()V")
-    if ".locals 10" not in m:raise RuntimeError("PlayerActivity locals changed")
+    if "\n    .locals 10\n" not in m:
+        raise RuntimeError("PlayerActivity register layout changed")
+    # The original 10 locals v0-v9 are LIVE through later theme/Drawable
+    # operations. Android's verifier rejects v3=String where v3=Theme.
+    # Allocate *new* locals v10,v11 and never write v0-v9 in our patch.
+    # .locals 12 moves p0 to v12; all references use the p0 alias.
+    import re
+    if re.search(r"\bv(?:10|11)\b",m):
+        raise RuntimeError("Original PlayerActivity uses reserved scratch regs")
+    m=replace1(m,"    .locals 10","    .locals 12")
     for field in ("mSubtitleTVCardView","mAudioTracksTVCardView"):
         anchor="    iput-object v1, p0, "+ACT+"->"+field+":"+CARD
         changed=(anchor+
-                 "\n\n    const-string v2, \""+TAG+"\""+
-                 "\n\n    invoke-virtual {v1, v2}, Landroid/view/View;->setTag(Ljava/lang/Object;)V"+
+                 "\n\n    # NOVA_TV_REGISTER_SAFE_V5: scratch v10/v11 only"+
+                 "\n    const-string v10, \""+TAG+"\""+
+                 "\n\n    invoke-virtual {v1, v10}, Landroid/view/View;->setTag(Ljava/lang/Object;)V"+
                  "\n\n    invoke-virtual {v1}, Landroid/view/View;->getParent()Landroid/view/ViewParent;"+
-                 "\n\n    move-result-object v2"+
-                 "\n\n    check-cast v2, Landroid/view/View;"+
-                 "\n\n    invoke-virtual {v1, v2}, "+CARD+"->setParentView(Landroid/view/View;)V")
+                 "\n\n    move-result-object v10"+
+                 "\n\n    check-cast v10, Landroid/view/View;"+
+                 "\n\n    invoke-virtual {v1, v10}, "+CARD+"->setParentView(Landroid/view/View;)V")
         if field=="mSubtitleTVCardView":
-            # A keyed tag distinguishes subtitles from audio without altering
-            # the shared wide-card tag, menu labels or accessibility text.
-            changed += (
-                "\n\n    sget v2, Lcom/archos/mediacenter/video/R$id;->card_view:I"
-                "\n\n    const-string v3, \"" + SUBTITLE_TAG + "\""
-                "\n\n    invoke-virtual {v1, v2, v3}, Landroid/view/View;->setTag(ILjava/lang/Object;)V")
+            changed+=(
+                "\n\n    sget v10, Lcom/archos/mediacenter/video/R$id;->card_view:I"+
+                "\n\n    const-string v11, \""+SUBTITLE_TAG+"\""+
+                "\n\n    invoke-virtual {v1, v10, v11}, Landroid/view/View;->setTag(ILjava/lang/Object;)V")
         m=replace1(m,anchor,changed)
+    if "const-string v3" in m and "nova_tv_" in m:
+        raise RuntimeError("Unexpected legacy register contamination")
+    # Validation of output method: only the explicit new locals
+    # can be used as destinations in injected smali.
+    if m.count("NOVA_TV_REGISTER_SAFE_V5")!=2 or ".locals 12" not in m:
+        raise RuntimeError("New register isolation was not applied correctly")
     return s[:start]+m+s[end:]
 
 # Expanded width is 2.4*originalW and card center is originalX+0.5W.
@@ -262,7 +276,7 @@ def apply(root,report):
            "TVCardView.smali":card(before["TVCardView.smali"])}
     for name,code in after.items():targets[name].write_text(code)
     report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_LAYOUT_V4",
+    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_REGISTER_SAFE_V5",
         "target":["mSubtitleTVCardView","mAudioTracksTVCardView"],"width_multiplier":2,
         "header_centered":True,"neighbor_gap_px":24,"subtitle_clip_delta":"max(0,-expanded_left_px)","audio_x_unchanged":True,"other_card_widths_unchanged":True},indent=2))
-    print("NOVA_TV_TRACK_LAYOUT_V4=PASS; dynamic calculated subtitle visible width equals audio; audio unchanged")
+    print("NOVA_TV_TRACK_REGISTER_SAFE_V5=PASS; PlayerActivity scratch registers isolated; TV layout unchanged")
