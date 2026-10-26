@@ -91,7 +91,7 @@ class PopupWidthTest(unittest.TestCase):
 
     def test_focus_width_header_siblings_slave(self):
         s=p.card(self.sample_card())
-        self.assertIn("NOVA_TV_TRACK_REGISTER_SAFE_V5",(ROOT/"scripts/tv_track_width_patch.py").read_text())
+        self.assertIn("NOVA_SUBTITLE_FOCUS_CENTER_V6",(ROOT/"scripts/tv_track_width_patch.py").read_text())
         self.assertIn("NOVA_TV_DYNAMIC_CLIP_V4",s)
         self.assertIn("NOVA_TV_TRACK_LAYOUT_V2",s)
         self.assertIn("int-to-float v5, v3",s)
