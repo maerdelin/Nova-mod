@@ -206,6 +206,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/granular_build.py --apk inputs/official.apk --metadata inputs/upstream.json --apktool tools/apktool.jar --work work --reports reports --native-lib-root native-src/native/avos/libs --output work/granular-UNSIGNED.apk
 
+      - name: Inspect TV audio subtitle card layout (read only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/tv_popup_audit.py work/candidate
+
       - name: Restore saved WebDAV credentials on cold startup
         shell: bash
         run: |
