@@ -15,6 +15,7 @@ import check_upstream as upstream
 import buffer_guard_patch
 import audio_route_no_rebuild_patch
 import tv_track_width_patch
+import tv_small_card_spacing_patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -134,6 +135,7 @@ def main():
     buffer_guard_patch.apply(candidate, args.reports / 'buffer-guard.json')
     audio_route_no_rebuild_patch.apply(candidate, args.reports / 'audio-route-no-rebuild.json')
     tv_track_width_patch.apply(candidate, args.reports / 'tv-track-popup-width.json')
+    tv_small_card_spacing_patch.apply(candidate, args.reports / 'tv-small-card-gap.json')
     overlay_native(candidate, args.native_lib_root, args.reports)
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
