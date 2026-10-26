@@ -46,6 +46,16 @@ typedef enum {
     NOVA_MODE_BLURAY_ISO = 1,
 } nova_mode;
 
+/* NOVA_ISO_TRACK_LANG_V1: immutable main-title Blu-ray track metadata.
+ * CLPI/playlist PIDs and ISO-639 language codes live only in this ISO
+ * session; MPEG-TS byte delivery and other formats remain unmodified. */
+#define NOVA_ISO_TRACK_LANG_CAP 128
+typedef struct nova_iso_track_lang {
+    uint16_t pid;
+    uint8_t kind; /* 1 = primary audio; 2 = presentation graphics */
+    char lang[4];
+} nova_iso_track_lang;
+
 typedef struct nova_session {
     uint64_t generation;
     volatile int stopping;
@@ -92,6 +102,8 @@ typedef struct nova_session {
     uint64_t iso_meta_hits;
     uint64_t iso_meta_misses;
     uint64_t iso_meta_fetched;
+    nova_iso_track_lang iso_tracks[NOVA_ISO_TRACK_LANG_CAP];
+    unsigned iso_track_count;
 } nova_session;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -508,6 +520,46 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
     return got == bytes ? num_blocks : -1;
 }
 
+/* Take a by-value copy while bd_get_title_info() is alive; the returned
+ * title data is freed as before. Nothing here reads or seeks movie bytes. */
+static void nova_iso_capture_track_languages(nova_session *s,
+                                              const BLURAY_STREAM_INFO *tracks,
+                                              unsigned count, unsigned kind)
+{
+    if (!s || !tracks || (kind != 1 && kind != 2)) return;
+    for (unsigned i = 0; i < count && s->iso_track_count < NOVA_ISO_TRACK_LANG_CAP; ++i) {
+        const BLURAY_STREAM_INFO *stream = &tracks[i];
+        if (stream->pid < 0x20 || stream->pid >= 0x1fff) continue;
+        char lang[4] = {0};
+        int valid = 1;
+        for (unsigned c = 0; c < 3; ++c) {
+            const unsigned char ch = stream->lang[c];
+            if (ch >= 'a' && ch <= 'z') lang[c] = (char)ch;
+            else if (ch >= 'A' && ch <= 'Z') lang[c] = (char)(ch + 'a' - 'A');
+            else { valid = 0; break; }
+        }
+        if (!valid || !strcmp(lang, "und")) continue;
+        int duplicate = 0;
+        for (unsigned j = 0; j < s->iso_track_count; ++j) {
+            const nova_iso_track_lang *saved = &s->iso_tracks[j];
+            if (saved->pid == stream->pid && saved->kind == kind) {
+                if (strcmp(saved->lang, lang))
+                    LOGI("NOVA_ISO_TRACK_CONFLICT_V1: kind=%u pid=0x%x old=%s new=%s",
+                         kind, stream->pid, saved->lang, lang);
+                duplicate = 1;
+                break;
+            }
+        }
+        if (duplicate) continue;
+        nova_iso_track_lang *dst = &s->iso_tracks[s->iso_track_count++];
+        dst->pid = stream->pid;
+        dst->kind = (uint8_t)kind;
+        memcpy(dst->lang, lang, sizeof(lang));
+        LOGI("NOVA_ISO_TRACK_CAPTURE_V1: kind=%u pid=0x%x lang=%s codec=0x%x",
+             kind, stream->pid, lang, stream->coding_type);
+    }
+}
+
 static int select_main_title(nova_session *s)
 {
     int64_t scan_start_ms = nova_iso_uptime_ms();
@@ -540,6 +592,20 @@ static int select_main_title(nova_session *s)
     BLURAY_TITLE_INFO *ti = bd_get_title_info(s->bd, (uint32_t)main_title, 0);
     if (ti) {
         s->clip_count = ti->clip_count;
+        /* Stream metadata is authoritative in the selected Blu-ray playlist,
+         * not in MPEG-TS's often-unlabelled PMT. The first clip establishes
+         * the stream PID mapping; never guess a title or language for later
+         * clips whose PIDs may have changed. */
+        if (ti->clip_count > 0 && ti->clips) {
+            const BLURAY_CLIP_INFO *clip = &ti->clips[0];
+            nova_iso_capture_track_languages(s, clip->audio_streams,
+                                             clip->audio_stream_count, 1);
+            nova_iso_capture_track_languages(s, clip->pg_streams,
+                                             clip->pg_stream_count, 2);
+            LOGI("NOVA_ISO_TRACK_LIST_V1: title=%d clips=%u audio=%u pg=%u collected=%u",
+                 main_title, ti->clip_count, clip->audio_stream_count,
+                 clip->pg_stream_count, s->iso_track_count);
+        }
         if (ti->duration >= 10ULL * 90000 &&
             ti->duration <= 24ULL * 3600 * 90000)
             s->duration_us = (ti->duration * 100) / 9;
@@ -1284,6 +1350,33 @@ int64_t nova_transport_size(uint64_t generation)
     int64_t size = (int64_t)s->output_size;
     session_release(s);
     return size;
+}
+
+/* Read-only ISO metadata bridge, resolved by dlsym from the already-loaded
+ * libnova_transport.so. Wrong generation, FILE or absent PID returns no data.
+ * No codec/seek/read/clock state is touched. */
+__attribute__((visibility("default")))
+int nova_transport_iso_track_language(uint64_t generation, int pid, int kind,
+                                      char *out, unsigned capacity)
+{
+    if (!out || capacity < 4 || pid < 0 || pid >= 0x1fff ||
+        (kind != 1 && kind != 2)) return 0;
+    out[0] = '\0';
+    nova_session *s = session_acquire(generation);
+    if (!s) return 0;
+    int found = 0;
+    if (s->mode == NOVA_MODE_BLURAY_ISO) {
+        for (unsigned i = 0; i < s->iso_track_count; ++i) {
+            const nova_iso_track_lang *entry = &s->iso_tracks[i];
+            if (entry->pid == (uint16_t)pid && entry->kind == kind) {
+                memcpy(out, entry->lang, 4);
+                found = 1;
+                break;
+            }
+        }
+    }
+    session_release(s);
+    return found;
 }
 
 __attribute__((visibility("default")))
