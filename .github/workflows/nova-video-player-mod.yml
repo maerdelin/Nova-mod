@@ -120,6 +120,8 @@ jobs:
           # The ISO CLPI path and all non-MKV fallback branches stay untouched.
           python3 scripts/mkv_bbc_cue_seek_patch.py --native native-src/native/avos
           grep -Fq 'NOVA_MKV_BBC_CUE_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'NOVA_MKV_SEEK_SCAN_BEGIN_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'NOVA_MKV_SEEK_DONE_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_ISO_INDEX_SEEK_V3' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_ISO_INDEX_MAP_V3' iso/nova_transport.c
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
@@ -141,7 +143,7 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1 NOVA_SEEK_POOL_OWNERS_V1; do
+              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1 NOVA_SEEK_POOL_OWNERS_V1 NOVA_MKV_SEEK_SCAN_BEGIN_V2 NOVA_MKV_BBC_SEEK_STOP_V1; do
                 if ! grep -aq "$trace" "$new"; then
                   echo "::error::Missing $trace instrumentation from $abi libavos.so"
                   exit 1

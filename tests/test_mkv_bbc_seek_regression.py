@@ -45,5 +45,28 @@ class BbcMkvRegression(unittest.TestCase):
         self.assertIn('mkv_seek_bytes > (64ULL * 1024 * 1024)',raw)
         self.assertIn('av_gettime_relative() - raw->mkv_seek_started_us > 12000000',raw)
 
+
+    def test_mkv_scan_budget_starts_after_successful_index_relocation(self):
+        p=src("scripts/mkv_bbc_cue_seek_patch.py")
+        self.assertIn("NOVA_MKV_SEEK_SCAN_BUDGET_V2",p)
+        self.assertIn("if(nova_mkv_seek && ret >= 0)",p)
+        self.assertIn("ff_p->raw.mkv_seek_started_us = av_gettime_relative();",p)
+        self.assertIn("unsigned nova_mkv_scan_atime = nova_mkv_seek ? atime() : 0;",p)
+        self.assertIn("nova_mkv_seek ? nova_mkv_scan_atime : deadline",p)
+        self.assertIn("nova_scan_us > 12000000",p)
+        self.assertIn("ff_p->raw.mkv_seek_bytes > (64ULL*1024*1024)",p)
+        self.assertIn("NOVA_MKV_SEEK_SCAN_BEGIN_V2",p)
+        self.assertIn("NOVA_MKV_SEEK_DONE_V2",p)
+        self.assertIn("NOVA_MKV_BBC_SEEK_STOP_V1: reason=%s",p)
+        self.assertIn('"scan_timeout"',p)
+        self.assertIn('"scan_byte_limit"',p)
+        self.assertIn('"source_error"',p)
+        self.assertIn("rebuffer=%d seekPaused=%d",p)
+        # Run687's non-MKV 15s fallback retains its original deadline.
+        self.assertIn("nova_mkv_seek ? nova_mkv_scan_atime : deadline",p)
+        self.assertIn("ret=avformat_seek_file(fmt,-1,seek_min,new_pos,seek_max,av_flags)",p)
+        # The 128MiB RAW policy and 1.5X/3X playback thresholds are not patched.
+        self.assertNotIn("NOVA_RAW_FIXED128_POLICY",p)
+
 if __name__=="__main__":
     unittest.main()
