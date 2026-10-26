@@ -183,8 +183,9 @@ jobs:
             avos="native-src/native/avos/libs/$abi/libavos.so"
             if ! grep -aq 'NOVA_ISO_TRACK_CAPTURE_V1' "$transport" || \
                ! grep -aq 'NOVA_ISO_CODEC_CLPI_V2' "$transport" || \
-               ! "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$transport" | grep -q ' nova_transport_iso_track_language
-              echo "::error::ISO language metadata bridge missing or not exported: $abi"
+               ! "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$transport" | grep -q ' nova_transport_iso_track_language$' || \
+               ! "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$transport" | grep -q ' nova_transport_iso_track_codec$'; then
+              echo "::error::ISO codec bridge missing or not exported: $abi"
               exit 1
             fi
             if ! grep -aq 'NOVA_ISO_INDEX_MAP_V3' "$transport"; then
