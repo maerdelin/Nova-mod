@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           # Install only tools missing from the runner to avoid apt stalls.
           missing=()
-          for spec in zstd:zstd git:git make:make mvn:maven cc:build-essential wget:wget curl:curl unzip:unzip pkg-config:pkg-config meson:meson ninja:ninja-build ffmpeg:ffmpeg; do
+          for spec in zstd:zstd git:git make:make mvn:maven cc:build-essential wget:wget curl:curl unzip:unzip pkg-config:pkg-config ninja:ninja-build; do
             bin="${spec%%:*}"
             pkg="${spec#*:}"
             if ! command -v "$bin" >/dev/null 2>&1; then
@@ -43,6 +43,22 @@ jobs:
           else
             echo 'CI preflight: required build tools are already installed'
           fi
+          # GitHub apt mirrors timed out twice installing meson+ffmpeg (exit 124).
+          # Isolate pinned host-only build tools; do not alter APK dependencies.
+          if ! command -v meson >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+            echo 'CI preflight: provision pinned Meson and FFmpeg without apt'
+            python3 -m venv .nova-ci-deps
+            timeout 180s .nova-ci-deps/bin/python -m pip install --disable-pip-version-check --no-input --no-cache-dir 'meson==1.7.0' 'imageio-ffmpeg==0.6.0'
+            mkdir -p .nova-ci-bin
+            ln -s "$PWD/.nova-ci-deps/bin/meson" .nova-ci-bin/meson
+            ffmpeg_exe="$(.nova-ci-deps/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
+            test -x "$ffmpeg_exe"
+            ln -s "$ffmpeg_exe" .nova-ci-bin/ffmpeg
+            export PATH="$PWD/.nova-ci-bin:$PATH"
+            echo "$PWD/.nova-ci-bin" >> "$GITHUB_PATH"
+          fi
+          meson --version
+          ffmpeg -version | head -n 1
           mkdir -p inputs dist tools work reports
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
