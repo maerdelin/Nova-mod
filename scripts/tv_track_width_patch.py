@@ -46,7 +46,7 @@ def card(s):
     :nova_track_width_normal
 
 """
-    if m.count(":cond_9")!=1:raise RuntimeError("Missing focused/unfocused boundary")
+    if m.count("    :cond_9\n")!=1:raise RuntimeError("Missing focused/unfocused label")
     focused,unfocused=m.split("    :cond_9",1)
     focused=replace1(focused,anchor,additional+anchor)
     m=focused+"    :cond_9"+unfocused
