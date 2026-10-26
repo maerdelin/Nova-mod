@@ -165,6 +165,42 @@ SPACING_METHOD = '''
 .end method
 '''
 
+def center_method(s):
+    """Cache the subtitle's exact expanded center as the TV adapter focus target.
+
+    TVMenuAdapter.onSlaveFocusChange() calls focus(true) and IMMEDIATELY
+    reads getPositionX() (before 200ms ExpandAnimation has updated the
+    card's physical coordinates). Only a subtitle with left-edge
+    correction has a different expanded center; all other card getters
+    must retain their original behavior.
+    """
+    import re
+    if "novaExpandedCenterX" in s or "novaExpandedCenterValid" in s:
+        raise RuntimeError("Expanded center cache is already present")
+    first=s.find(".method ")
+    if first<0:
+        raise RuntimeError("TVCardView has no methods")
+    s=s[:first]+(".field private novaExpandedCenterX:F\n"
+                  ".field private novaExpandedCenterValid:Z\n\n")+s[first:]
+    st,en,m=section(s,"public getPositionX()F")
+    header=re.search(r"(?m)^    \.locals (\d+)$",m)
+    if not header or int(header.group(1))<1:
+        raise RuntimeError("getPositionX() has no safe local scratch register")
+    prologue=("""
+    # NOVA_SUBTITLE_FOCUS_CENTER_V6: correct repeated focus and refocus.
+    iget-boolean v0, p0, """+CARD+"""->novaExpandedCenterValid:Z
+
+    if-eqz v0, :nova_track_center_original_position
+
+    iget v0, p0, """+CARD+"""->novaExpandedCenterX:F
+
+    return v0
+
+    :nova_track_center_original_position
+""")
+    m=replace1(m,header.group(0),header.group(0)+"\n"+prologue)
+    return s[:st]+m+s[en:]
+
 def card(s):
     start,end,m=section(s,"public focus(Z)V")
     if ".locals 14" not in m:raise RuntimeError("TVCardView focus register map changed")
@@ -191,7 +227,7 @@ def card(s):
     # Restore neighbor positions on unfocus. On focus, the extra
     # displacement is calculated from the real expanded X coordinate.
     m=replace1(m,'    move v0, p1',
-               '    move v0, p1\n\n    if-nez p1, :nova_track_reset_done\n\n    const/4 v10, 0x0\n\n    invoke-direct {p0, p1, v10}, '+CARD+'->novaOffsetTrackNeighbors(ZI)V\n\n    :nova_track_reset_done')
+               '    move v0, p1\n\n    const/4 v10, 0x0\n\n    iput-boolean v10, p0, '+CARD+'->novaExpandedCenterValid:Z\n\n    if-nez p1, :nova_track_reset_done\n\n    const/4 v10, 0x0\n\n    invoke-direct {p0, p1, v10}, '+CARD+'->novaOffsetTrackNeighbors(ZI)V\n\n    :nova_track_reset_done')
     anchor="    invoke-direct/range {v0 .. v9}, "+CARD[:-1]+"$ExpandAnimation;-><init>("
     additional="""    # NOVA_TV_TRACK_LAYOUT_V2: width 2x, header matches full expanded width
     invoke-virtual {p0}, Landroid/view/View;->getTag()Ljava/lang/Object;
@@ -234,6 +270,11 @@ def card(s):
 
     if-eqz v10, :nova_subtitle_clip_delta_zero
 
+    # Subtitle alone uses the cached final center. Audio remains unchanged.
+    const/4 v11, 0x1
+
+    iput-boolean v11, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->novaExpandedCenterValid:Z
+
     if-gez v2, :nova_subtitle_clip_delta_zero
 
     neg-int v10, v2
@@ -252,6 +293,25 @@ def card(s):
 
     invoke-direct {p0, v11, v10}, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->novaOffsetTrackNeighbors(ZI)V
 
+    # Cache EXACT same endX/endWidth sent to ExpandAnimation; no
+    # screenshot offsets, duplicate calculations or extra animation.
+    # The adapter immediately calls getPositionX() after focus(true).
+    iget-boolean v10, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->novaExpandedCenterValid:Z
+
+    if-eqz v10, :nova_center_saved
+
+    div-int/lit8 v10, v3, 0x2
+
+    int-to-float v10, v10
+
+    int-to-float v11, v2
+
+    add-float/2addr v11, v10
+
+    iput v11, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->novaExpandedCenterX:F
+
+    :nova_center_saved
+
     :nova_track_width_normal
 
 """
@@ -262,7 +322,7 @@ def card(s):
     result=s[:start]+m+s[end:]
     if ".method private novaOffsetTrackNeighbors(Z)V" in result:
         raise RuntimeError("Track neighbor adjustment already installed")
-    return result[:start]+SPACING_METHOD+"\n"+result[start:]
+    return center_method(result[:start]+SPACING_METHOD+"\n"+result[start:])
 
 def apply(root,report):
     targets={}
@@ -276,7 +336,7 @@ def apply(root,report):
            "TVCardView.smali":card(before["TVCardView.smali"])}
     for name,code in after.items():targets[name].write_text(code)
     report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_TV_TRACK_REGISTER_SAFE_V5",
+    report.write_text(json.dumps({"status":"PASS","marker":"NOVA_SUBTITLE_FOCUS_CENTER_V6",
         "target":["mSubtitleTVCardView","mAudioTracksTVCardView"],"width_multiplier":2,
-        "header_centered":True,"neighbor_gap_px":24,"subtitle_clip_delta":"max(0,-expanded_left_px)","audio_x_unchanged":True,"other_card_widths_unchanged":True},indent=2))
-    print("NOVA_TV_TRACK_REGISTER_SAFE_V5=PASS; PlayerActivity scratch registers isolated; TV layout unchanged")
+        "header_centered":True,"neighbor_gap_px":24,"subtitle_clip_delta":"max(0,-expanded_left_px)","subtitle_focus_center":"cached_from_ExpandAnimation_endX_and_endWidth","audio_x_unchanged":True,"other_card_widths_unchanged":True},indent=2))
+    print("NOVA_SUBTITLE_FOCUS_CENTER_V6=PASS; same expanded center on first focus, navigation back, and refocus")

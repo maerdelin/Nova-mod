@@ -18,7 +18,16 @@ class PopupWidthTest(unittest.TestCase):
         return s+".end method\n"
     def sample_card(self):
         c=p.CARD
-        return (".method public focus(Z)V\n    .locals 14\n    move v0, p1\n"
+        return (".method public getPositionX()F\n    .locals 2\n"
+                + "    invoke-virtual {p0}, Landroid/view/View;->getX()F\n"
+                + "    move-result v0\n"
+                + "    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->getCurrentWidth()I\n"
+                + "    move-result v1\n"
+                + "    div-int/lit8 v1, v1, 0x2\n"
+                + "    int-to-float v1, v1\n"
+                + "    add-float/2addr v0, v1\n"
+                + "    return v0\n.end method\n\n"
+                + ".method public focus(Z)V\n    .locals 14\n    move v0, p1\n"
                 + "    iget-object v2, p0, "+c+"->slaveView:"+c+"\n"
                 + "    if-eqz v2, :cond_0\n"
                 + "    invoke-virtual {v2, p1}, "+c+"->focus(Z)V\n"
@@ -91,6 +100,12 @@ class PopupWidthTest(unittest.TestCase):
         self.assertEqual(s.count("->setTranslationX(F)V"),1)
         self.assertIn("nova_track_skip_slave_tag",s)
         self.assertIn(":nova_subtitle_clip_delta_ready",s)
+        self.assertIn("NOVA_SUBTITLE_FOCUS_CENTER_V6",s)
+        self.assertIn("->novaExpandedCenterX:F",s)
+        self.assertIn("->novaExpandedCenterValid:Z",s)
+        self.assertIn(":nova_track_center_original_position",s)
+        self.assertIn("iput v11, p0",s)
+        self.assertEqual(s.count(".field private novaExpandedCenter"),2)
         self.assertIn("add-int/2addr v2, v10",s)
         self.assertIn("nova_track_dynamic_gap_done",s)
         self.assertIn("->getTag(I)Ljava/lang/Object;",s)
@@ -153,6 +168,65 @@ class PopupWidthTest(unittest.TestCase):
         self.assertNotIn("390px",code)
         self.assertNotIn("77px",code)
 
+    def test_repeated_navigation_uses_identical_expanded_center(self):
+        # The adapter starts focus() and queries getPositionX BEFORE
+        # the 200ms animation finishes. 732 returned the COLLAPSED
+        # center on that path. Cached endX+endWidth/2 must be used.
+        for density in (0.75,1.0,1.25,1.5,2.0,2.5,3.0):
+            w=round(220*density)
+            actual_end_w=2*int(w*1.2)
+            for screen_w in (640,720,960,1280,1920,2560,3840):
+                # Different screen widths affect the adapter's translation,
+                # never the card's own end center.
+                for original_x in (0,25,50,80,100,120,240):
+                    pre_center=original_x+(w//2)
+                    native_end_x=int(original_x + (w-w*1.2)/2.0)
+                    expanded_x=native_end_x-int(w*1.2)//2
+                    corrected_end_x=max(0,expanded_x)
+                    post_center=corrected_end_x+actual_end_w//2
+                    new_translation=screen_w/2-post_center
+                    self.assertEqual(new_translation+post_center,screen_w/2)
+                    # Initial, next->previous, next->next->previous,
+                    # and refocus() all query the same cached target.
+                    for repeat in range(4):
+                        self.assertEqual(
+                            screen_w/2-post_center+post_center,screen_w/2)
+                    # Old adapter path was wrong exactly by the
+                    # subtitle left-edge correction, if any.
+                    old_translation=screen_w/2-pre_center
+                    self.assertAlmostEqual(
+                        old_translation+post_center-screen_w/2,
+                        post_center-pre_center)
+
+    def test_center_cache_enabled_for_subtitle_only(self):
+        patch=p.card(self.sample_card())
+        focus=p.section(patch,"public focus(Z)V")[2]
+        getter=p.section(patch,"public getPositionX()F")[2]
+        self.assertIn("NOVA_SUBTITLE_FOCUS_CENTER_V6",getter)
+        self.assertIn("iput-boolean v11, p0",focus)
+        self.assertIn("if-eqz v10, :nova_subtitle_clip_delta_zero",focus)
+        self.assertLess(
+            focus.index("if-eqz v10, :nova_subtitle_clip_delta_zero"),
+            focus.index("iput-boolean v11, p0"))
+        self.assertIn(":nova_track_width_normal",focus)
+        self.assertIn("iput-boolean v10, p0",focus)
+        self.assertIn("iget-boolean v0, p0",getter)
+        self.assertIn("return v0",getter)
+        self.assertNotIn("->novaExpandedCenterValid:Z",
+                         p.player(self.sample_player()))
+        # Only TVCardView gets two additional fields; no adapter edits.
+        self.assertNotIn("TVMenuAdapter.smali",patch)
+
+    def test_get_position_missing_or_no_scratch_aborts(self):
+        raw=self.sample_card()
+        start,end,_=p.section(raw,"public getPositionX()F")
+        with self.assertRaises(RuntimeError):
+            p.card(raw[:start]+raw[end:])
+        broken=raw.replace(".method public getPositionX()F\n    .locals 2",
+                           ".method public getPositionX()F\n    .locals 0")
+        with self.assertRaisesRegex(RuntimeError,"no safe local scratch"):
+            p.card(broken)
+
     def test_wrong_methods_fail_fast(self):
         with self.assertRaises(RuntimeError):p.player(self.sample_player().replace(".locals 10",".locals 9"))
         with self.assertRaises(RuntimeError):p.card(self.sample_card().replace(".locals 14",".locals 12"))
@@ -178,7 +252,8 @@ class PopupWidthTest(unittest.TestCase):
             (smali/"TVMenuAdapter.smali").write_text("UNCHANGED")
             p.apply(root,root/"reports/result.json")
             report=json.loads((root/"reports/result.json").read_text())
-            self.assertEqual(report["marker"],"NOVA_TV_TRACK_REGISTER_SAFE_V5")
+            self.assertEqual(report["marker"],"NOVA_SUBTITLE_FOCUS_CENTER_V6")
+            self.assertEqual(report["subtitle_focus_center"],"cached_from_ExpandAnimation_endX_and_endWidth")
             self.assertEqual(report["subtitle_clip_delta"],"max(0,-expanded_left_px)")
             self.assertTrue(report["audio_x_unchanged"])
             self.assertTrue(report["header_centered"])
