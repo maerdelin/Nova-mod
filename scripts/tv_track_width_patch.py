@@ -175,7 +175,7 @@ def center_method(s):
     must retain their original behavior.
     """
     import re
-    if "novaExpandedCenterX" in s or "novaExpandedCenterValid" in s:
+    if ".field private novaExpandedCenterX:F" in s or ".field private novaExpandedCenterValid:Z" in s:
         raise RuntimeError("Expanded center cache is already present")
     first=s.find(".method ")
     if first<0:
