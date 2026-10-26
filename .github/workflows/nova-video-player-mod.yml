@@ -171,6 +171,8 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
             grep -aq 'NOVA_FILE_SEEK_RECOVERED' "work/transport-native/$abi/libnova_transport.so" || exit 1
             grep -aq 'NOVA_FILE_FRESH_RANGE_V1' "work/transport-native/$abi/libnova_transport.so" || exit 1
+            grep -aq 'NOVA_MKV_STARTUP_PREFIX_READY_V1' "work/transport-native/$abi/libnova_transport.so" || exit 1
+            grep -aq 'NOVA_MKV_STARTUP_ANCHOR_V1' "work/transport-native/$abi/libnova_transport.so" || exit 1
             grep -aq 'NOVA_NONISO_AVIO_UNLATCH_V1' "native-src/native/avos/libs/$abi/libavos.so" || exit 1
           done
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
