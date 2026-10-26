@@ -54,6 +54,17 @@ REPLACEMENT = r'''    /* NOVA_ISO_TRACK_LANG_V1: CLPI language -> FFmpeg AVStrea
                     int atmos_confirmed =
                         ff_id == AV_CODEC_ID_TRUEHD &&
                         profile == AV_PROFILE_TRUEHD_ATMOS;
+                    /* Hint to _parse_format only when Blu-ray and FFmpeg agree.
+                     * BD 0x86 => DTS-HD MA, 0x85 => DTS-HD HRA.
+                     * TrueHD alone never grants the Atmos label. */
+                    if (match == 1 && (bd == 0x85 || bd == 0x86)) {
+                        av_dict_set(&st->metadata, "nova_iso_codec_type",
+                                    bd == 0x86 ? "dts_hd_ma" : "dts_hd",
+                                    0);
+                    }
+                    if (match == 1 && atmos_confirmed)
+                        av_dict_set(&st->metadata, "nova_iso_atmos", "truehd", 0);
+
                     serprintf("NOVA_ISO_CODEC_AUDIT_V2: track=%u pid=0x%x bd=0x%x ff=%s profile=%d match=%d truehd_atmos=%d\n",
                         track, st->id, bd, desc ? desc->name : "unknown",
                         profile, match, atmos_confirmed);
@@ -101,6 +112,36 @@ def transform(src):
         raise RuntimeError("pin checks: the 704 ISO/MKV seek chain is absent")
     if "raw.transport_handle" not in src and "raw->transport_handle" not in src:
         raise RuntimeError("direct transport handle is not present")
+    # Applied only to FFmpeg stream tracks whose metadata is stamped above.
+    # This is the regular AVOS codec enum, not a cosmetic menu-only renaming.
+    audio_anchor = "audio->stream        = i;"
+    audio_replacement = r'''/* NOVA_ISO_CODEC_LABEL_V2: only validated ISO PID metadata is
+                 * allowed to refine FFmpeg DTS core -> Blu-ray DTS-HD type.
+                 * Existing MKV/MP4/ISO seek, codec and buffer paths unchanged. */
+                AVDictionaryEntry *nova_bd_codec = av_dict_get(
+                    st->metadata, "nova_iso_codec_type", NULL, 0);
+                if (codecpar->codec_id == AV_CODEC_ID_DTS && nova_bd_codec) {
+                    if (!strcmp(nova_bd_codec->value, "dts_hd_ma"))
+                        audio->format = WAVE_FORMAT_DTS_HD_MA;
+                    else if (!strcmp(nova_bd_codec->value, "dts_hd"))
+                        audio->format = WAVE_FORMAT_DTS_HD;
+                    serprintf("NOVA_ISO_CODEC_LABEL_V2: stream=%d pid=0x%x format=0x%x tag=%s\n",
+                              i, st->id, audio->format, nova_bd_codec->value);
+                }
+                /* Atmos is not a separate base codec. Preserve TrueHD codec;
+                 * advertise only an FFmpeg-confirmed Atmos profile via name. */
+                AVDictionaryEntry *nova_atmos = av_dict_get(
+                    st->metadata, "nova_iso_atmos", NULL, 0);
+                if (codecpar->codec_id == AV_CODEC_ID_TRUEHD && nova_atmos &&
+                    (!title || !title->value || !title->value[0])) {
+                    strnZcpy(audio->name, "Dolby Atmos", AV_NAME_LEN);
+                    serprintf("NOVA_ISO_TRUEHD_ATMOS_V2: stream=%d pid=0x%x confirmed=1\n",
+                              i, st->id);
+                }
+                ''' + audio_anchor
+    if src.count(audio_anchor) != 1:
+        raise RuntimeError("ISO codec audio format hook missing or ambiguous")
+    src = src.replace(audio_anchor, audio_replacement, 1)
     return src.replace(ANCHOR, REPLACEMENT, 1)
 
 
