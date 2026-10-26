@@ -14,7 +14,7 @@ class PopupWidthTest(unittest.TestCase):
         self.assertIn("mPlayModeTVCardView",result)
     def test_focused_animation_only(self):
         signature="    invoke-direct/range {v0 .. v9}, "+p.CARD+"$ExpandAnimation;-><init>(XXXX)V"
-        old=".method public focus(Z)V\n    .locals 14\n    move-object v1, p0\n\n"+signature+"\n    :cond_9\n.end method\n"
+        old=".method public focus(Z)V\n    .locals 14\n    if-eqz v0, :cond_9\n    move-object v1, p0\n\n"+signature+"\n    :cond_9\n.end method\n"
         new=p.card(old)
         self.assertIn("mul-int/lit8 v3, v3, 0x2",new)
         self.assertIn("sub-int/2addr v2, v10",new)
