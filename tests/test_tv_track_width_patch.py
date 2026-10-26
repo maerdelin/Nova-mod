@@ -18,7 +18,11 @@ class PopupWidthTest(unittest.TestCase):
         return s+".end method\n"
     def sample_card(self):
         c=p.CARD
-        return (".method public getPositionX()F\n    .locals 2\n"
+        return (".class public Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;\n"
+                + ".field private final minAlpha:I\n"
+                + ".field private ocl:Landroid/view/View$OnClickListener;\n"
+                + ".field private off:Landroid/graphics/drawable/Drawable;\n"
+                + ".method public getPositionX()F\n    .locals 2\n"
                 + "    invoke-virtual {p0}, Landroid/view/View;->getX()F\n"
                 + "    move-result v0\n"
                 + "    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->getCurrentWidth()I\n"
@@ -106,6 +110,10 @@ class PopupWidthTest(unittest.TestCase):
         self.assertIn(":nova_track_center_original_position",s)
         self.assertIn("iput v11, p0",s)
         self.assertEqual(s.count(".field private novaExpandedCenter"),2)
+        self.assertLess(s.index(".field private novaExpandedCenterValid:Z"),
+                        s.index(".field private novaExpandedCenterX:F"))
+        self.assertLess(s.index(".field private novaExpandedCenterX:F"),
+                        s.index(".field private ocl:Landroid/view/View$OnClickListener;"))
         self.assertIn("add-int/2addr v2, v10",s)
         self.assertIn("nova_track_dynamic_gap_done",s)
         self.assertIn("->getTag(I)Ljava/lang/Object;",s)
@@ -216,6 +224,21 @@ class PopupWidthTest(unittest.TestCase):
                          p.player(self.sample_player()))
         # Only TVCardView gets two additional fields; no adapter edits.
         self.assertNotIn("TVMenuAdapter.smali",patch)
+
+    def test_roundtrip_field_order_matches_apktool_canonical_form(self):
+        # #735 report proved the only roundtrip diff was appended fields.
+        # apktool emits novaExpandedCenterValid, novaExpandedCenterX
+        # immediately before ocl, not after text2.
+        patched=p.card(self.sample_card())
+        self.assertLess(patched.index(".field private final minAlpha:I"),
+                        patched.index(".field private novaExpandedCenterValid:Z"))
+        self.assertLess(patched.index(".field private novaExpandedCenterValid:Z"),
+                        patched.index(".field private novaExpandedCenterX:F"))
+        self.assertLess(patched.index(".field private novaExpandedCenterX:F"),
+                        patched.index(".field private ocl:Landroid/view/View$OnClickListener;"))
+        self.assertLess(patched.index(".field private ocl:Landroid/view/View$OnClickListener;"),
+                        patched.index(".method public getPositionX()F"))
+        self.assertEqual(patched.count(".field private novaExpandedCenter"),2)
 
     def test_get_position_missing_or_no_scratch_aborts(self):
         raw=self.sample_card()

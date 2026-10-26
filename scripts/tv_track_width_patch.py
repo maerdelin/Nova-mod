@@ -177,11 +177,17 @@ def center_method(s):
     import re
     if ".field private novaExpandedCenterX:F" in s or ".field private novaExpandedCenterValid:Z" in s:
         raise RuntimeError("Expanded center cache is already present")
-    first=s.find(".method ")
-    if first<0:
-        raise RuntimeError("TVCardView has no methods")
-    s=s[:first]+(".field private novaExpandedCenterX:F\n"
-                  ".field private novaExpandedCenterValid:Z\n\n")+s[first:]
+    # The APK reassembler lexicographically reorders .field directives.
+    # Insert in its canonical order, exactly as verified by #735
+    # reports/roundtrip.json, rather than at the end of the field list.
+    # Otherwise the strict round-trip verifier rightfully rejects it.
+    anchor=".field private ocl:Landroid/view/View$OnClickListener;"
+    if s.count(anchor)!=1:
+        raise RuntimeError("TVCardView ocl field anchor changed")
+    s=s.replace(anchor,
+                ".field private novaExpandedCenterValid:Z\n"
+                ".field private novaExpandedCenterX:F\n"
+                +anchor,1)
     st,en,m=section(s,"public getPositionX()F")
     header=re.search(r"(?m)^    \.locals (\d+)$",m)
     if not header or int(header.group(1))<1:
