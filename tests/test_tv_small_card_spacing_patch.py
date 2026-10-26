@@ -84,8 +84,18 @@ class SmallCardSpacingTest(unittest.TestCase):
             for x in (0,20,80,120,350,1920):
                 for end_width in (width,int(width*1.2),width*2):
                     for delta in (0,width*.1,width*.4,width*.7,-width*.4):
-                        self.assertEqual(self.final_gaps(x,width,x-delta,end_width),
-                                         (44,44))
+                        # ExpandAnimation takes int endX/endWidth. The
+                        # rendered card cannot have the fractional target
+                        # passed in the previous test (739 failure).
+                        actual_end_x = int(x - delta)
+                        self.assertEqual(
+                            self.final_gaps(x,width,actual_end_x,end_width),
+                            (44,44))
+                        # Also verify subpixel analytic inputs only differ
+                        # by harmless floating-point representation error.
+                        fractional = self.final_gaps(x,width,x-delta,end_width)
+                        self.assertAlmostEqual(fractional[0],44,places=5)
+                        self.assertAlmostEqual(fractional[1],44,places=5)
 
     def test_audio_subtitle_final_736_endX_endWidth_include_clipping(self):
         for width in (101,102,103,105,165,207,213,220,275,330,440,680):
