@@ -15,7 +15,7 @@ REPLACEMENT = r'''    /* NOVA_ISO_TRACK_LANG_V1: CLPI language -> FFmpeg AVStrea
      * Run only for Blu-ray ISO proxy after FFmpeg discovers MPEG-TS PIDs,
      * and before _parse_format populates audio/subtitle menu properties.
      * Preserve FFmpeg languages if already set; never invent track titles. */
-    if (s->src_query && strstr(s->src_query, "&nova_iso=1&") &&
+    if (strstr(s->src_query, "&nova_iso=1&") &&
         ff_p->raw.enabled && ff_p->raw.direct_transport &&
         ff_p->raw.transport_handle && ff_p->raw.transport_generation) {
         typedef int (*nova_iso_lang_lookup_fn)(uint64_t, int, int,

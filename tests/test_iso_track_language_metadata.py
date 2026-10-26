@@ -36,6 +36,7 @@ class IsoTrackLanguageTests(unittest.TestCase):
     def test_ffmpeg_hook_only_fills_missing_language_by_pid(self):
         ast.parse(P)
         self.assertIn('strstr(s->src_query, "&nova_iso=1&")',P)
+        self.assertNotIn("s->src_query &&", P)
         self.assertIn('"nova_transport_iso_track_language"',P)
         self.assertIn("ff_p->raw.transport_generation, st->id, kind",P)
         self.assertIn('av_dict_set(&st->metadata, "language", lang, 0);',P)
