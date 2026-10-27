@@ -31,7 +31,8 @@ def create_video(media, fmt):
         "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
         "-f", "lavfi", "-i", "sine=frequency=740:sample_rate=48000",
         "-t", "14", "-c:v", "libx264", "-preset", "ultrafast",
-        "-pix_fmt", "yuv420p", "-g", "25", "-b:v", "5M",
+        "-pix_fmt", "yuv420p", "-g", "250" if fmt == "mkv" else "25",
+        "-keyint_min", "250" if fmt == "mkv" else "25", "-sc_threshold", "0", "-b:v", "5M",
         "-c:a", "aac", "-b:a", "128k",
     ]
     if fmt == "mp4":
@@ -277,12 +278,58 @@ def test_one(fmt, root, report_dir):
                     re.search(r"NOVA_MKV_SEEK_POSITION_V3: targetMs=\d+ actualTs=\d+ found=1 failed=0",
                               t[t.rfind(seek_marker):])
                 ),40,"actual MKV Cues Seek on redirected WebDAV")
-            accepted = re.search(
-                r"NOVA_MKV_SEEK_POSITION_V3: targetMs=(\d+) actualTs=(\d+) found=1 failed=0",
-                seeklog[seeklog.rfind(seek_marker):])
-            target_ms, actual_ms = map(int, accepted.groups())
-            if abs(target_ms - actual_ms) > 2000:
-                raise RuntimeError("MKV accepted keyframe far from requested target: " + accepted.group())
+            # A 10s GOP intentionally puts the indexed keyframe seconds BEFORE
+            # the requested time. Success is the rendered target, not Cues.
+            exact_pattern = (r"NOVA_PRECISE_SEEK_DONE_V1: epoch=(\d+) targetMs=(\d+) "
+                             r"targetTs=(\d+) actualTs=(\d+) toleranceTs=(\d+)")
+            seeklog = wait_for(lambda t: re.search(exact_pattern,t[t.rfind(seek_marker):]),
+                               40,"long-GOP MKV actual target frame presentation")
+            precise_checks=[]
+
+            def require_exact(t, marker, label):
+                segment=t[t.rfind(marker):]
+                m=re.search(exact_pattern,segment)
+                if not m:raise RuntimeError(label+" lacks render-confirmed completion")
+                epoch, target, target_ts, actual, tolerance=map(int,m.groups())
+                if not 0 <= actual-target_ts <= tolerance:
+                    raise RuntimeError(label+" missed exact target: "+m.group())
+                submitted=segment.find("NOVA_PRECISE_SEEK_SUBMITTED_V1:")
+                done=segment.find(m.group())
+                if submitted<0 or submitted>=done:
+                    raise RuntimeError(label+" completed before renderer submission")
+                if any(x in segment for x in ["NOVA_PRECISE_SEEK_GAP_V1:",
+                        "NOVA_PRECISE_SEEK_TIMEOUT_V1:","FATAL EXCEPTION","Fatal signal"]):
+                    raise RuntimeError(label+" reported failure")
+                precise_checks.append({"case":label,"epoch":epoch,"target_ms":target,
+                                       "actual_ts":actual,"error_ts":actual-target_ts})
+                return target
+
+            require_exact(seeklog,seek_marker,"long-gop-forward")
+            # Advance another five seconds, then seek backwards while paused.
+            # This keeps the backwards target away from the separate zero rule.
+            time.sleep(0.6)
+            forward_marker="NOVA_PRECISE_FORWARD_"+str(time.monotonic_ns())
+            adb("shell","log","-p","i","-t","NOVA_PRECISE_TEST",forward_marker)
+            adb("shell","input","keyevent","22")
+            seeklog=wait_for(lambda t: re.search(exact_pattern,t[t.rfind(forward_marker):]),
+                            40,"second precise forward seek")
+            require_exact(seeklog,forward_marker,"forward")
+            time.sleep(0.6)
+            paused_marker="NOVA_PRECISE_PAUSED_"+str(time.monotonic_ns())
+            adb("shell","log","-p","i","-t","NOVA_PRECISE_TEST",paused_marker)
+            adb("shell","input","keyevent","85")
+            wait_for(lambda t: re.search(r"NOVA_FINAL_HEARTBEAT:.*play=0 paused=1",
+                                         t[t.rfind(paused_marker):]),15,"paused before exact backwards seek")
+            back_marker="NOVA_PRECISE_BACK_"+str(time.monotonic_ns())
+            adb("shell","log","-p","i","-t","NOVA_PRECISE_TEST",back_marker)
+            adb("shell","input","keyevent","21")
+            seeklog=wait_for(lambda t: re.search(exact_pattern,t[t.rfind(back_marker):]),
+                            40,"paused long-GOP exact backwards seek")
+            back_target=require_exact(seeklog,back_marker,"paused-backwards")
+            (report_dir/"precise-seek-signed-apk.json").write_text(json.dumps(
+                {"status":"PASS","source_gop_frames":250,"source_fps":25,
+                 "actual_renderer_submission":True,"checks":precise_checks},indent=2))
+            print("NOVA_PRECISE_SIGNED_APK=PASS "+json.dumps(precise_checks))
             log = seeklog
             print("NOVA_MKV_ONEUSE_WEBDAV_SEEK_SMOKE=PASS: "
                   "single-use redirects, 503, short body, indexed seek")
