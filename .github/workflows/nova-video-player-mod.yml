@@ -68,6 +68,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_iso_track_language_metadata.py -v
           python3 -m unittest discover -s tests -p test_tv_track_width_patch.py -v
           python3 -m unittest discover -s tests -p test_tv_small_card_spacing_patch.py -v
+          python3 -m unittest discover -s tests -p test_webdav_resume_local_only_patch.py -v
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_noniso_seek_avio.py -v
@@ -76,7 +77,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
           python3 -m py_compile scripts/mkv_bbc_cue_seek_patch.py scripts/iso_track_metadata_patch.py scripts/smoke_noniso_single_get_android.py
           python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/seek_priority_patch.py scripts/seek_cache_window_patch.py scripts/seek_video_index_patch.py scripts/smoke_mp4_raw_seek_race.py scripts/disable_all_subtitle_history_patch.py scripts/late_stall_self_heal_patch.py scripts/seek_safe_serial_v2_patch.py scripts/seek_engine_diag_patch.py scripts/seek_sfdec2_frame_return_patch.py scripts/seek_codec_pool_diag_patch.py scripts/iso_index_seek_patch.py scripts/libbluray_iso_index_patch.py
-          python3 -m py_compile scripts/tv_small_card_spacing_patch.py
+          python3 -m py_compile scripts/tv_small_card_spacing_patch.py scripts/webdav_resume_local_only_patch.py scripts/smoke_webdav_resume_local_only.py
           echo 'CI preflight: apktool download (max 120s)'
           timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
@@ -330,6 +331,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
             python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
+             # Signed APK ART probe: zero remote resume PUT; normal upload still works.
+             python3 scripts/smoke_webdav_resume_local_only.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 
       - name: Verify official selection has not changed
         env:
