@@ -218,7 +218,8 @@ def test_one(fmt, root, report_dir):
         # Final signed APK must skip the redundant Java 0-to-0 Seek AFTER
         # the native parser initialized the MKV/MP4. Not a mock/proxy test.
         startup = log[log.rfind(marker):]
-        skip_seen = "NOVA_NONISO_DUP_ZERO_SKIP_V1:" in startup
+        skip_seen = ("NOVA_NONISO_DUP_ZERO_SKIP_V1:" in startup or
+                     "NOVA_STARTUP_NATIVE_ZERO_SKIP_V2:" in startup)
         # A cold-start where the source position is still unknown (-1)
         # REQUIRES a real first Seek. Do not demand a skip for that case.
         # What must never happen: native 0->0 after the parser got PTS 0.
@@ -272,8 +273,16 @@ def test_one(fmt, root, report_dir):
                 lambda t: (
                     seek_marker in t and
                     "NOVA_MKV_BBC_CUE_SEEK_V1:" in t[t.rfind(seek_marker):] and
-                    "NOVA_RAW128_SEEK:" in t[t.rfind(seek_marker):]
+                    "NOVA_RAW128_SEEK:" in t[t.rfind(seek_marker):] and
+                    re.search(r"NOVA_MKV_SEEK_POSITION_V3: targetMs=\d+ actualTs=\d+ found=1 failed=0",
+                              t[t.rfind(seek_marker):])
                 ),40,"actual MKV Cues Seek on redirected WebDAV")
+            accepted = re.search(
+                r"NOVA_MKV_SEEK_POSITION_V3: targetMs=(\d+) actualTs=(\d+) found=1 failed=0",
+                seeklog[seeklog.rfind(seek_marker):])
+            target_ms, actual_ms = map(int, accepted.groups())
+            if abs(target_ms - actual_ms) > 2000:
+                raise RuntimeError("MKV accepted keyframe far from requested target: " + accepted.group())
             log = seeklog
             print("NOVA_MKV_ONEUSE_WEBDAV_SEEK_SMOKE=PASS: "
                   "single-use redirects, 503, short body, indexed seek")

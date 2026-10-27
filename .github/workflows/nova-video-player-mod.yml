@@ -142,6 +142,8 @@ jobs:
           # The ISO CLPI path and all non-MKV fallback branches stay untouched.
           python3 scripts/mkv_bbc_cue_seek_patch.py --native native-src/native/avos
           python3 scripts/iso_track_metadata_patch.py --native native-src/native/avos
+          python3 scripts/startup_bbc_seek_fix_patch.py --native native-src/native/avos --report reports/startup-bbc-seek-fix.json
+          NOVA_PATCHED_AVOS_ROOT="$PWD/native-src/native/avos" python3 -m unittest discover -s tests -p test_startup_bbc_seek_native.py -v
           grep -Fq 'NOVA_ISO_TRACK_APPLIED_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_MKV_BBC_CUE_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_MKV_SEEK_SCAN_BEGIN_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
@@ -167,7 +169,7 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1 NOVA_SEEK_POOL_OWNERS_V1 NOVA_MKV_SEEK_SCAN_BEGIN_V2 NOVA_MKV_BBC_SEEK_STOP_V1 NOVA_ISO_TRACK_APPLIED_V1 NOVA_ISO_CODEC_AUDIT_V2 NOVA_ISO_CODEC_LABEL_V2; do
+              for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1 NOVA_SEEK_POOL_OWNERS_V1 NOVA_MKV_SEEK_SCAN_BEGIN_V2 NOVA_MKV_BBC_SEEK_STOP_V1 NOVA_ISO_TRACK_APPLIED_V1 NOVA_ISO_CODEC_AUDIT_V2 NOVA_ISO_CODEC_LABEL_V2 NOVA_STARTUP_NATIVE_ZERO_SKIP_V2 NOVA_MKV_SEEK_REJECT_V3 NOVA_MKV_SEEK_POSITION_V3; do
                 if ! grep -aq "$trace" "$new"; then
                   echo "::error::Missing $trace instrumentation from $abi libavos.so"
                   exit 1
