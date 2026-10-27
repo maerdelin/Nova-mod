@@ -209,12 +209,30 @@ def test_one(fmt, root, report_dir):
                 and "NOVA_DIRECT_SOURCE_OPEN:" in t[t.rfind(marker):]
                 and "NOVA_RAW128_OPEN: phase=pre_probe" in t[t.rfind(marker):]
                 and "NOVA_STARTUP_TRACE first_frame_sink" in t[t.rfind(marker):]
+                and "NOVA_NONISO_DUP_ZERO_SKIP_V1:" in t[t.rfind(marker):]
             ),
             95,
             fmt + " WebDAV weak-network first rendered frame",
         )
         if "FATAL EXCEPTION" in log or "Fatal signal" in log:
             raise RuntimeError(fmt + " crashed despite a first-frame marker")
+        # Final signed APK must skip the redundant Java 0-to-0 Seek AFTER
+        # the native parser initialized the MKV/MP4. Not a mock/proxy test.
+        startup = log[log.rfind(marker):]
+        if "NOVA_NONISO_DUP_ZERO_SKIP_V1:" not in startup:
+            raise RuntimeError(fmt + " startup prepared-zero guard did not run")
+        if "avos_mp_video:avos_mp_video_seek current_pos=0 to pos=0" in startup:
+            raise RuntimeError(fmt + " still sent a native duplicate zero Seek")
+        if fmt == "mkv":
+            frame_lines = [x for x in startup.splitlines()
+                           if "NOVA_STARTUP_TRACE first_frame_sink" in x]
+            if not frame_lines:
+                raise RuntimeError("MKV produced no first video frame")
+            pts_match = re.search(r"pts=(-?\d+)", frame_lines[0])
+            if not pts_match or int(pts_match.group(1)) != 0:
+                raise RuntimeError("MKV time-zero keyframe lost: " + frame_lines[0])
+        print("NOVA_NONISO_DUP_ZERO_STARTUP_ART=PASS " + fmt
+              + " (real signed APK, no 0-to-0 seek, MKV first PTS=0)")
         with lock:
             snapshot = list(requests)
             all_snapshot = list(all_requests)
@@ -258,6 +276,9 @@ def test_one(fmt, root, report_dir):
             "media_size": size,
             "webdav_source": True,
             "real_first_frame": True,
+            "noniso_startup_zero_skip": True,
+            "redundant_native_seek_zero": False,
+            "mkv_first_pts_zero": fmt == "mkv",
             "faults": fault_counts,
             "request_count": len(snapshot),
             "ranges_first_16": snapshot[:16],

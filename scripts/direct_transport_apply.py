@@ -107,6 +107,21 @@ PROXY_HEAD = r'''.class public final Lcom/archos/mediacenter/video/player/Direct
     return v0
 .end method
 
+.method public static isNonIsoDirectWebdav()Z
+    .locals 1
+    # NOVA_NONISO_DUP_ZERO_SKIP_V1: non-ISO WebDAV/direct files only.
+    # Preserve the separate original ISO one-shot zero-seek rule.
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sForceAvos:Z
+    if-eqz v0, :noniso_no
+    sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
+    if-nez v0, :noniso_no
+    const/4 v0, 0x1
+    return v0
+    :noniso_no
+    const/4 v0, 0x0
+    return v0
+.end method
+
 .method public static shouldSkipInitialZeroSeek(I)Z
     .locals 1
     sget-boolean v0, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->sIso:Z
@@ -618,10 +633,40 @@ FACTORY = r'''.class public final Lcom/archos/mediacenter/video/player/DirectPla
 .end method
 
 .method public static seekTo(Lcom/archos/mediacenter/video/player/Player;I)V
-    .locals 1
+    .locals 3
+    # Existing ISO one-shot rule is preserved exactly.
     invoke-static {p1}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->shouldSkipInitialZeroSeek(I)Z
     move-result v0
     if-nez v0, :done
+
+    # NOVA_NONISO_DUP_ZERO_SKIP_V1: only PlayerService startup position
+    # invokes this wrapper. User DPAD/manual seek calls Player directly.
+    if-nez p1, :delegate
+    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->isNonIsoDirectWebdav()Z
+    move-result v0
+    if-eqz v0, :delegate
+    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/Player;->isInPlaybackState()Z
+    move-result v0
+    if-eqz v0, :delegate
+    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/Player;->isBusy()Z
+    move-result v0
+    if-nez v0, :delegate
+    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/Player;->getDuration()I
+    move-result v0
+    if-lez v0, :delegate
+    invoke-virtual {p0}, Lcom/archos/mediacenter/video/player/Player;->getCurrentPosition()I
+    move-result v0
+    if-nez v0, :delegate
+
+    # Retain existing MKV keyframe, decoder and RAW buffer. Normal
+    # PlayerService startup continues after this single redundant call.
+    const-string v0, "NovaStartupSeek"
+    const-string v1, "NOVA_NONISO_DUP_ZERO_SKIP_V1: prepared 0ms; preserve RAW and begin playback"
+    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    move-result v2
+    goto :done
+
+    :delegate
     invoke-virtual {p0, p1}, Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V
     :done
     return-void

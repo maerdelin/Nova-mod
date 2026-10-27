@@ -70,6 +70,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_tv_small_card_spacing_patch.py -v
           python3 -m unittest discover -s tests -p test_webdav_resume_local_only_patch.py -v
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
+          python3 -m unittest discover -s tests -p test_noniso_startup_zero_seek.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_noniso_seek_avio.py -v
           python3 -m unittest discover -s tests -p test_redirect_freshness.py -v
