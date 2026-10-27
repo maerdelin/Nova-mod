@@ -1,27 +1,52 @@
 #!/usr/bin/env python3
-"""NOVA_TV_UNIFIED_EXACT_GAP_V2: exact focus gaps for all TV playback cards.
+"""NOVA_TV_SMALL_GAP_CRASH_GUARD_V3: guard regular TV card spacing against doubled track transforms.
 
-Runs after #736; preserves subtitle/audio endX, endWidth, cached center,
-player adapter, source layout and all playback kernel classes.
+Safe continuation of #738 spacing, reverting #740's double-mutation of
+the tagged subtitle/audio cards. #736 center cache, track transform,
+and entire player/decoder/transport stack remain byte-for-byte unchanged.
 """
 import json
 from pathlib import Path
 import tv_track_width_patch as tracks
 
-MARKER = "NOVA_TV_UNIFIED_EXACT_GAP_V2"
+MARKER = "NOVA_TV_SMALL_GAP_CRASH_GUARD_V3"
 CARD = tracks.CARD
 
-# Limit scope to the playback-TV row that contains the two tagged tracks.
-# Selected big or small cards get EXACT 44px on either adjacent side.
-# Other adjacent nonselected pairs retain the original adapter gap of 20px.
+# Only non-tagged cards in the exact TV menu row containing the two tagged
+# audio/subtitle cards are eligible. Other TVCardView menus are untouched.
+# Use the actual existing ExpandAnimation endX/endWidth, never guessed pixels.
+# Original unfocused inter-card gap remains 20px. For regular cards the
+# minimum focused gap is 44px; tagged #736 audio/subtitle cards keep their
+# already-verified approx 44px (integer rounding may differ by 1px).
+# Unlike #740, NEVER reapply transforms to those tagged cards.
 SMALL_METHOD = """
 .method private novaOffsetSmallNeighbors(ZII)V
     .locals 12
 
-    # Handle BOTH tagged track and untagged normal cards.
-    # #736's approximate track displacement has already run and is safely
-    # replaced here using its final animation coordinates without touching
-    # the track's centering, width, or animation registers.
+    # NOVA_TV_SMALL_GAP_CRASH_GUARD_V3: track cards must use #736 code ONLY.
+    invoke-virtual {p0}, Landroid/view/View;->getTag()Ljava/lang/Object;
+
+    move-result-object v0
+
+    const-string v1, "nova_tv_track_wide_v1"
+
+    invoke-virtual {v1, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+    move-result v0
+
+    if-nez v0, :nova_small_end
+
+    # Never offset cards whose original geometry is not initialized, or
+    # cards detached while moving between the first/last video.
+    iget v4, p0, Lcom/archos/mediacenter/video/player/tvmenu/TVCardView;->originalWidth:I
+
+    if-lez v4, :nova_small_end
+
+    invoke-virtual {p0}, Landroid/view/View;->isAttachedToWindow()Z
+
+    move-result v1
+
+    if-eqz v1, :nova_small_end
 
     # The ordinary cards may not have parentView initialized; their actual
     # parent is equivalent to the track cards' explicitly saved parentView.
@@ -104,13 +129,21 @@ SMALL_METHOD = """
 
     if-eqz p1, :nova_small_offsets_ready
 
-    # Exact left shift: originalX - finalEndX + (44 - 20).
+    # Left extra = max(0, originalX - exactEndX) + 24.0f
     int-to-float v9, p2
 
     sub-float v9, v5, v9
 
-    # Exact right shift: finalEndX + finalEndWidth
-    #                    - originalX - originalWidth + (44 - 20).
+    const/4 v11, 0x0
+
+    cmpg-float v1, v9, v11
+
+    if-gez v1, :nova_small_left_ready
+
+    const/4 v9, 0x0
+
+    :nova_small_left_ready
+    # Right extra = max(0, exactEndX + endWidth - originalRight) + 24.0f
     int-to-float v10, p2
 
     int-to-float v1, p3
@@ -123,7 +156,13 @@ SMALL_METHOD = """
 
     sub-float/2addr v10, v1
 
-    # No max() clamping: preserve EXACT 44px on both sides.
+    cmpg-float v1, v10, v11
+
+    if-gez v1, :nova_small_right_ready
+
+    const/4 v10, 0x0
+
+    :nova_small_right_ready
     const/high16 v11, 0x41c00000
 
     add-float/2addr v9, v11
@@ -175,6 +214,16 @@ SMALL_METHOD = """
     move v11, v10
 
     :nova_small_apply_translation
+    # Avoid redundant property writes/invalidations while rapidly traversing
+    # the subtitle, audio and normal-card row on a memory-limited TV GPU.
+    invoke-virtual {v7}, Landroid/view/View;->getTranslationX()F
+
+    move-result v3
+
+    cmpl-float v3, v3, v11
+
+    if-eqz v3, :nova_small_apply_next
+
     invoke-virtual {v7, v11}, Landroid/view/View;->setTranslationX(F)V
 
     :nova_small_apply_next
@@ -199,7 +248,7 @@ def patch_source(source: str) -> str:
         raise RuntimeError("Unexpected TVCardView focus register map")
     reset_anchor = "    :nova_track_reset_done\n"
     reset = (reset_anchor +
-             "\n    # NOVA_TV_UNIFIED_EXACT_GAP_V2: restore neighbors for all cards.\n"
+             "\n    # NOVA_TV_SMALL_GAP_CRASH_GUARD_V3: restore only ordinary cards.\n"
              "    if-nez p1, :nova_small_reset_done\n\n"
              "    const/4 v10, 0x0\n\n"
              "    invoke-direct {p0, p1, v10, v10}, " + CARD +
@@ -208,8 +257,8 @@ def patch_source(source: str) -> str:
     focus = tracks.replace1(focus, reset_anchor, reset)
     target_anchor = "    :nova_track_width_normal\n"
     change = (target_anchor +
-              "\n    # NOVA_TV_UNIFIED_EXACT_GAP_V2: exact native endX/endWidth.\n"
-              "    # Audio/subtitle overwrite only previous approximate neighbor offsets.\n"
+              "\n    # NOVA_TV_SMALL_GAP_CRASH_GUARD_V3: exact native endX/endWidth.\n"
+              "    # Tagged audio/subtitle immediately return without changes.\n"
               "    invoke-direct {p0, p1, v2, v3}, " + CARD +
               "->novaOffsetSmallNeighbors(ZII)V\n")
     focus = tracks.replace1(focus, target_anchor, change)
@@ -229,17 +278,21 @@ def apply(root: Path, report: Path) -> None:
     record = {
         "status": "PASS",
         "marker": MARKER,
-        "scope": "all track and ordinary cards in the playback TV row",
+        "scope": "attached untagged normal cards in playback TV row; tagged track cards solely #736",
         "focus_geometry": "existing ExpandAnimation exact endX and endWidth",
         "extra_gap_px": 24,
-        "focused_gap_exact_px": 44,
-        "original_unfocused_gap_px": 20,
-        "tagged_tracks_exact_overwrite": True,
+        "expected_gap_px": 44,
         "reset_on_unfocus": True,
+        "skip_track_double_translation": True,
+        "skip_detached_and_uninitialized_cards": True,
+        "skip_redundant_gpu_transforms": True,
+        "unfocused_gap_px": 20,
+        "track_gap": "approximately 44px, preserved from #736",
+        "regression_target": "first and last media + rapid subtitle/audio/small focus navigation",
         "subtitle_center_cache_unchanged": True,
         "audio_track_animation_unchanged": True,
         "other_card_widths_unchanged": True,
         "playback_core_unchanged": True
     }
     report.write_text(json.dumps(record, indent=2))
-    print(MARKER + "=PASS; all focused gaps exactly 44px from real endX/endWidth")
+    print(MARKER + "=PASS; no double track translations; normal card layout guarded")
