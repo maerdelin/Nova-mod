@@ -1186,57 +1186,45 @@ DBGS   serprintf("raw_rebuffer_thread joined\r\n");
 
 def patch_avos_mp_video(path: Path) -> None:
     text = path.read_text()
+    # AVOS v6.6 has folded subtitle change reporting into STREAM_SUB_PROPS_CHANGED.
+    # Preserve existing metadata events; add buffering messages next to them.
     text = replace_once(
         text,
-        "\tcase STREAM_SUBTITLE_CHANGED:\n"
-        "\t\tsend_subtitle(mp, video);\n"
-        "\t\tbreak;\n"
-        "\tdefault:",
-        "\tcase STREAM_SUBTITLE_CHANGED:\n"
-        "\t\tsend_subtitle(mp, video);\n"
-        "\t\tbreak;\n"
+        "\tcase STREAM_DECODER_CHANGED:\n\t\tsend_metadata(mp, video, 1);\n\t\tbreak;\n\tdefault:",
+        "\tcase STREAM_DECODER_CHANGED:\n\t\tsend_metadata(mp, video, 1);\n\t\tbreak;\n"
         "\tcase STREAM_BUFFERING_START:\n"
         "\t\tavos_mp_sendevent(mp, MEDIA_INFO, MEDIA_INFO_BUFFERING_START, 0);\n"
         "\t\tbreak;\n"
         "\tcase STREAM_BUFFERING_END:\n"
         "\t\tavos_mp_sendevent(mp, MEDIA_INFO, MEDIA_INFO_BUFFERING_END, 0);\n"
-        "\t\tbreak;\n"
-        "\tdefault:",
-        "buffering media info",
+        "\t\tbreak;\n\tdefault:",
+        "buffering media info v6.6",
     )
+    # v6.6 also starts/stops the separate subtitle engine. Do not replace it:
+    # insert only the network buffer lifecycle before the existing first action.
     text = replace_once(
         text,
-        "int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)\n"
-        "{\n"
-        "\tif (stream_is_paused(video->s))\n"
-        "\t\tstream_un_pause_from_jni(video->s, 0);",
-        "int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)\n"
-        "{\n"
+        "int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)\n{\n",
+        "int avos_mp_video_start(avos_mp_t *mp, avos_mp_video_t *video)\n{\n"
         "\t__atomic_store_n(&video->s->rebuffer_play_requested, 1, __ATOMIC_RELEASE);\n"
         "\t__atomic_store_n(&video->s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE);\n"
         "\tif (__atomic_load_n(&video->s->rebuffering, __ATOMIC_ACQUIRE)) {\n"
         "\t\t__atomic_store_n(&video->s->rebuffer_user_paused, 0, __ATOMIC_RELEASE);\n"
         "\t\treturn AVOS_ERR_OK;\n"
-        "\t}\n"
-        "\tif (stream_is_paused(video->s))\n"
-        "\t\tstream_un_pause_from_jni(video->s, 0);",
-        "real play arms raw rebuffer lifecycle",
+        "\t}\n",
+        "real play arms raw rebuffer lifecycle v6.6",
     )
     text = replace_once(
         text,
-        "int avos_mp_video_pause(avos_mp_t *mp, avos_mp_video_t *video)\n"
-        "{\n"
-        "\tif (is_stream_pauseable(mp, video))",
-        "int avos_mp_video_pause(avos_mp_t *mp, avos_mp_video_t *video)\n"
-        "{\n"
+        "int avos_mp_video_pause(avos_mp_t *mp, avos_mp_video_t *video)\n{\n",
+        "int avos_mp_video_pause(avos_mp_t *mp, avos_mp_video_t *video)\n{\n"
         "\t__atomic_store_n(&video->s->rebuffer_play_requested, 0, __ATOMIC_RELEASE);\n"
         "\t__atomic_store_n(&video->s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE);\n"
         "\tif (__atomic_load_n(&video->s->rebuffering, __ATOMIC_ACQUIRE)) {\n"
         "\t\t__atomic_store_n(&video->s->rebuffer_user_paused, 1, __ATOMIC_RELEASE);\n"
         "\t\treturn AVOS_ERR_OK;\n"
-        "\t}\n"
-        "\tif (is_stream_pauseable(mp, video))",
-        "manual pause stays independent from raw producer",
+        "\t}\n",
+        "manual pause stays independent from raw producer v6.6",
     )
     path.write_text(text)
 
