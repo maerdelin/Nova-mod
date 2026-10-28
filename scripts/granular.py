@@ -399,69 +399,77 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         status='already-applied' if clean(ls[hit[0]])==field['after'] else 'applied'
         ls[hit[0]]=field['after'];pending[path]='\n'.join(ls)+'\n'
         statuses.append({'class':field['class'],'field':field['field'],'status':status})
+    method_conflicts=[]
     for rule in patch['methods']:
-        path,text=content(rule['class']);methods,_=split_methods(text)
-        method_name = rule['method']
-        if method_name not in methods:
-            # The v6.6 R8 pipeline renamed Leanback presenter interfaces but
-            # retained one onItemClicked method and its register layout.
-            # Never silently select an overloaded callback.
-            if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment$MainViewClickedListener;' and method_name.startswith('onItemClicked('):
-                candidates=[m for m in methods if m.startswith('onItemClicked(') and m.endswith(')V') and not m.endswith('Ljava/lang/Object;)V')]
-                if len(candidates)==1:
-                    method_name=candidates[0]
-                    print('NOVA_V66_EXACT_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
-            if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;' and method_name.startswith('openDetailsActivity('):
-                candidates=[m for m in methods if m.startswith('openDetailsActivity(') and m.endswith(')V')]
-                if len(candidates)==1:
-                    method_name=candidates[0]
-                    print('NOVA_V66_EXACT_DETAILS_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
-            if method_name not in methods:
-                print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
-                raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
-        if class_header(text)!=rule['class_header']:raise Conflict('Class hierarchy changed: '+rule['class'])
-        match=methods[method_name];original=tokens(match[0],symbols)
-        if register_line(original) not in (rule['registers_before'],rule['registers_after']):
-            raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
-        projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
-        changes=rule['hunks']
-        # v6.6 R8 changed this callback argument's obfuscated interface name
-        # from Lhs1; to Ljs1;. The entire old onMenuItemSelected body is
-        # removed by the existing patch. Require the new descriptor in the
-        # current method; do not relax method identity or remove the edit.
-        if rule['class'] == 'Lcom/archos/mediacenter/video/browser/filebrowsing/BrowserByVideoFolder$1;' and rule['method'] == 'onMenuItemSelected(Landroid/view/MenuItem;)Z':
-            import copy
-            changes=copy.deepcopy(changes)
-            for h in changes:
-                h['before']=[s.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
-                                        'Ln4;->a(Ljava/lang/Object;Ljs1;)V') for s in h['before']]
-        # R8 remapped Leanback presenter descriptors in official v6.6.2.
-        # Port all affected instruction/context tokens for this one method;
-        # retain the 6 original UI edits and their overlap checks.
-        if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and rule['method'] == 'loadRows()V':
-            import copy
-            changes=copy.deepcopy(changes)
-            mapping=[('Lp41;', 'Lo41;'), ('Lm41;', 'Ll41;'),
-                     ('Lsx0;', 'Lrx0;'), ('Ltx0;', 'Lsx0;')]
-            for h in changes:
-                for field in ('before','after','left','right','after_left','after_right'):
-                    h[field]=[__import__('functools').reduce(lambda s,p:s.replace(*p),mapping,line)
-                              for line in h[field]]
         try:
-            edited,status=apply_hunks(projected,changes)
-        except Conflict as e:
-            print('NOVA_V66_GRANULAR_CONFLICT_CLASS=' + rule['class'], flush=True)
-            print('NOVA_V66_GRANULAR_CONFLICT_METHOD=' + rule['method'], flush=True)
-            for i, line in enumerate(projected):
-                print('NOVA_V66_METHOD[%03d] %s' % (i, line), flush=True)
-            for i, hunk in enumerate(rule['hunks']):
-                print('NOVA_V66_HUNK[%d] before=%r after=%r' % (i, hunk['before'], hunk['after']), flush=True)
-            raise Conflict(rule['class']+'->'+rule['method']+': '+str(e)) from e
-        restored=[label_replace(line,inverse) for line in edited]
-        check_labels(restored)
-        replacement=materialize(restored,symbols)
-        pending[path]=text[:match.start()]+replacement+text[match.end():]
-        statuses.append({'class':rule['class'],'method':rule['method'],'status':status,'hunks':len(rule['hunks'])})
+            path,text=content(rule['class']);methods,_=split_methods(text)
+            method_name = rule['method']
+            if method_name not in methods:
+                # The v6.6 R8 pipeline renamed Leanback presenter interfaces but
+                # retained one onItemClicked method and its register layout.
+                # Never silently select an overloaded callback.
+                if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment$MainViewClickedListener;' and method_name.startswith('onItemClicked('):
+                    candidates=[m for m in methods if m.startswith('onItemClicked(') and m.endswith(')V') and not m.endswith('Ljava/lang/Object;)V')]
+                    if len(candidates)==1:
+                        method_name=candidates[0]
+                        print('NOVA_V66_EXACT_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+                if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;' and method_name.startswith('openDetailsActivity('):
+                    candidates=[m for m in methods if m.startswith('openDetailsActivity(') and m.endswith(')V')]
+                    if len(candidates)==1:
+                        method_name=candidates[0]
+                        print('NOVA_V66_EXACT_DETAILS_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+                if method_name not in methods:
+                    print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
+                    raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
+            if class_header(text)!=rule['class_header']:raise Conflict('Class hierarchy changed: '+rule['class'])
+            match=methods[method_name];original=tokens(match[0],symbols)
+            if register_line(original) not in (rule['registers_before'],rule['registers_after']):
+                raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
+            projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
+            changes=rule['hunks']
+            # v6.6 R8 changed this callback argument's obfuscated interface name
+            # from Lhs1; to Ljs1;. The entire old onMenuItemSelected body is
+            # removed by the existing patch. Require the new descriptor in the
+            # current method; do not relax method identity or remove the edit.
+            if rule['class'] == 'Lcom/archos/mediacenter/video/browser/filebrowsing/BrowserByVideoFolder$1;' and rule['method'] == 'onMenuItemSelected(Landroid/view/MenuItem;)Z':
+                import copy
+                changes=copy.deepcopy(changes)
+                for h in changes:
+                    h['before']=[s.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
+                                            'Ln4;->a(Ljava/lang/Object;Ljs1;)V') for s in h['before']]
+            # R8 remapped Leanback presenter descriptors in official v6.6.2.
+            # Port all affected instruction/context tokens for this one method;
+            # retain the 6 original UI edits and their overlap checks.
+            if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and rule['method'] == 'loadRows()V':
+                import copy
+                changes=copy.deepcopy(changes)
+                mapping=[('Lp41;', 'Lo41;'), ('Lm41;', 'Ll41;'),
+                         ('Lsx0;', 'Lrx0;'), ('Ltx0;', 'Lsx0;')]
+                for h in changes:
+                    for field in ('before','after','left','right','after_left','after_right'):
+                        h[field]=[__import__('functools').reduce(lambda s,p:s.replace(*p),mapping,line)
+                                  for line in h[field]]
+            try:
+                edited,status=apply_hunks(projected,changes)
+            except Conflict as e:
+                print('NOVA_V66_GRANULAR_CONFLICT_CLASS=' + rule['class'], flush=True)
+                print('NOVA_V66_GRANULAR_CONFLICT_METHOD=' + rule['method'], flush=True)
+                for i, line in enumerate(projected):
+                    print('NOVA_V66_METHOD[%03d] %s' % (i, line), flush=True)
+                for i, hunk in enumerate(rule['hunks']):
+                    print('NOVA_V66_HUNK[%d] before=%r after=%r' % (i, hunk['before'], hunk['after']), flush=True)
+                raise Conflict(rule['class']+'->'+rule['method']+': '+str(e)) from e
+            restored=[label_replace(line,inverse) for line in edited]
+            check_labels(restored)
+            replacement=materialize(restored,symbols)
+            pending[path]=text[:match.start()]+replacement+text[match.end():]
+            statuses.append({'class':rule['class'],'method':rule['method'],'status':status,'hunks':len(rule['hunks'])})
+        except (Conflict, ValueError, KeyError) as error:
+            entry=rule['class']+'->'+rule['method']+': '+str(error)
+            print('NOVA_V66_ALL_METHOD_CONFLICT '+entry,flush=True)
+            method_conflicts.append(entry)
+    if method_conflicts:
+        raise Conflict('Port all UI hunk methods before packaging: '+str(len(method_conflicts))+' conflicts')
     for rule in patch['xml']:
         path=root/rule['path']
         if not path.is_file():raise Conflict('Resource missing: '+rule['path'])
