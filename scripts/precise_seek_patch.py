@@ -223,10 +223,10 @@ def codec_text(src):
     anchor="\t\t\tif( s && f->epoch != s->seek_epoch ) {"
     src=once(src,anchor,"\t\t\tif( s && (f->epoch != s->seek_epoch ||\n"
              "                !nova_precise_seek_admit(s,f->time,f->epoch)) ) {","renderer target and epoch validation")
-    anchor="\t\tif (presented) {\n\t\t\tspeed_cadence_commit"
+    anchor="\t\tif (presented) {\n\t\t\tif (mode2_preroll_interval_ns > 0 &&"
     return once(src,anchor,"\t\tif (presented) {\n"
                 "            nova_precise_seek_submitted(s,f->time,f->epoch,render_ts_ns);\n"
-                "\t\t\tspeed_cadence_commit","only successful renderer submission acknowledges exact seek")
+                "\t\t\tif (mode2_preroll_interval_ns > 0 &&","only successful renderer submission acknowledges exact seek")
 
 
 def apply(root,report=None):
