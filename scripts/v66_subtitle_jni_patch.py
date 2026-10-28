@@ -13,8 +13,6 @@ FILES = (
     "sub_style.c",
     "sub_render_gl.c",
     "sub_engine_registry.c",
-    "jni_sub_engine.c",
-    "jni_font_name_parser.c",
 )
 JNI = "Java_com_archos_mediacenter_video_player_SubtitleEngine_nativeCreate"
 
@@ -48,7 +46,23 @@ def main():
     cfg = cfg.replace(marker,
         "LOCAL_LDLIBS := -L$(TARGET_OUT) -lz -lEGL -lGLESv2 -landroid -ljnigraphics \\\n", 1)
     ndk.write_text(cfg)
-    print("NOVA_V66_SUBTITLE_ENGINE_JNI_SOURCE_PORT=PASS " + " ".join(FILES))
+    jni = root / "jni" / "libavosjni" / "ndkbuild.mk"
+    jsrc = jni.read_text()
+    old_src = ("LOCAL_SRC_FILES := \\\n\tlibavos.c \\\n\tavos_media_player.c \\\n\tavos_media_metadata_retriever.c")
+    if jsrc.count(old_src) != 1:
+        raise RuntimeError("Official v6.6 libavosjni source list changed")
+    new_src = old_src + " \\\n\t../../Source/jni_sub_engine.c \\\n\t../../Source/jni_font_name_parser.c"
+    jsrc = jsrc.replace(old_src, new_src, 1)
+    inc = "LOCAL_C_INCLUDES := \\\n\t$(AVOS_DIR)/public"
+    if jsrc.count(inc) != 1:
+        raise RuntimeError("Official JNI include layout changed")
+    jsrc = jsrc.replace(inc, inc + " \\\n\t$(AVOS_DIR)/Include", 1)
+    ld = "LOCAL_LDLIBS:= -L$(TARGET_OUT) -llog -landroid"
+    if jsrc.count(ld) != 1:
+        raise RuntimeError("Official JNI linker line changed")
+    jsrc = jsrc.replace(ld, ld + " -ljnigraphics", 1)
+    jni.write_text(jsrc)
+    print("NOVA_V66_SUBTITLE_ENGINE_JNI_SOURCE_PORT=PASS core=" + " ".join(FILES) + " jni=jni_sub_engine.c,jni_font_name_parser.c")
 
 if __name__ == "__main__":
     main()
