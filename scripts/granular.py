@@ -446,14 +446,14 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                     h['before']=[s.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
                                             'Ln4;->a(Ljava/lang/Object;Ljs1;)V') for s in h['before']]
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;' and rule['method'].startswith('openDetailsActivity('):
-            import copy
-            changes=copy.deepcopy(changes)
-            mapping=[('Lqx0;', 'Lpx0;'), ('Lhs1;', 'Ljs1;')]
-            for h in changes:
-                for field in ('before','after','left','right','after_left','after_right'):
-                    h[field]=[__import__('functools').reduce(lambda line,p:line.replace(*p),mapping,item)
-                              for item in h[field]]
-        # R8 remapped Leanback presenter descriptors in official v6.6.2.
+                import copy
+                changes=copy.deepcopy(changes)
+                mapping=[('Lqx0;', 'Lpx0;'), ('Lhs1;', 'Ljs1;')]
+                for h in changes:
+                    for field in ('before','after','left','right','after_left','after_right'):
+                        h[field]=[__import__('functools').reduce(lambda line,p:line.replace(*p),mapping,item)
+                                  for item in h[field]]
+            # R8 remapped Leanback presenter descriptors in official v6.6.2.
             # Port all affected instruction/context tokens for this one method;
             # retain the 6 original UI edits and their overlap checks.
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and rule['method'] == 'loadRows()V':
