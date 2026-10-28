@@ -418,10 +418,18 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                     if len(candidates)==1:
                         method_name=candidates[0]
                         print('NOVA_V66_EXACT_DETAILS_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+                if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$1;' and method_name.startswith('onItemClicked('):
+                    candidates=[m for m in methods if m.startswith('onItemClicked(') and m.endswith(')V') and not m.endswith('Ljava/lang/Object;)V')]
+                    if len(candidates)==1:
+                        method_name=candidates[0]
+                        print('NOVA_V66_NETWORK_TYPED_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
                 if method_name not in methods:
                     print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
                     raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
-            if class_header(text)!=rule['class_header']:raise Conflict('Class hierarchy changed: '+rule['class'])
+            if class_header(text)!=rule['class_header']:
+                print('NOVA_V66_ACTUAL_CLASS_HEADER '+rule['class']+' -> '+repr(class_header(text)),flush=True)
+                print('NOVA_V66_OLD_CLASS_HEADER '+repr(rule['class_header']),flush=True)
+                raise Conflict('Class hierarchy changed: '+rule['class'])
             match=methods[method_name];original=tokens(match[0],symbols)
             if register_line(original) not in (rule['registers_before'],rule['registers_after']):
                 raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
