@@ -930,26 +930,93 @@ def patch_service_async_start(text):
     body=body[:hit.start()]+new+body[hit.end():]
     return text[:m.start()]+body+text[m.end():]
 
+def _startup_seek_position_reg(invoke_op, raw_regs):
+    """Find the position operand without allocating or overwriting registers."""
+    if invoke_op.endswith("/range"):
+        m = re.fullmatch(r'([vp])(\d+)\s*\.\.\s*([vp])(\d+)', raw_regs)
+        if not m or m.group(1) != m.group(3) or int(m.group(4)) != int(m.group(2)) + 1:
+            raise RuntimeError("unexpected startup Seek /range registers")
+        return m.group(3) + m.group(4)
+    regs = [x.strip() for x in raw_regs.split(",")]
+    if len(regs) != 2 or not all(re.fullmatch(r'[vp]\d+', x) for x in regs):
+        raise RuntimeError("unexpected startup Seek registers")
+    return regs[1]
+
+
 def patch_service(text):
+    """Do NOT originate an unnecessary zero-position startup seek.
+
+    Every format uses postPreparedAndVideoDb. The 0ms fresh-start position
+    is already the stream's natural initial position. All positive resume
+    requests still delegate to the EXACT main-branch factory and all other
+    Player.seekTo call sites remain untouched.
+    """
     wrapper=("Lcom/archos/mediacenter/video/player/DirectPlayerFactory;->seekTo"
              "(Lcom/archos/mediacenter/video/player/Player;I)V")
     methods=[m for m in METHOD_RE.finditer(text)
              if " postPreparedAndVideoDb()V" in m.group(0).splitlines()[0]]
     if len(methods)!=1:
-        raise RuntimeError("postPreparedAndVideoDb missing")
+        raise RuntimeError("postPreparedAndVideoDb missing/ambiguous")
     m=methods[0]
     body=m.group(0)
+    if "NOVA_STARTUP_ZERO_NO_REQUEST_V1" in body:
+        raise RuntimeError("startup zero source patch already applied")
     pat=re.compile(
-        r'(?P<indent>\s*)(?P<op>invoke-virtual(?:/range)?) '
+        r'(?P<indent>[ \t]*)(?P<op>invoke-virtual(?:/range)?) '
         r'\{(?P<regs>[^}]+)\}, '
         r'Lcom/archos/mediacenter/video/player/Player;->seekTo\(I\)V')
     hits=list(pat.finditer(body))
     if len(hits)!=1:
         raise RuntimeError("initial seek anchor changed")
     h=hits[0]
+    position=_startup_seek_position_reg(h.group("op"),h.group("regs"))
     op="invoke-static/range" if h.group("op").endswith("/range") else "invoke-static"
-    repl=h.group("indent")+op+" {"+h.group("regs")+"}, "+wrapper
+    indent=h.group("indent")
+    label=":nova_startup_zero_no_request_done"
+    if label in body:
+        raise RuntimeError("startup zero label collision")
+    repl=(indent+"# NOVA_STARTUP_ZERO_NO_REQUEST_V1: skip originating Seek(0)\n"
+          +indent+"if-eqz "+position+", "+label+"\n"
+          +indent+op+" {"+h.group("regs")+"}, "+wrapper+"\n"
+          +indent+label)
     return text[:m.start()]+body[:h.start()]+repl+body[h.end():]+text[m.end():]
+
+
+def patch_resume_ctx_initial_zero(text):
+    """The separate pre-prepared resume context must also not emit Seek(0).
+
+    A stopped video may queue position 0 for onPrepared when setStartTime
+    is unavailable. This skips only the redundant 0ms re-seek; positive
+    resume and every later user seek are entirely unchanged.
+    """
+    methods=[m for m in METHOD_RE.finditer(text)
+             if " onPrepared()V" in m.group(0).splitlines()[0]]
+    if len(methods)!=1:
+        raise RuntimeError("Player$ResumeCtx.onPrepared missing/ambiguous")
+    m=methods[0]
+    body=m.group(0)
+    if "NOVA_RESUME_ZERO_NO_REQUEST_V1" in body:
+        raise RuntimeError("resume zero source patch already applied")
+    pat=re.compile(
+        r'(?P<indent>[ \t]*)(?P<op>invoke-virtual(?:/range)?) '
+        r'\{(?P<regs>[^}]+)\}, '
+        r'Lcom/archos/mediacenter/video/player/Player;->seekTo\(I\)V')
+    hits=list(pat.finditer(body))
+    if len(hits)!=1:
+        raise RuntimeError("ResumeCtx initial seek anchor changed")
+    h=hits[0]
+    position=_startup_seek_position_reg(h.group("op"),h.group("regs"))
+    indent=h.group("indent")
+    label=":nova_resume_zero_no_request_done"
+    if label in body:
+        raise RuntimeError("resume zero label collision")
+    repl=(indent+"# NOVA_RESUME_ZERO_NO_REQUEST_V1: 0ms is natural start\n"
+          +indent+"if-eqz "+position+", "+label+"\n"
+          +indent+h.group("op")+" {"+h.group("regs")+"}, "
+          +"Lcom/archos/mediacenter/video/player/Player;->seekTo(I)V\n"
+          +indent+label)
+    return text[:m.start()]+body[:h.start()]+repl+body[h.end():]+text[m.end():]
+
 
 def smali_super_descriptor(text):
     hits=[]
@@ -1089,6 +1156,8 @@ def main():
     player.write_text(patch_player(player.read_text()))
     service=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerService.smali"),"PlayerService")
     service.write_text(patch_service(service.read_text()))
+    resume=one(root.glob("smali*/com/archos/mediacenter/video/player/Player$ResumeCtx.smali"),"Player$ResumeCtx")
+    resume.write_text(patch_resume_ctx_initial_zero(resume.read_text()))
     activity=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity.smali"),"PlayerActivity")
     activity_text=patch_activity_back(activity.read_text())
     activity.write_text(patch_activity_stop(activity_text))

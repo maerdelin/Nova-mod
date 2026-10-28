@@ -44,6 +44,44 @@ def patch_video(text):
     return once(text, anchor, ZERO_GUARD + "\n" + anchor, "native command-time zero guard")
 
 
+def patch_initial_ffmpeg_audio_selection(text):
+    """Only pre-first-frame selection must not generate a video timeline Seek.
+
+    A fresh stream has both time clocks at -1. A first track choice then
+    calls generic stream_parser_set_audio_stream -> stream_seek_time(-2)
+    which clamps to zero and re-seeks MKV/ISO/MP4 in the AVOS player.
+    On a running stream -- including playback at exactly timestamp zero --
+    invoke the ORIGINAL parser switch, preserving the AV decoder, demux
+    reseek, video synchronization and user seeking behavior.
+    """
+    marker="NOVA_STARTUP_AUDIO_NO_TIMELINE_SEEK_V1"
+    if marker in text:
+        raise RuntimeError("initial audio selection already patched")
+    old=("static int _set_audio_stream( STREAM *s, int audio_stream )\n"
+         "{\n"
+         "\treturn stream_parser_set_audio_stream( s, audio_stream);\n"
+         "}")
+    new=r'''static int _set_audio_stream( STREAM *s, int audio_stream )
+{
+    /* NOVA_STARTUP_AUDIO_NO_TIMELINE_SEEK_V1:
+     * Only an untouched, pre-first-frame stream has both clocks negative.
+     * Keep the demux VIDEO cursor at the natural beginning. */
+    if (s->video->valid && s->seek_epoch == 0 &&
+        s->video_time < 0 && s->audio_time < 0 &&
+        s->start_time == 0 && s->start_pos == 0) {
+        _flush_packets( &ff_p->aq, "START_AUDIO_ONLY" );
+        stream_parser_clear_audio_chunks( s );
+        ff_p->last_audio_time = 0;
+        s->audio_parse_end = 0;
+        serprintf("NOVA_STARTUP_AUDIO_NO_TIMELINE_SEEK_V1: audio=%d epoch=%d video=%d no-video-seek\n",
+                  audio_stream, s->seek_epoch, s->video_time);
+        return 0;
+    }
+    return stream_parser_set_audio_stream( s, audio_stream);
+}'''
+    return once(text, old, new, "initial FFmpeg track selection at source")
+
+
 def patch_parser(text):
     if "NOVA_MKV_SEEK_PHASE_V3" in text:
         raise RuntimeError("MKV phase budget already installed")
@@ -118,6 +156,7 @@ def apply(root, report=None):
     parser = root / "Source/stream_parser_ffmpeg.c"
     changed_video = patch_video(video.read_text())
     changed_parser = patch_parser(parser.read_text())
+    changed_parser = patch_initial_ffmpeg_audio_selection(changed_parser)
     # Validate both files before writing either.
     video.write_text(changed_video)
     parser.write_text(changed_parser)
