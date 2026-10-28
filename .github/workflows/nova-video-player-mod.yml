@@ -123,6 +123,7 @@ jobs:
           repo sync -j 4
           git -C native/avos rev-parse HEAD | tee ../reports/upstream-avos-head.txt
           cd ..
+          python3 scripts/v66_subtitle_jni_patch.py --native native-src/native/avos
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
@@ -185,12 +186,17 @@ jobs:
           MAKE_JOBS=4 BUILD=release make native_avos_base
           cd ..
           READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          NM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
           mkdir -p work/official-native
           {
             for abi in armeabi-v7a arm64-v8a x86 x86_64; do
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
+              if ! "$NM" -D "$new" | grep -Fq ' Java_com_archos_mediacenter_video_player_SubtitleEngine_nativeCreate'; then
+                echo "::error::Official v6.6 SubtitleEngine.nativeCreate JNI missing from $abi rebuilt libavos.so"
+                exit 1
+              fi
               for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1 NOVA_SEEK_POOL_OWNERS_V1 NOVA_MKV_SEEK_SCAN_BEGIN_V2 NOVA_MKV_BBC_SEEK_STOP_V1 NOVA_ISO_TRACK_APPLIED_V1 NOVA_ISO_CODEC_AUDIT_V2 NOVA_ISO_CODEC_LABEL_V2 NOVA_STARTUP_NATIVE_ZERO_SKIP_V2 NOVA_MKV_SEEK_REJECT_V3 NOVA_MKV_SEEK_POSITION_V3 NOVA_PRECISE_SEEK_BEGIN_V1 NOVA_PRECISE_SEEK_DONE_V1; do
                 if ! grep -aq "$trace" "$new"; then
                   echo "::error::Missing $trace instrumentation from $abi libavos.so"
