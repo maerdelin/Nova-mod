@@ -109,10 +109,10 @@ jobs:
           cd native-src
           # Derive native manifest from the ACTUALLY selected official latest stable release.
           # The CI fails rather than reusing old AVOS when the official minor version changes.
-          official_manifest="$(python3 scripts/official_native_manifest.py inputs/upstream.json)"
+          official_manifest="$(python3 ../scripts/official_native_manifest.py ../inputs/upstream.json)"
           echo "Official source manifest: $official_manifest"
-          curl -fsSL --retry 3 -o work/official-native-manifest.xml "https://raw.githubusercontent.com/nova-video-player/aos-AVP/nova/$official_manifest"
-          test -s work/official-native-manifest.xml
+          curl -fsSL --retry 3 -o ../work/official-native-manifest.xml "https://raw.githubusercontent.com/nova-video-player/aos-AVP/nova/$official_manifest"
+          test -s ../work/official-native-manifest.xml
           # Fail closed for unported major/minor source revisions. v6.6 is validated;
           # future versions must be deliberately ported rather than silently using v6.6.
           if [[ "$official_manifest" != "v6_6.xml" ]]; then
