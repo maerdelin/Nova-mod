@@ -165,6 +165,9 @@ jobs:
               ln -s "dist-full-$abi" "native-src/native/prebuilt/ffmpeg/dist-base-$abi"
             fi
           done
+          echo 'NOVA_V66_FFMPEG_PATCHED_LINES_3090_3180_BEGIN'
+          nl -ba native-src/native/avos/Source/stream_parser_ffmpeg.c | sed -n '3090,3180p'
+          echo 'NOVA_V66_FFMPEG_PATCHED_LINES_END'
           cd native-src
           MAKE_JOBS=4 BUILD=release make native_build_native/libnativehelper
           MAKE_JOBS=4 BUILD=release make native_avos_base
