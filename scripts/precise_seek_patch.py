@@ -161,7 +161,7 @@ def engine_text(src):
     # Verified #890/#891: forward parser seeks skip 7.3s target and jump to
     # 8.021s GOP. Exact seeks must decode forward FROM prior keyframe.
     src=once(src,"\tint first_start = (old_time < 0 && s->seek_epoch == 0);",
-             "\tint first_start = (old_time < 0 && s->seek_epoch == 0);\\n"
+             "\tint first_start = (old_time < 0 && s->seek_epoch == 0);\n"
              "    int nova_precise_backseek = !first_start && nova_precise_scope(s,time);",
              "exact seek preceding keyframe")
     src=once(src,"s->parser->seek_time( s, time, dir, flags, force_reload, &sc )",
