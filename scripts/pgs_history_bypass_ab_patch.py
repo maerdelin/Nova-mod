@@ -23,7 +23,8 @@ REPLACEMENT = (
     "\t\t\t_cache_subtitle_packet(s, &packet);\n"
 )
 ACTIVE_SUBTITLE_GUARD = (
-    "\t\tif (s->subtitle->valid && !s->subtitle->ext && stream == s->subtitle->stream) {\n"
+    "\t\tif (s->subtitle->valid && !s->subtitle->ext && stream == s->subtitle->stream &&\n"
+    "\t\t    !__atomic_load_n(&s->subtitle_disabled, __ATOMIC_ACQUIRE)) {\n"
 )
 EXPECTED_ROUTING = "\t} else if( _subtitle_props_for_stream(s, stream) ) {\n"
 
