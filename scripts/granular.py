@@ -401,9 +401,21 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         statuses.append({'class':field['class'],'field':field['field'],'status':status})
     for rule in patch['methods']:
         path,text=content(rule['class']);methods,_=split_methods(text)
-        if rule['method'] not in methods:raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
+        method_name = rule['method']
+        if method_name not in methods:
+            # The v6.6 R8 pipeline renamed Leanback presenter interfaces but
+            # retained one onItemClicked method and its register layout.
+            # Never silently select an overloaded callback.
+            if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment$MainViewClickedListener;' and method_name.startswith('onItemClicked('):
+                candidates=[m for m in methods if m.startswith('onItemClicked(') and m.endswith(')V')]
+                if len(candidates)==1:
+                    method_name=candidates[0]
+                    print('NOVA_V66_EXACT_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+            if method_name not in methods:
+                print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
+                raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
         if class_header(text)!=rule['class_header']:raise Conflict('Class hierarchy changed: '+rule['class'])
-        match=methods[rule['method']];original=tokens(match[0],symbols)
+        match=methods[method_name];original=tokens(match[0],symbols)
         if register_line(original) not in (rule['registers_before'],rule['registers_after']):
             raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
         projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
