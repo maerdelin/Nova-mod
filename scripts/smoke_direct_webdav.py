@@ -199,6 +199,19 @@ def main():
                 20,
                 "direct WebDAV seek through RAW128 and native upstream",
             )
+            # Old smoke passed despite #890/#891 precise-seek error 1001.
+            # A valid roundtrip requires actual target presentation and zero
+            # fatal errors before testing BACK and same-process reopen.
+            text = wait_for(
+                lambda t: ("NOVA_PRECISE_SEEK_DONE_V1:" in t[t.rfind(seek_marker):]
+                           or "NOVA_PRECISE_SEEK_GAP_V1:" in t[t.rfind(seek_marker):]
+                           or "Error (1001,1000)" in t[t.rfind(seek_marker):]),
+                35, "precise Seek completion or failure event")
+            seek_tail = text[text.rfind(seek_marker):]
+            if ("NOVA_PRECISE_SEEK_GAP_V1:" in seek_tail or
+                    "Error (1001,1000)" in seek_tail or
+                    "NOVA_PRECISE_SEEK_DONE_V1:" not in seek_tail):
+                raise RuntimeError("Precise WebDAV seek failed, even if transport later reopens")
             # Scope both BACK presses to one action window: an asynchronous
             # close from the first press must not be discarded at the second.
             generation = int(re.findall(
@@ -226,6 +239,8 @@ def main():
             if "FATAL EXCEPTION" in back_tail or "Fatal signal" in back_tail:
                 raise RuntimeError("Player crashed during BACK teardown")
 
+            if "Error (1001,1000)" in text[text.rfind(seek_marker):]:
+                raise RuntimeError("Fatal seek error before direct transport re-open")
             # A second video open in the same process catches stale closed
             # generations that a one-shot first-frame smoke cannot detect.
             reopen_marker = "NOVA_DIRECT_REOPEN_" + str(time.monotonic_ns())
