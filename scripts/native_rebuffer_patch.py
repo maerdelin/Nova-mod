@@ -1028,7 +1028,7 @@ def patch_stream_h(path: Path) -> None:
     )
     text = sub_once(
         text,
-        r"(\n\s*int\s+fps_start;\n\s*int\s+fps_count;\n\s*void\s+\*surface_handle;\n)(\s*\n}\s*STREAM;)",
+        r"(\n\s*int\s+fps_start;\n\s*int\s+fps_count;\n\s*void\s+\*surface_handle;\n(?:\s*void\s+\*sub_engine;\n)?)(\s*\n}\s*STREAM;)",
         r"\1"
         "\n\t// Native raw-source buffering state. Appended for ABI safety.\n"
         "\tpthread_t\trebuffer_thread_handle;\n"
