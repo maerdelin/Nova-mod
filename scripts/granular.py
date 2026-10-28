@@ -411,6 +411,11 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                 if len(candidates)==1:
                     method_name=candidates[0]
                     print('NOVA_V66_EXACT_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+            if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;' and method_name.startswith('openDetailsActivity('):
+                candidates=[m for m in methods if m.startswith('openDetailsActivity(') and m.endswith(')V')]
+                if len(candidates)==1:
+                    method_name=candidates[0]
+                    print('NOVA_V66_EXACT_DETAILS_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
             if method_name not in methods:
                 print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
                 raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
