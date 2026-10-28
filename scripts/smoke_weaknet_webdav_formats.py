@@ -30,7 +30,7 @@ def create_video(media, fmt):
         "ffmpeg", "-v", "error", "-y",
         "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
         "-f", "lavfi", "-i", "sine=frequency=740:sample_rate=48000",
-        "-t", "14", "-c:v", "libx264", "-preset", "ultrafast",
+        "-t", "32", "-c:v", "libx264", "-preset", "ultrafast",
         "-pix_fmt", "yuv420p", "-g", "250" if fmt == "mkv" else "25",
         "-keyint_min", "250" if fmt == "mkv" else "25", "-sc_threshold", "0", "-b:v", "5M",
         "-c:a", "aac", "-b:a", "128k",
