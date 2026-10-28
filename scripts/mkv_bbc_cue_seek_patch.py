@@ -23,8 +23,8 @@ def main():
     replacement='''    /* NOVA_MKV_BBC_CUE_SEEK_V1: indexed video keyframe, MKV one-GET only. */
     int nova_mkv_seek = ff_p->raw.enabled && ff_p->raw.mkv_single_get &&
                         !ff_p->nova_iso_time_mode && time >= 0 &&
-                        s->video->valid && stream >= 0 &&
-                        stream < (int)fmt->nb_streams;
+                        s->video->valid && s->video->stream >= 0 &&
+                        s->video->stream < (int)fmt->nb_streams;
     if(nova_mkv_seek) {
         ff_p->raw.mkv_seek_bytes=0;
         ff_p->raw.mkv_seek_started_us=av_gettime_relative();
@@ -38,8 +38,8 @@ def main():
         '        ret=avformat_seek_file(fmt,-1,seek_min,new_pos,seek_max,av_flags);',
         '''        if(nova_mkv_seek) {
             int64_t video_ts=av_rescale_q(new_pos,AV_TIME_BASE_Q,
-                                          fmt->streams[stream]->time_base);
-            ret=av_seek_frame(fmt,stream,video_ts,AVSEEK_FLAG_BACKWARD);
+                                          fmt->streams[s->video->stream]->time_base);
+            ret=av_seek_frame(fmt,s->video->stream,video_ts,AVSEEK_FLAG_BACKWARD);
             serprintf("NOVA_MKV_BBC_CUE_SEEK_V1: timeUs=%lld streamTs=%lld ret=%d\\n",
                       (long long)new_pos,(long long)video_ts,ret);
         } else {
