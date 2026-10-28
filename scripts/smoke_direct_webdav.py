@@ -41,7 +41,13 @@ def wait_for(pred, seconds, label):
         if pred(last):
             return last
         time.sleep(0.35)
-    raise RuntimeError("Missing " + label + "\n" + last[-12000:])
+    # Show player-specific evidence rather than only noisy emulator logcat tail.
+    interesting = [line for line in last.splitlines() if any(marker in line for marker in (
+        "NovaTransport", "NOVA_", "AvosMediaPlayer", "PlayerActivity",
+        "ActivityTaskManager", "FATAL EXCEPTION", "Fatal signal",
+        "libavos", "libnova_transport", "AndroidRuntime"))]
+    raise RuntimeError("Missing " + label + "\nAPP_LOG_FILTERED:\n" +
+                       "\n".join(interesting[-120:]) + "\nRAW_TAIL:\n" + last[-3000:])
 
 def action_tail(text, marker):
     return text[text.rfind(marker):] if marker in text else ""
