@@ -60,32 +60,37 @@ def bootstrap(jar: Path, work: Path, selected: Path, reports: Path):
     g.write_json(reports / 'bootstrap.json', {'status': 'PASS', 'generated_spec': True, 'stats': patch['stats']})
 
 def overlay_native(candidate: Path, native_root: Path, reports: Path):
+    # v6.6's Java SubtitleEngine calls into libavosjni.so. Overlaying ONLY
+    # libavos.so preserves an obsolete JNI bridge and crashes at nativeCreate().
+    # Both rebuilt libraries must be taken from the same AVOS source generation.
     expected = {}
+    names = ('libavos.so', 'libavosjni.so')
     for abi_dir in sorted((candidate / 'lib').iterdir()):
         if not abi_dir.is_dir():
             continue
-        dst = abi_dir / 'libavos.so'
-        if not dst.is_file():
-            continue
-        src = native_root / abi_dir.name / 'libavos.so'
-        if not src.is_file():
-            raise g.Conflict(f'Missing rebuilt libavos.so for ABI {abi_dir.name}: {src}')
-        before = upstream.sha256_file(dst)
-        shutil.copyfile(src, dst)
-        after = upstream.sha256_file(dst)
-        if before == after:
-            raise g.Conflict(f'Rebuilt libavos.so for {abi_dir.name} is byte-identical to official payload')
-        expected[f'lib/{abi_dir.name}/libavos.so'] = {
-            'official_sha256': before,
-            'rebuilt_sha256': after,
-        }
+        for library in names:
+            dst = abi_dir / library
+            if not dst.is_file():
+                raise g.Conflict(f'Missing official {library} for ABI {abi_dir.name}')
+            src = native_root / abi_dir.name / library
+            if not src.is_file():
+                raise g.Conflict(f'Missing rebuilt {library} for ABI {abi_dir.name}: {src}')
+            before = upstream.sha256_file(dst)
+            shutil.copyfile(src, dst)
+            after = upstream.sha256_file(dst)
+            if before == after:
+                raise g.Conflict(f'Rebuilt {library} for {abi_dir.name} is byte-identical to official payload')
+            expected[f'lib/{abi_dir.name}/{library}'] = {
+                'official_sha256': before, 'rebuilt_sha256': after,
+            }
     if not expected:
-        raise g.Conflict('No lib/<abi>/libavos.so entries found in decoded APK')
+        raise g.Conflict('No rebuilt AVOS/JNI entries found in decoded APK')
     g.write_json(reports / 'native-overlay.json', {
         'status': 'PASS',
         'changed_entries': expected,
-        'only_library_replaced': 'libavos.so',
+        'native_libraries_replaced': list(names),
     })
+
 
 
 def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
@@ -93,7 +98,7 @@ def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
         if b.testzip() is not None or len(b.namelist()) != len(set(b.namelist())):
             raise g.Conflict('Rebuilt APK has invalid/duplicate entries')
         keep = [n for n in a.namelist() if n.startswith(('lib/', 'assets/')) and not n.endswith('/')]
-        allowed = {n for n in keep if n.startswith('lib/') and n.endswith('/libavos.so')}
+        allowed = {n for n in keep if n.startswith('lib/') and n.rsplit('/', 1)[-1] in ('libavos.so', 'libavosjni.so')}
         changed = {n for n in keep if n not in b.namelist() or a.read(n) != b.read(n)}
         unexpected = sorted(changed - allowed)
         missing = sorted(allowed - changed)
@@ -106,7 +111,7 @@ def preserve_payload(selected: Path, rebuilt: Path, reports: Path):
     g.write_json(reports / 'upstream-payload.json', {
         'status': 'PASS',
         'preserved_native_and_asset_entries': len(keep) - len(allowed),
-        'replaced_libavos_entries': sorted(allowed),
+        'replaced_avos_and_jni_entries': sorted(allowed),
         'unexpected_changes': [],
     })
 
@@ -150,7 +155,7 @@ def main():
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
-        'whole_module_replacements': 0, 'native_replacements': ['libavos.so'],
+        'whole_module_replacements': 0, 'native_replacements': ['libavos.so', 'libavosjni.so'],
         'native_rebuffer_control': 'pre-demux raw source: dynamic 2X low / 5X resume; fixed 128MiB producer wall independent of playback state',
         'packet_handoff_mib': 24,
         'webdav_transport': 'direct native transport is applied after granular base; no StreamOverHttp playback tuning',
