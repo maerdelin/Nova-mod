@@ -26,6 +26,22 @@ jobs:
           set -euo pipefail
           java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f inputs/official.apk -o work/latest-decoded
           python3 scripts/granular.py apply work/latest-decoded patches/v982-granular.json --report reports/granular-v66.json
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,'scripts')
+          import buffer_guard_patch, audio_route_no_rebuild_patch
+          import tv_track_width_patch, tv_small_card_spacing_patch
+          import webdav_resume_local_only_patch
+          root=Path('work/latest-decoded')
+          out=Path('reports')
+          buffer_guard_patch.apply(root,out/'buffer-guard.json')
+          audio_route_no_rebuild_patch.apply(root,out/'audio-route.json')
+          tv_track_width_patch.apply(root,out/'tv-layout.json')
+          tv_small_card_spacing_patch.apply(root,out/'tv-spacing.json')
+          webdav_resume_local_only_patch.apply(root,out/'webdav-resume.json')
+          print('NOVA_V66_ALL_JAVA_PATCHES=PASS')
+          PY
       - name: Upload diagnostic report
         if: always()
         uses: actions/upload-artifact@v4
