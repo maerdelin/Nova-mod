@@ -1,0 +1,35 @@
+name: NOVA v6.6 Smali compatibility preflight
+on:
+  push:
+    branches: ['ci/full-latest-6_6_2-20261028']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch latest official stable APK and verified Apktool
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs tools work reports
+          python3 -m py_compile scripts/granular.py
+          python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+          timeout 120s curl -fL --retry 2 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
+      - name: Apply all 110 UI instruction patches and 37 XML edits
+        run: |
+          set -euo pipefail
+          java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f inputs/official.apk -o work/latest-decoded
+          python3 scripts/granular.py apply work/latest-decoded patches/v982-granular.json --report reports/granular-v66.json
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-v66-UI-preflight-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: ignore
