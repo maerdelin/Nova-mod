@@ -193,7 +193,7 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              if ! "$NM" -D "$new" | grep -Fq ' Java_com_archos_mediacenter_video_player_SubtitleEngine_nativeCreate'; then
+              if ! "$NM" -D "$new" | grep -F ' Java_com_archos_mediacenter_video_player_SubtitleEngine_nativeCreate'; then
                 echo "::error::Official v6.6 SubtitleEngine.nativeCreate JNI missing from $abi rebuilt libavos.so"
                 exit 1
               fi
