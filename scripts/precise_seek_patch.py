@@ -165,8 +165,35 @@ def engine_text(src):
              "    int nova_precise_backseek = !first_start && nova_precise_scope(s,time);",
              "exact seek preceding keyframe")
     src=once(src,"s->parser->seek_time( s, time, dir, flags, force_reload, &sc )",
-             "s->parser->seek_time( s, time, nova_precise_backseek ? STREAM_SEEK_BACKWARD : dir, flags, force_reload, &sc )",
+             "s->parser->seek_time( s, nova_precise_backseek ? MAX(0,time-2600) : time, nova_precise_backseek ? STREAM_SEEK_BACKWARD : dir, flags, force_reload, &sc )",
              "exact seek FFmpeg keyframe direction")
+    src=once(src,"int final_ts = sc.time;  // Parser returns TS position",
+             r'''/* NOVA_PRECISE_SEEK_PREROLL_V2: Some unindexed streams return
+                 * a keyframe AFTER the requested timestamp even when seek
+                 * direction is BACKWARD. Before opening the decoder, retry
+                 * from progressively earlier positions so real preroll can
+                 * reach the requested frame. */
+                if (nova_precise_backseek && sc.time > RST_TO_TS_TIME(time,int)) {
+                    const int backoffs_ms[] = { 5200, 9000, 15000 };
+                    for (int attempt=0; attempt<3; ++attempt) {
+                        int anchor=MAX(0,time-backoffs_ms[attempt]);
+                        serprintf("NOVA_PRECISE_SEEK_BACKTRACK_V2: want=%d anchor=%d previous=%d attempt=%d\n",
+                                  time,anchor,sc.time,attempt+1);
+                        if (s->parser->seek_time(s,anchor,STREAM_SEEK_BACKWARD,
+                                                 flags,force_reload,&sc)) {
+                            err=1;
+                            break;
+                        }
+                        if (sc.time<=RST_TO_TS_TIME(time,int)) break;
+                    }
+                    if (!err && sc.time > RST_TO_TS_TIME(time,int)) {
+                        serprintf("NOVA_PRECISE_SEEK_NO_PRIOR_GOP_V2: target=%d achieved=%d\n",
+                                  time,sc.time);
+                        err=1;
+                    }
+                }
+                int final_ts = sc.time;  // Parser returns TS position''',
+             "retry earlier keyframe when parser still overshoots desired time")
     src=once(src,"\t__atomic_store_n( &s->seek_preview_superseded, 0, __ATOMIC_RELEASE );",
              "\t__atomic_store_n(&s->nova_precise_state,0,__ATOMIC_RELEASE);\n"
              "\t__atomic_store_n( &s->seek_preview_superseded, 0, __ATOMIC_RELEASE );","new seek clears old position floor")
@@ -175,6 +202,17 @@ def engine_text(src):
              "    int nova_exact_seek=nova_precise_backseek;\n"
              "    int64_t nova_exact_deadline=atime64()+30000;\n"
              "    if (nova_exact_seek) nova_precise_begin(s,time,target_ts);","established direct non-ISO scope")
+    src=once(src,"    int64_t nova_exact_deadline=atime64()+30000;",
+             r'''    int64_t nova_exact_deadline=atime64()+30000;
+    int nova_exact_preview_frames=10;
+    if (nova_exact_seek) {
+        int step=MAX(1,RST_TO_TS_DELTA(MAX(1,s->video->msPerFrame),int));
+        int distance=MAX(0,target_ts-sc.time);
+        nova_exact_preview_frames=MIN(640,MAX(48,distance/step+48));
+        serprintf("NOVA_PRECISE_SEEK_PREROLL_V2: epoch=%d target=%d key=%d frames=%d\n",
+                  s->seek_epoch,target_ts,sc.time,nova_exact_preview_frames);
+    }''',
+             "allow enough decode frames to traverse the pre-target GOP")
     anchor="\t\tif( !s->seek_skip_initial_play ) {\n\t\t\tint preview_shown = _stream_play_n_frames( s, 10, sc.time, old_time );"
     src=once(src,anchor,r'''
         if (nova_exact_seek) {
@@ -184,7 +222,7 @@ def engine_text(src):
             sfdec2_reset_sync_state_on_seek(s);
             s->seek_force_video_drop=1;
             __atomic_store_n(&s->seek_preview_refining,1,__ATOMIC_RELEASE);
-            _stream_play_n_frames(s,10,target_ts,0);
+            _stream_play_n_frames(s,nova_exact_preview_frames,target_ts,0);
             __atomic_store_n(&s->seek_preview_refining,0,__ATOMIC_RELEASE);
             s->seek_force_video_drop=0;
             if (!nova_precise_wait(s,nova_exact_deadline)) {
@@ -206,7 +244,10 @@ def engine_text(src):
              "\tint64_t timeout = atime64() + (nova_exact_preview ? 30000 : 1000); // bounded cancelable exact preroll","long-GOP precise preview budget")
     src=once(src,"\twhile( s->play_n_video_frames && atime64() < timeout ) {",
              "\twhile( s->play_n_video_frames && atime64() < timeout ) {\n"
-             "        if (nova_exact_preview && (stream_abort(s) || s->video_error || s->error ||\n"
+             "        if (nova_exact_preview && __atomic_load_n(&s->nova_precise_state,__ATOMIC_ACQUIRE)==2) {\n"
+              "            s->play_n_video_frames=0; break;\n"
+              "        }\n"
+              "        if (nova_exact_preview && (stream_abort(s) || s->video_error || s->error ||\n"
              "            __atomic_load_n(&s->nova_precise_state,__ATOMIC_ACQUIRE)>=4)) break;","abort precise preview promptly")
     src=once(src,"\t\t\t\t\tint accept_partial = below_target && deadline_ms > 0 &&",
              "                    int nova_partial_allowed=__atomic_load_n(&s->nova_precise_state,__ATOMIC_ACQUIRE)!=1;\n"
