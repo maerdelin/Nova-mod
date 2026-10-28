@@ -193,8 +193,14 @@ jobs:
               new="native-src/native/avos/libs/$abi/libavos.so"
               old="work/official-native/libavos-$abi.so"
               test -s "$new"
-              if ! "$NM" -D "$new" | grep -F ' Java_com_archos_mediacenter_video_player_SubtitleEngine_nativeCreate'; then
-                echo "::error::Official v6.6 SubtitleEngine.nativeCreate JNI missing from $abi rebuilt libavos.so"
+              jni="native-src/native/avos/libs/$abi/libavosjni.so"
+              test -s "$jni"
+              if ! "$NM" -D "$jni" | grep -F ' Java_com_archos_mediacenter_video_player_SubtitleEngine_nativeCreate'; then
+                echo "::error::Official v6.6 SubtitleEngine.nativeCreate JNI missing from $abi rebuilt libavosjni.so"
+                exit 1
+              fi
+              if ! "$NM" -D "$new" | grep -F ' sub_engine_create'; then
+                echo "::error::Official v6.6 subtitle core missing from $abi libavos.so"
                 exit 1
               fi
               for trace in NOVA_SYNC_PUT NOVA_SYNC_RENDER_CLOCK NOVA_SYNC_LATE NOVA_SYNC_SEEK_RESET NOVA_SYNC_PCM_CORRECTION NOVA_SYNC_AUDIO_START NOVA_FINAL_HEARTBEAT NOVA_FINAL_PARSER_QUEUE NOVA_FINAL_RENDER_Q NOVA_SUB_HISTORY_DISABLED_ALL_V1 NOVA_LATE_STALL_SELF_HEAL_V1 NOVA_SEEK_ENGINE_DIAG_V1 NOVA_SEEK_POOL_OWNERS_V1 NOVA_MKV_SEEK_SCAN_BEGIN_V2 NOVA_MKV_BBC_SEEK_STOP_V1 NOVA_ISO_TRACK_APPLIED_V1 NOVA_ISO_CODEC_AUDIT_V2 NOVA_ISO_CODEC_LABEL_V2 NOVA_STARTUP_NATIVE_ZERO_SKIP_V2 NOVA_MKV_SEEK_REJECT_V3 NOVA_MKV_SEEK_POSITION_V3 NOVA_PRECISE_SEEK_BEGIN_V1 NOVA_PRECISE_SEEK_DONE_V1; do
