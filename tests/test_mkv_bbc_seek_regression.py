@@ -36,7 +36,7 @@ class BbcMkvRegression(unittest.TestCase):
     def test_mkv_seek_cues_and_bounded_failures(self):
         p=src("scripts/mkv_bbc_cue_seek_patch.py")
         raw=src("scripts/native_rebuffer_patch.py")
-        self.assertIn('av_seek_frame(fmt,stream,video_ts,AVSEEK_FLAG_BACKWARD)',p)
+        self.assertIn('av_seek_frame(fmt,s->video->stream,video_ts,AVSEEK_FLAG_BACKWARD)',p)
         self.assertIn('ret < 0 && !nova_mkv_seek',p)
         self.assertIn('NOVA_MKV_BBC_SEEK_STOP_V1',p)
         self.assertIn('NOVA_MKV_BBC_SEEK_GUARD_V1',raw)
