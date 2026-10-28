@@ -216,20 +216,18 @@ def test_one(fmt, root, report_dir):
         )
         if "FATAL EXCEPTION" in log or "Fatal signal" in log:
             raise RuntimeError(fmt + " crashed despite a first-frame marker")
-        # Final signed APK must skip the redundant Java 0-to-0 Seek AFTER
-        # the native parser initialized the MKV/MP4. Not a mock/proxy test.
+        # NOVA_STARTUP_SOURCE_ONLY: check the natural first frame,
+        # not the old runtime Seek suppression proxy.
         startup = log[log.rfind(marker):]
-        skip_seen = ("NOVA_NONISO_DUP_ZERO_SKIP_V1:" in startup or
-                     "NOVA_STARTUP_NATIVE_ZERO_SKIP_V2:" in startup)
-        # A cold-start where the source position is still unknown (-1)
-        # REQUIRES a real first Seek. Do not demand a skip for that case.
-        # What must never happen: native 0->0 after the parser got PTS 0.
         first_frame = startup.find("NOVA_STARTUP_TRACE first_frame_sink")
-        zero_to_zero = "avos_mp_video:avos_mp_video_seek current_pos=0 to pos=0"
-        if zero_to_zero in startup[first_frame:]:
-            raise RuntimeError(fmt + " repeated native 0-to-0 Seek after first frame")
-        if not skip_seen and "avos_mp_video:avos_mp_video_seek current_pos=-1 to pos=0" not in startup:
-            raise RuntimeError(fmt + " neither skipped an established zero nor performed a necessary initial seek")
+        if first_frame < 0 or "start video at start" not in startup[:first_frame]:
+            raise RuntimeError(fmt + " failed to render from the natural beginning")
+        for unwanted in ("NOVA_NONISO_DUP_ZERO_SKIP_V1:",
+                         "NOVA_STARTUP_NATIVE_ZERO_SKIP_V2:",
+                         "avos_mp_video:avos_mp_video_seek",
+                         "NOVA_MKV_BBC_CUE_SEEK_V1:"):
+            if unwanted in startup[:first_frame]:
+                raise RuntimeError(fmt + " unnecessary startup Seek: " + unwanted)
         if fmt == "mkv":
             frame_lines = [x for x in startup.splitlines()
                            if "NOVA_STARTUP_TRACE first_frame_sink" in x]
@@ -238,10 +236,7 @@ def test_one(fmt, root, report_dir):
             pts_match = re.search(r"pts=(-?\d+)", frame_lines[0])
             if not pts_match or int(pts_match.group(1)) != 0:
                 raise RuntimeError("MKV time-zero keyframe lost: " + frame_lines[0])
-        print("NOVA_NONISO_DUP_ZERO_STARTUP_ART=PASS " + fmt
-              + " (real signed APK; initial unknown position may seek; "
-              + "never re-seek after first frame; MKV first PTS=0)"
-              + " skip=" + str(skip_seen))
+        print("NOVA_STARTUP_SOURCE_ONLY_ART=PASS " + fmt + " no startup timeline Seek")
         with lock:
             snapshot = list(requests)
             all_snapshot = list(all_requests)
@@ -339,7 +334,7 @@ def test_one(fmt, root, report_dir):
             "media_size": size,
             "webdav_source": True,
             "real_first_frame": True,
-            "noniso_startup_zero_skip_observed": skip_seen,
+            "startup_no_timeline_seek_before_first_frame": True,
             "redundant_native_seek_after_first_frame": False,
             "mkv_first_pts_zero": fmt == "mkv",
             "faults": fault_counts,
