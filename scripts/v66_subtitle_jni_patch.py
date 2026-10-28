@@ -25,8 +25,9 @@ def main():
     # sources in libavos.so; adding them again duplicates linker objects.
     # Only the separately loaded JNI bridge library needs their native exports.
     main = (root / "main.mk").read_text()
+    import re
     for name in FILES + ("jni_sub_engine.c", "jni_font_name_parser.c"):
-        if main.count(name) != 1:
+        if len(re.findall(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", main)) != 1:
             raise RuntimeError("Official v6.6 main.mk source membership changed: " + name)
     source = (root / "Source" / "jni_sub_engine.c").read_text()
     if JNI not in source:
