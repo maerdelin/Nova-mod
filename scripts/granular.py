@@ -426,7 +426,10 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                 if method_name not in methods:
                     print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
                     raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
-            if class_header(text)!=rule['class_header']:
+            expected_class_header=rule['class_header']
+            if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/presenter/PosterImageCardPresenter;':
+                expected_class_header=[line.replace('.super Lsx0;', '.super Lrx0;') for line in rule['class_header']]
+            if class_header(text)!=expected_class_header:
                 print('NOVA_V66_ACTUAL_CLASS_HEADER '+rule['class']+' -> '+repr(class_header(text)),flush=True)
                 print('NOVA_V66_OLD_CLASS_HEADER '+repr(rule['class_header']),flush=True)
                 raise Conflict('Class hierarchy changed: '+rule['class'])
@@ -453,6 +456,12 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                     for field in ('before','after','left','right','after_left','after_right'):
                         h[field]=[__import__('functools').reduce(lambda line,p:line.replace(*p),mapping,item)
                                   for item in h[field]]
+            if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$1;' and rule['method'].startswith('onItemClicked('):
+                import copy
+                changes=copy.deepcopy(changes)
+                for h in changes:
+                    for field in ('before','after','left','right','after_left','after_right'):
+                        h[field]=[line.replace('Lhs1;', 'Ljs1;') for line in h[field]]
             # R8 remapped Leanback presenter descriptors in official v6.6.2.
             # Port all affected instruction/context tokens for this one method;
             # retain the 6 original UI edits and their overlap checks.
