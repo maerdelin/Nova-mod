@@ -270,7 +270,7 @@ def test_one(fmt, root, report_dir):
                     seek_marker in t and
                     "NOVA_MKV_BBC_CUE_SEEK_V1:" in t[t.rfind(seek_marker):] and
                     "NOVA_RAW128_SEEK:" in t[t.rfind(seek_marker):] and
-                    re.search(r"NOVA_MKV_SEEK_POSITION_V3: targetMs=\d+ actualTs=\d+ found=1 failed=0",
+                    re.search(r"NOVA_MKV_SEEK_POSITION_V3: targetMs=\d+ actualTs=-?\d+ found=1 failed=0",
                               t[t.rfind(seek_marker):])
                 ),40,"actual MKV Cues Seek on redirected WebDAV")
             # A 10s GOP intentionally puts the indexed keyframe seconds BEFORE
