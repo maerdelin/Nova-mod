@@ -24,8 +24,24 @@ def inject(source: str) -> str:
         r"([ \t]*\.locals[ \t]+)([0-9]+)([ \t]*\n)"
     )
     found = list(pattern.finditer(source))
+    if not found:
+        # A Java class need not have an explicit static initializer.
+        # Add one if absent, without changing any existing methods.
+        if re.search(r"(?m)^\\.method[^\\n]*<clinit>\\(\\)V", source):
+            raise RuntimeError("SubtitleEngine has unsupported existing <clinit>")
+        klass = re.search(r"(?m)^\\.super[^\\n]*\\n", source)
+        if klass is None:
+            raise RuntimeError("SubtitleEngine superclass declaration missing")
+        block = (f"\\n.method static constructor <clinit>()V\\n"
+                 f"    .locals 1\\n"
+                 f"    # {MARKER}\\n"
+                 '    const-string v0, "avosjni"\\n'
+                 "    invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V\\n"
+                 "    return-void\\n"
+                 ".end method\\n")
+        return source[:klass.end()] + block + source[klass.end():]
     if len(found) != 1:
-        raise RuntimeError("SubtitleEngine <clinit>/.locals layout changed")
+        raise RuntimeError("Multiple SubtitleEngine static initializers")
     m = found[0]
     count = int(m.group(3))
     if count > 220:
