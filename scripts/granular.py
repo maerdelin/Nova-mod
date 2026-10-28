@@ -155,7 +155,22 @@ def locate(lines: list[str], hunk: dict, after=False) -> list[int]:
     left = hunk['after_left'] if after else hunk['left']
     right = hunk['after_right'] if after else hunk['right']
     body = hunk['after'] if after else hunk['before']
-    return [i+len(left) for i in occurrences(lines, left+body+right)]
+    matches = [i+len(left) for i in occurrences(lines, left+body+right)]
+    if matches:
+        return matches
+    # Preserve every original before/after instruction body. Accept reduced
+    # context only if the full body is anchored at precisely one location.
+    for cap in (7, 6, 5, 4, 3, 2):
+        lpart = left[-cap:] if left else []
+        rpart = right[:cap]
+        if len(lpart) + len(rpart) < 4:
+            continue
+        candidates = [i+len(lpart) for i in occurrences(lines, lpart+body+rpart)]
+        if len(candidates) == 1:
+            return candidates
+        if len(candidates) > 1:
+            raise Conflict('Ambiguous v6.6 reduced-context hunk')
+    return []
 
 def apply_hunks(lines: list[str], changes: list[dict]):
     old_hits = [locate(lines, h) for h in changes]
