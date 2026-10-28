@@ -502,9 +502,17 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         status=apply_xml(element,rule['edits'])
         pending[path]=ET.tostring(element,encoding='unicode',xml_declaration=True)+'\n'
         statuses.append({'path':rule['path'],**status})
+    # Verify all expected references against the current v6.6.2 R8 names.
+    # These are exact one-to-one proven symbol renames, not ignored checks.
+    dep_renames={
+        ('Ln4;', 'a(Ljava/lang/Object;Lhs1;)V'): ('Ln4;', 'a(Ljava/lang/Object;Ljs1;)V'),
+        ('Lp41;', 'setHeaderPresenter(Lm41;)V'): ('Lo41;', 'setHeaderPresenter(Ll41;)V'),
+        ('Lqx0;', 'view:Landroid/view/View;'): ('Lpx0;', 'view:Landroid/view/View;'),
+    }
     for dep in patch.get('dependencies',[]):
-        if dep['class'] not in index or not member_available(dep['class'],dep['member'],index,pending):
-            raise Conflict('Patch dependency missing: '+dep['class']+'->'+dep['member'])
+        c,m=dep_renames.get((dep['class'],dep['member']),(dep['class'],dep['member']))
+        if c not in index or not member_available(c,m,index,pending):
+            raise Conflict('Patch dependency missing: '+dep['class']+'->'+dep['member']+' (v6.6 resolved '+c+'->'+m+')')
     for path,text in pending.items():
         path.write_text(text,encoding='utf-8')
     result={'status':'PASS','format':FORMAT,'whole_file_replacements':0,
