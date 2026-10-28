@@ -158,12 +158,21 @@ def header_text(src):
 def engine_text(src):
     if "NOVA_PRECISE_SEEK_V1" in src: raise RuntimeError("precise patch already installed")
     src=once(src,"static void _video_init( STREAM *s, int time )",HELPERS+"\nstatic void _video_init( STREAM *s, int time )","precise helpers")
+    # Verified #890/#891: forward parser seeks skip 7.3s target and jump to
+    # 8.021s GOP. Exact seeks must decode forward FROM prior keyframe.
+    src=once(src,"\tint first_start = (old_time < 0 && s->seek_epoch == 0);",
+             "\tint first_start = (old_time < 0 && s->seek_epoch == 0);\\n"
+             "    int nova_precise_backseek = !first_start && nova_precise_scope(s,time);",
+             "exact seek preceding keyframe")
+    src=once(src,"s->parser->seek_time( s, time, dir, flags, force_reload, &sc )",
+             "s->parser->seek_time( s, time, nova_precise_backseek ? STREAM_SEEK_BACKWARD : dir, flags, force_reload, &sc )",
+             "exact seek FFmpeg keyframe direction")
     src=once(src,"\t__atomic_store_n( &s->seek_preview_superseded, 0, __ATOMIC_RELEASE );",
              "\t__atomic_store_n(&s->nova_precise_state,0,__ATOMIC_RELEASE);\n"
              "\t__atomic_store_n( &s->seek_preview_superseded, 0, __ATOMIC_RELEASE );","new seek clears old position floor")
     src=once(src,"\tint target_ts = (time >= 0) ? RST_TO_TS_TIME( time, int ) : sc.time;",
              "\tint target_ts = (time >= 0) ? RST_TO_TS_TIME( time, int ) : sc.time;\n"
-             "    int nova_exact_seek=!first_start && nova_precise_scope(s,time);\n"
+             "    int nova_exact_seek=nova_precise_backseek;\n"
              "    int64_t nova_exact_deadline=atime64()+30000;\n"
              "    if (nova_exact_seek) nova_precise_begin(s,time,target_ts);","established direct non-ISO scope")
     anchor="\t\tif( !s->seek_skip_initial_play ) {\n\t\t\tint preview_shown = _stream_play_n_frames( s, 10, sc.time, old_time );"
