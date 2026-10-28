@@ -407,7 +407,7 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             # retained one onItemClicked method and its register layout.
             # Never silently select an overloaded callback.
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment$MainViewClickedListener;' and method_name.startswith('onItemClicked('):
-                candidates=[m for m in methods if m.startswith('onItemClicked(') and m.endswith(')V')]
+                candidates=[m for m in methods if m.startswith('onItemClicked(') and m.endswith(')V') and not m.endswith('Ljava/lang/Object;)V')]
                 if len(candidates)==1:
                     method_name=candidates[0]
                     print('NOVA_V66_EXACT_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
