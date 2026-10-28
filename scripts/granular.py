@@ -407,8 +407,19 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         if register_line(original) not in (rule['registers_before'],rule['registers_after']):
             raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
         projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
+        changes=rule['hunks']
+        # v6.6 R8 changed this callback argument's obfuscated interface name
+        # from Lhs1; to Ljs1;. The entire old onMenuItemSelected body is
+        # removed by the existing patch. Require the new descriptor in the
+        # current method; do not relax method identity or remove the edit.
+        if rule['class'] == 'Lcom/archos/mediacenter/video/browser/filebrowsing/BrowserByVideoFolder$1;' and rule['method'] == 'onMenuItemSelected(Landroid/view/MenuItem;)Z':
+            import copy
+            changes=copy.deepcopy(changes)
+            for h in changes:
+                h['before']=[s.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
+                                        'Ln4;->a(Ljava/lang/Object;Ljs1;)V') for s in h['before']]
         try:
-            edited,status=apply_hunks(projected,rule['hunks'])
+            edited,status=apply_hunks(projected,changes)
         except Conflict as e:
             print('NOVA_V66_GRANULAR_CONFLICT_CLASS=' + rule['class'], flush=True)
             print('NOVA_V66_GRANULAR_CONFLICT_METHOD=' + rule['method'], flush=True)
