@@ -1018,12 +1018,13 @@ static void nova_playback_yield_sched(const char *role, int requested_nice)
 
 def patch_stream_h(path: Path) -> None:
     text = path.read_text()
-    text = replace_once(
+    # v6.6 no longer exposes STREAM_SUBTITLE_CLEARED; preserve
+    # the upstream enum and append the two buffering notifications.
+    text = sub_once(
         text,
-        "\tSTREAM_DECODER_CHANGED,\n\tSTREAM_SUBTITLE_CLEARED,\n} STREAM_MESSAGE;",
-        "\tSTREAM_DECODER_CHANGED,\n\tSTREAM_SUBTITLE_CLEARED,\n"
-        "\tSTREAM_BUFFERING_START,\n\tSTREAM_BUFFERING_END,\n} STREAM_MESSAGE;",
-        "STREAM_MESSAGE enum",
+        r"(\tSTREAM_DECODER_CHANGED,\n)(} STREAM_MESSAGE;)",
+        r"\1\tSTREAM_BUFFERING_START,\n\tSTREAM_BUFFERING_END,\n\2",
+        "STREAM_MESSAGE enum v6.6",
     )
     text = sub_once(
         text,
