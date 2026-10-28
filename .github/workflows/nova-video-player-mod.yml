@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main, Test, 'fix/main-startup-seek-only-20261028']
+    branches: [main, Test, 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028']
 
 permissions:
   contents: write
@@ -90,7 +90,7 @@ jobs:
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/download_pinned_startup_baseline.py
+        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
 
       - name: Verify original APK signature
         shell: bash
@@ -107,11 +107,11 @@ jobs:
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           mkdir -p native-src
           cd native-src
-          repo init -u https://github.com/nova-video-player/aos-AVP -b nova -m v6_4.xml
+          repo init -u https://github.com/nova-video-player/aos-AVP -b nova -m v6_6.xml
           repo sync -j 4
-          git -C native/avos checkout --detach b313441df14414632781617742efb66778689b91
+          git -C native/avos rev-parse HEAD | tee ../reports/upstream-avos-head.txt
           cd ..
-          python3 scripts/native_rebuffer_patch.py native-src/native/avos --report reports/native-rebuffer.json
+          python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
@@ -161,7 +161,9 @@ jobs:
           # FFmpeg 8.0 ABI into the base path, then keep ONLY rebuilt libavos.so.
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
             test -s "native-src/native/prebuilt/ffmpeg/dist-full-$abi/lib/libavcodec.so"
-            ln -s "dist-full-$abi" "native-src/native/prebuilt/ffmpeg/dist-base-$abi"
+            if [[ ! -e "native-src/native/prebuilt/ffmpeg/dist-base-$abi" ]]; then
+              ln -s "dist-full-$abi" "native-src/native/prebuilt/ffmpeg/dist-base-$abi"
+            fi
           done
           cd native-src
           MAKE_JOBS=4 BUILD=release make native_build_native/libnativehelper
@@ -352,58 +354,10 @@ jobs:
              # Signed APK ART probe: zero remote resume PUT; normal upload still works.
              python3 scripts/smoke_webdav_resume_local_only.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 
-      - name: Verify pinned official baseline and live asset identity
+      - name: Verify official latest selection remains current
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-          sys.path.insert(0, 'scripts')
-          import check_upstream as upstream
-
-          # The 796 playback baseline intentionally pins official v6.5.5.
-          # Rechecking /releases/latest incorrectly fails after newer official releases.
-          # Keep SHA-256, provenance, current release and live asset checks fail-closed.
-          selected = upstream.load_selection(Path('inputs/upstream.json'),
-                                             Path('inputs/official.apk'))
-          manifest = json.loads(Path('baseline/manifest.json').read_text())
-          expected = {
-              'repository': upstream.REPOSITORY,
-              'policy': upstream.POLICY,
-              'release_id': 408256428,
-              'tag': 'v6.5.5',
-              'asset_id': 625921451,
-              'download_url': manifest['upstream_url'],
-              'official_sha256': manifest['upstream_sha256'],
-              'downloaded_sha256': manifest['upstream_sha256'],
-          }
-          for key, value in expected.items():
-              if selected.get(key) != value:
-                  raise upstream.UpstreamError(f'Pinned official baseline {key} mismatch')
-
-          release = upstream.validate_release(upstream.get_json(
-              f"{upstream.API_ROOT}/releases/{selected['release_id']}"))
-          if (release['id'] != selected['release_id'] or
-                  release['tag_name'] != selected['tag'] or
-                  release['published_at'] != selected['published_at']):
-              raise upstream.UpstreamError('Pinned official release identity changed')
-          asset = upstream.get_json(
-              f"{upstream.API_ROOT}/releases/assets/{selected['asset_id']}")
-          expected_asset = {
-              'id': selected['asset_id'],
-              'name': selected['asset_name'],
-              'size': selected['size_bytes'],
-              'digest': 'sha256:' + selected['official_sha256'],
-              'browser_download_url': selected['download_url'],
-              'state': 'uploaded',
-          }
-          for key, value in expected_asset.items():
-              if asset.get(key) != value:
-                  raise upstream.UpstreamError(f'Pinned official asset {key} changed')
-          print('PINNED_OFFICIAL_BASELINE_AND_LIVE_ASSET=PASS')
-          PY
+        run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
 
       - name: Persist extracted granular specification on the test branch
         if: github.ref == 'refs/heads/ci/granular-patches-20261015'
