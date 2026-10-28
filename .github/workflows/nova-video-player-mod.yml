@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main, Test, Always-new, 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028']
+    branches: [main, Test, Always-new, 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028']
 
 permissions:
   contents: write
@@ -127,6 +127,7 @@ jobs:
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
+          python3 scripts/main655_ts_eof_lead_gate.py --native native-src/native/avos --report reports/main655-ts-eof-leadgate.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
           python3 scripts/ts_resume_fallback_patch.py native-src/native/avos --report reports/ts-resume-fallback.json
           python3 scripts/iso_fast_probe_patch.py native-src/native/avos --report reports/iso-fast-probe.json
@@ -361,6 +362,7 @@ jobs:
             python3 scripts/smoke_direct_webdav.py --reports reports
             python3 scripts/smoke_weaknet_webdav_formats.py --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
+            python3 scripts/smoke_seek_eof_completion.py --reports reports
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
             python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
             # This independent startup-only branch intentionally leaves the
