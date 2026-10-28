@@ -38,8 +38,8 @@ def main():
         "\t\tINT64 nova_late_stall_ns = 0;\n",
         "drop sample local")
     s=rep(s,
-        "\t\t\tif (lateness_ns > k_late_drop_threshold_ns) {\n",
-        "\t\t\tif (lateness_ns > k_late_drop_threshold_ns) {\n"
+        "\t\t\t} else if (lateness_ns > k_late_drop_threshold_ns) {\n",
+        "\t\t\t} else if (lateness_ns > k_late_drop_threshold_ns) {\n"
         "\t\t\t\tnova_late_stall_ns = lateness_ns;\n",
         "record late timing")
 
