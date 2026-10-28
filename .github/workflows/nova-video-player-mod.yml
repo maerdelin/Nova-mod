@@ -352,11 +352,58 @@ jobs:
              # Signed APK ART probe: zero remote resume PUT; normal upload still works.
              python3 scripts/smoke_webdav_resume_local_only.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 
-      - name: Verify official selection has not changed
-        if: github.ref != 'refs/heads/fix/main-startup-seek-only-20261028'
+      - name: Verify pinned official baseline and live asset identity
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          import check_upstream as upstream
+
+          # The 796 playback baseline intentionally pins official v6.5.5.
+          # Rechecking /releases/latest incorrectly fails after newer official releases.
+          # Keep SHA-256, provenance, current release and live asset checks fail-closed.
+          selected = upstream.load_selection(Path('inputs/upstream.json'),
+                                             Path('inputs/official.apk'))
+          manifest = json.loads(Path('baseline/manifest.json').read_text())
+          expected = {
+              'repository': upstream.REPOSITORY,
+              'policy': upstream.POLICY,
+              'release_id': 408256428,
+              'tag': 'v6.5.5',
+              'asset_id': 625921451,
+              'download_url': manifest['upstream_url'],
+              'official_sha256': manifest['upstream_sha256'],
+              'downloaded_sha256': manifest['upstream_sha256'],
+          }
+          for key, value in expected.items():
+              if selected.get(key) != value:
+                  raise upstream.UpstreamError(f'Pinned official baseline {key} mismatch')
+
+          release = upstream.validate_release(upstream.get_json(
+              f"{upstream.API_ROOT}/releases/{selected['release_id']}"))
+          if (release['id'] != selected['release_id'] or
+                  release['tag_name'] != selected['tag'] or
+                  release['published_at'] != selected['published_at']):
+              raise upstream.UpstreamError('Pinned official release identity changed')
+          asset = upstream.get_json(
+              f"{upstream.API_ROOT}/releases/assets/{selected['asset_id']}")
+          expected_asset = {
+              'id': selected['asset_id'],
+              'name': selected['asset_name'],
+              'size': selected['size_bytes'],
+              'digest': 'sha256:' + selected['official_sha256'],
+              'browser_download_url': selected['download_url'],
+              'state': 'uploaded',
+          }
+          for key, value in expected_asset.items():
+              if asset.get(key) != value:
+                  raise upstream.UpstreamError(f'Pinned official asset {key} changed')
+          print('PINNED_OFFICIAL_BASELINE_AND_LIVE_ASSET=PASS')
+          PY
 
       - name: Persist extracted granular specification on the test branch
         if: github.ref == 'refs/heads/ci/granular-patches-20261015'
