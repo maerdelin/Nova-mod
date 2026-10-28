@@ -430,6 +430,18 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             for h in changes:
                 h['before']=[s.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
                                         'Ln4;->a(Ljava/lang/Object;Ljs1;)V') for s in h['before']]
+        # R8 remapped Leanback presenter descriptors in official v6.6.2.
+        # Port all affected instruction/context tokens for this one method;
+        # retain the 6 original UI edits and their overlap checks.
+        if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and rule['method'] == 'loadRows()V':
+            import copy
+            changes=copy.deepcopy(changes)
+            mapping=[('Lp41;', 'Lo41;'), ('Lm41;', 'Ll41;'),
+                     ('Lsx0;', 'Lrx0;'), ('Ltx0;', 'Lsx0;')]
+            for h in changes:
+                for field in ('before','after','left','right','after_left','after_right'):
+                    h[field]=[__import__('functools').reduce(lambda s,p:s.replace(*p),mapping,line)
+                              for line in h[field]]
         try:
             edited,status=apply_hunks(projected,changes)
         except Conflict as e:
