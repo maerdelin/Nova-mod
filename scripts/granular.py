@@ -395,6 +395,12 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         try:
             edited,status=apply_hunks(projected,rule['hunks'])
         except Conflict as e:
+            print('NOVA_V66_GRANULAR_CONFLICT_CLASS=' + rule['class'], flush=True)
+            print('NOVA_V66_GRANULAR_CONFLICT_METHOD=' + rule['method'], flush=True)
+            for i, line in enumerate(projected):
+                print('NOVA_V66_METHOD[%03d] %s' % (i, line), flush=True)
+            for i, hunk in enumerate(rule['hunks']):
+                print('NOVA_V66_HUNK[%d] before=%r after=%r' % (i, hunk['before'], hunk['after']), flush=True)
             raise Conflict(rule['class']+'->'+rule['method']+': '+str(e)) from e
         restored=[label_replace(line,inverse) for line in edited]
         check_labels(restored)
