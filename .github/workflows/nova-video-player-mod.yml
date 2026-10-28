@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main, Test, Always-new, 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028']
+    branches: [main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028']
 
 permissions:
   contents: write
