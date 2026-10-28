@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main, Test]
+    branches: [main, Test, 'fix/main-startup-seek-only-20261028']
 
 permissions:
   contents: write
@@ -71,6 +71,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_webdav_resume_local_only_patch.py -v
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
           python3 -m unittest discover -s tests -p test_noniso_startup_zero_seek.py -v
+          python3 -m unittest discover -s tests -p test_main_startup_seek_only.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
           python3 -m unittest discover -s tests -p test_noniso_seek_avio.py -v
           python3 -m unittest discover -s tests -p test_redirect_freshness.py -v
@@ -89,7 +90,7 @@ jobs:
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+        run: python3 scripts/download_pinned_startup_baseline.py
 
       - name: Verify original APK signature
         shell: bash
@@ -144,6 +145,8 @@ jobs:
           python3 scripts/iso_track_metadata_patch.py --native native-src/native/avos
           python3 scripts/startup_bbc_seek_fix_patch.py --native native-src/native/avos --report reports/startup-bbc-seek-fix.json
           NOVA_PATCHED_AVOS_ROOT="$PWD/native-src/native/avos" python3 -m unittest discover -s tests -p test_startup_bbc_seek_native.py -v
+          grep -Fq 'NOVA_STARTUP_AUDIO_NO_TIMELINE_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'return stream_parser_set_audio_stream( s, audio_stream);' native-src/native/avos/Source/stream_parser_ffmpeg.c
           python3 scripts/precise_seek_patch.py --native native-src/native/avos --report reports/precise-seek.json
           NOVA_PATCHED_AVOS_ROOT="$PWD/native-src/native/avos" python3 -m unittest discover -s tests -p test_precise_seek_native.py -v
           grep -Fq 'NOVA_ISO_TRACK_APPLIED_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
@@ -248,6 +251,13 @@ jobs:
             --native-root work/transport-native \
             --work work
           python3 scripts/direct_transport_audit.py --source
+          # Verify both source-level Java origins were changed.
+          startup_service=(work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerService.smali)
+          resume_ctx=(work/direct-final/smali*/com/archos/mediacenter/video/player/Player\$ResumeCtx.smali)
+          test "${#startup_service[@]}" -eq 1
+          test "${#resume_ctx[@]}" -eq 1
+          grep -Fq 'NOVA_STARTUP_ZERO_NO_REQUEST_V1' "${startup_service[0]}"
+          grep -Fq 'NOVA_RESUME_ZERO_NO_REQUEST_V1' "${resume_ctx[0]}"
 
       - name: Align sign and verify the final APK
         id: signing
@@ -340,6 +350,7 @@ jobs:
              python3 scripts/smoke_webdav_resume_local_only.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 
       - name: Verify official selection has not changed
+        if: github.ref != 'refs/heads/fix/main-startup-seek-only-20261028'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
@@ -426,6 +437,34 @@ jobs:
             --title "Nova Test Run ${GITHUB_RUN_NUMBER}: read-only ISO index + 1.5X/3X" \
             --prerelease \
             --notes "Built from pinned Test sources. Android 11 and Android 14 clean install and both launcher checks passed; APK v1/v2 signature and ZIP alignment verified. Single-clip Blu-ray ISO CLPI lookup is non-mutating with FFmpeg fallback. Network ISO playback on the user's Amlogic device remains to be field-tested. Different signing certificates cannot update an installed previous APK. Back up settings before uninstalling."
+          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+
+      - name: Publish isolated startup-only validated APK
+        if: github.ref == 'refs/heads/fix/main-startup-seek-only-20261028' && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for label, path in [
+              ('Android 11', 'reports/installation.json'),
+              ('Android 14', 'reports/android14/installation.json'),
+          ]:
+              r = json.loads(Path(path).read_text())
+              assert r['status'] == 'PASS', (label, r)
+              assert len(r['launches']) == 2, (label, r)
+          PY
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          tag="nova-main-startup-seek-only-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" \
+            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Nova main-based startup zero Seek fix - Run ${GITHUB_RUN_NUMBER}" \
+            --prerelease \
+            --notes "Independent main-based startup-only change; source-side zero Seek(0) suppression and initial audio selection. Mid-playback audio switching, manual seeks, decoders, and transport are unchanged. Android 11 and 14 checks passed. Official v6.5.5 SHA-256 baseline. Full-size real-device files still require field testing; test key may differ from installed app."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Upload diagnostics only - no intermediate APKs
