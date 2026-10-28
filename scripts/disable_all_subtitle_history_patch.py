@@ -16,7 +16,8 @@ from pathlib import Path
 START = "// Subtitle history must not fill the A/V queue budget or force a media seek."
 STOP = "extern int stream_drive_wake_sleep;"
 PGS_START = "\t\t/* NOVA_PGS_HISTORY_BYPASS_AB_V1: one-variable A/B experiment.\n"
-SELECTED = "\t\tif (s->subtitle->valid && !s->subtitle->ext && stream == s->subtitle->stream) {\n"
+SELECTED = ("\t\tif (s->subtitle->valid && !s->subtitle->ext && stream == s->subtitle->stream &&\n"
+            "\t\t    !__atomic_load_n(&s->subtitle_disabled, __ATOMIC_ACQUIRE)) {\n")
 CHECKER = r"""/* NOVA_SUB_HISTORY_DISABLED_ALL_V1: historical replay has no producer.
  * The empty sub_cache queue remains initialized for old diagnostic counters.
  * Live selected-track decoding is unaffected.
