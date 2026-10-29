@@ -63,7 +63,7 @@ class LiteRange4Tests(unittest.TestCase):
         for token in ("multi_http403_failures", "multi_http403_retry_ms",
                       "NOVA_MULTI_HTTP403_COOLDOWN",
                       "NOVA_MULTI_HTTP403_RETRY",
-                      'nova_multi_stop(s, "http403-cooldown", 0)',
+                      'http403 ? "http403-cooldown" : "range-backoff"',
                       'nova_iso_uptime_ms() >= s->multi_http403_retry_ms',
                       's->file_cursor < s->upstream_size',
                       'nova_multi_stop(s, "lane-error", 1)'):
