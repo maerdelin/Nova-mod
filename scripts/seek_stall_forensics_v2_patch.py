@@ -145,14 +145,14 @@ def patch(root):
         "parser seek return")
     # The early-error path also unpauses. Instrument the *final* matching
     # unpause call only; retain every failure cleanup path unchanged.
-    final_call = "\\t_seek_un_pause( s, was_paused );"
+    final_call = "\t_seek_un_pause( s, was_paused );"
     tail_pos = region.rfind(final_call)
     if tail_pos < 0 or "return err;" not in region[tail_pos:tail_pos+120]:
         raise RuntimeError("final seek return anchor not found")
     region = (region[:tail_pos]
-              + "\\tnova_seek_diag_v2(s,29); /* return to playback */\\n"
+              + "\tnova_seek_diag_v2(s,29); /* return to playback */\n"
               + final_call
-              + "\\n\\tnova_seek_diag_v2(s,30); /* completed */"
+              + "\n\tnova_seek_diag_v2(s,30); /* completed */"
               + region[tail_pos+len(final_call):])
     v=before+start+region+stop+after
     v=once(v,'    serprintf("NOVA_FINAL_HEARTBEAT: wallMs=%d',
