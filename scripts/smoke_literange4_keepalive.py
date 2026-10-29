@@ -5,7 +5,7 @@ Requires at least six curl-completed, validated 206 bounded ranges, from both
 native slots, and rendered playback. Reads CURLINFO_NUM_CONNECTS directly
 from final APK logcat. No URL, signed query, credential or remote IP is logged.
 """
-import argparse, http.server, json, re, shlex, tempfile, threading
+import argparse, http.server, json, re, shlex, tempfile, threading, time
 from pathlib import Path
 from smoke_direct_webdav import adb, logs, run, wait_for, PACKAGE, PLAYER
 
@@ -82,26 +82,33 @@ def run_case(media,keepalive):
         adb("reverse",f"tcp:{port}",f"tcp:{port}")
         adb("shell","am","force-stop",PACKAGE)
         adb("logcat","-c")
+        # logcat -c may race with buffered old-process entries on emulator.
+        # Require a unique marker emitted by THIS test after clear and only
+        # accept native records AFTER it; no cross-case Keep-Alive pollution.
+        marker="NOVA_KEEPALIVE_AB_"+("KEEP_" if keepalive else "CLOSE_")+str(time.monotonic_ns())
+        adb("shell","log","-p","i","-t","NOVA_KEEPALIVE_TEST",marker)
         uri=f"webdav://127.0.0.1:{port}/reuse.ts"
         adb("shell",f"am start -W -n {PLAYER} "
                     f"-a android.intent.action.VIEW -d {shlex.quote(uri)} -t video/mp2t",
                     timeout=30)
 
         def complete(log):
-            found=PATTERN.findall(log)
+            if marker not in log:
+                return False
+            tail=log[log.rfind(marker):]
+            found=PATTERN.findall(tail)
             # A fast local server can finish every 4s Range before the
-            # 1500ms periodic NET ticker fires. REBASE lanes=2 is the
-            # authoritative actual W2 activation marker; completed Range
-            # checks below still require BOTH slot=0 and slot=1.
+            # 1500ms NET ticker fires. Trust actual W2 REBASE + BOTH slots.
             two_lanes=bool(re.search(
-                r"NOVA_LITERANGE4_REBASE[^\n]*lanes=2\b",log)
-                or "NOVA_LITERANGE4_PAIR_ENABLE" in log)
+                r"NOVA_LITERANGE4_REBASE[^\n]*lanes=2\b",tail)
+                or "NOVA_LITERANGE4_PAIR_ENABLE" in tail)
             return (len(found)>=6 and two_lanes and
-                    "NOVA_STARTUP_TRACE first_frame_sink" in log)
+                    "NOVA_STARTUP_TRACE first_frame_sink" in tail)
         output=wait_for(complete,110,"real signed APK pool A/B completed transfers")
-        if "FATAL EXCEPTION" in output or "Fatal signal" in output:
+        section=output[output.rfind(marker):]
+        if "FATAL EXCEPTION" in section or "Fatal signal" in section:
             raise RuntimeError("crash while measuring keep-alive")
-        rows=PATTERN.findall(output)
+        rows=PATTERN.findall(section)
         metrics=[{"slot":int(r[0]),"at":int(r[1]),"length":int(r[2]),
                   "new":int(r[3]),"reused":int(r[4]),"conn_id":int(r[5]),
                   "connect_ms":int(r[6]),"tls_ms":int(r[7]),
