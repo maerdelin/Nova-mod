@@ -70,6 +70,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_iso_index_seek_v2.py -v
           python3 -m unittest discover -s tests -p test_iso_track_language_metadata.py -v
           python3 -m unittest discover -s tests -p test_tv_track_width_patch.py -v
+          python3 -m unittest discover -s tests -p test_tv_first_focus_layout.py -v
           python3 -m unittest discover -s tests -p test_tv_small_card_spacing_patch.py -v
           python3 -m unittest discover -s tests -p test_webdav_resume_local_only_patch.py -v
           python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v

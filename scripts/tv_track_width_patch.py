@@ -41,6 +41,15 @@ def player(s):
                 "\n\n    sget v10, Lcom/archos/mediacenter/video/R$id;->card_view:I"+
                 "\n\n    const-string v11, \""+SUBTITLE_TAG+"\""+
                 "\n\n    invoke-virtual {v1, v10, v11}, Landroid/view/View;->setTag(ILjava/lang/Object;)V")
+        if field=="mSubtitleTVCardView":
+            # card_layout.xml enables LayoutTransition on TVCardView.
+            # Its automatic child transition races ExpandAnimation's
+            # per-frame width/X writes when subtitle entries first appear.
+            # Disable ONLY the subtitle transition; retain ExpandAnimation.
+            changed+=(
+                "\n\n    # NOVA_TV_SUBTITLE_FIRST_FOCUS_LAYOUT_STABLE_V1 main card"
+                "\n\n    const/4 v10, 0x0"
+                "\n\n    invoke-virtual {v1, v10}, Landroid/view/ViewGroup;->setLayoutTransition(Landroid/animation/LayoutTransition;)V")
         m=replace1(m,anchor,changed)
     if "const-string v3" in m and "nova_tv_" in m:
         raise RuntimeError("Unexpected legacy register contamination")
@@ -225,6 +234,10 @@ def card(s):
             '    move-result-object v11\n\n'
             '    if-eqz v11, :nova_subtitle_slave_marker_done\n\n'
             '    invoke-virtual {v2, v10, v11}, Landroid/view/View;->setTag(ILjava/lang/Object;)V\n\n'
+            '    # NOVA_TV_SUBTITLE_FIRST_FOCUS_LAYOUT_STABLE_V1 mirror:\n\n'
+            '    # the XML LayoutTransition and ExpandAnimation must not compete.\n\n'
+            '    const/4 v10, 0x0\n\n'
+            '    invoke-virtual {v2, v10}, Landroid/view/ViewGroup;->setLayoutTransition(Landroid/animation/LayoutTransition;)V\n\n'
             '    :nova_subtitle_slave_marker_done\n\n'
             '    :nova_track_skip_slave_tag\n\n'+slave)
     m=replace1(m,slave,copied)
