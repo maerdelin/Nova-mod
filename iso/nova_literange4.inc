@@ -19,7 +19,10 @@
  * TLS verification and strict 206 Content-Range remain mandatory.
  */
 
-#define NOVA_LITE_RANGE_BYTES (32 * 1024 * 1024)
+/* Bounded staging shares RAW's single 128 MiB backing allocation. */
+#define NOVA_LITE_STAGE_BYTES NOVA_WH_STAGE_BYTES
+#define NOVA_LITE_HEAD_BYTES NOVA_WH_HEAD_BYTES
+#define NOVA_LITE_FUTURE_BYTES NOVA_WH_FUTURE_BYTES
 #define NOVA_LITE_SLOTS 2
 #define NOVA_LITE_SEGMENT_SECONDS 4
 #define NOVA_LITE_DATA_WAREHOUSE_BYTES (128 * 1024 * 1024)
@@ -90,7 +93,9 @@ typedef struct nova_lite_slot {
     struct nova_lite_state *owner;
     CURL *easy;
     struct curl_slist *headers;
-    uint8_t *data;
+    int page_head;
+    int page_tail;
+    int page_count;
     int state;
     int index;
     int filled;  /* all received bytes, including already delivered */
@@ -249,36 +254,112 @@ static size_t nova_lite_header(char *ptr,size_t size,size_t nmemb,void *userdata
     return len;
 }
 
+/* Stage pages are distinct from RAW-owned pages even though the
+ * physical allocation is common.  Only the head's byte cursor decides
+ * which live slot gets the 6 MiB guaranteed head quota. */
+static void nova_lite_release_pages(nova_lite_slot *p)
+{
+    if(!p || !p->owner || !p->owner->session->warehouse)return;
+    nova_shared_warehouse *w=p->owner->session->warehouse;
+    int n=p->page_head;
+    while(n>=0){
+        int next=w->pages[n].next;
+        nova_wh_page_free(w,n);
+        n=next;
+    }
+    p->page_head=p->page_tail=-1;
+    p->page_count=0;
+}
+static int nova_lite_staged_pages(nova_lite_state *e)
+{
+    int n=0;
+    for(int i=0;i<NOVA_LITE_SLOTS;i++)n+=e->slots[i].page_count;
+    return n;
+}
+static int nova_lite_can_stage(nova_lite_slot *p,int extra)
+{
+    nova_lite_state *e=p->owner;
+    nova_shared_warehouse *w=e->session->warehouse;
+    if(!w || extra<0)return 0;
+    int future=p->start>e->session->multi_committed_cursor;
+    int limit=future?(int)NOVA_WH_FUTURE_PAGES:(int)NOVA_WH_HEAD_PAGES;
+    if(p->page_count+extra>limit ||
+       nova_lite_staged_pages(e)+extra>(int)NOVA_WH_STAGE_PAGES)return 0;
+    pthread_mutex_lock(&w->lock);
+    int free_pages=w->free_count;
+    pthread_mutex_unlock(&w->lock);
+    return free_pages>=extra;
+}
+static void nova_lite_maybe_resume(nova_lite_slot *p)
+{
+    if(!p || p->state!=NOVA_MULTI_SLOT_ACTIVE || !p->paused)return;
+    nova_shared_warehouse *w=p->owner->session->warehouse;
+    if(!w)return;
+    int tail=p->page_tail;
+    int room=tail>=0?(int)NOVA_WH_PAGE_BYTES-w->pages[tail].length:0;
+    if(room<(int)NOVA_LITE_RESUME_FREE &&
+       !nova_lite_can_stage(p,1))return;
+    p->paused=0;
+    curl_easy_pause(p->easy,CURLPAUSE_CONT); /* resume SAME HTTP response */
+}
 static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
 {
-    nova_lite_slot *slot=(nova_lite_slot *)userdata;
+    nova_lite_slot *p=(nova_lite_slot *)userdata;
     size_t bytes=size*nmemb;
-    if(!slot || bytes==0)return bytes;
-    if(slot->owner->session->stopping || slot->state!=NOVA_MULTI_SLOT_ACTIVE ||
-       slot->status!=206 || !slot->range_ok || !slot->encoding_ok ||
-       bytes>(size_t)(slot->length-slot->filled))
-        return 0; /* Fail closed: invalid range must never reach FFmpeg. */
-    /* 32 MiB bounded circular handoff per long 4X response.
-     * PAUSE is backpressure, never a new HTTP request. */
-    int buffered=slot->filled-slot->delivered;
-    if(buffered<0 || buffered>NOVA_LITE_RANGE_BYTES)return 0;
-    if(bytes>(size_t)(NOVA_LITE_RANGE_BYTES-buffered)){
-        slot->paused=1;
-        return CURL_WRITEFUNC_PAUSE;
+    if(!p || !bytes)return bytes;
+    if(p->owner->session->stopping || p->state!=NOVA_MULTI_SLOT_ACTIVE ||
+       p->status!=206 || !p->range_ok || !p->encoding_ok ||
+       bytes>(size_t)(p->length-p->filled))return 0;
+    nova_shared_warehouse *w=p->owner->session->warehouse;
+    if(!w || bytes>16u*NOVA_WH_PAGE_BYTES)return 0;
+    size_t tailroom=p->page_tail>=0 ?
+        NOVA_WH_PAGE_BYTES-(size_t)w->pages[p->page_tail].length : 0;
+    size_t beyond=bytes>tailroom?bytes-tailroom:0;
+    int extra=(int)((beyond+NOVA_WH_PAGE_BYTES-1)/NOVA_WH_PAGE_BYTES);
+    if(!nova_lite_can_stage(p,extra)){
+        p->paused=1;
+        return CURL_WRITEFUNC_PAUSE; /* no partial callback consumption */
     }
-    size_t at=(size_t)slot->filled%NOVA_LITE_RANGE_BYTES;
-    size_t first=bytes;
-    if(first>NOVA_LITE_RANGE_BYTES-at)first=NOVA_LITE_RANGE_BYTES-at;
-    memcpy(slot->data+at,ptr,first);
-    if(first<bytes)memcpy(slot->data,ptr+first,bytes-first);
-    slot->filled+=(int)bytes;
-    slot->owner->received_sample_bytes+=(uint64_t)bytes;
+    int fresh[16],count=0;
+    for(int k=0;k<extra;k++){
+        int n=nova_wh_page_alloc(w,NOVA_WH_STAGE);
+        if(n<0){
+            for(int j=0;j<count;j++)nova_wh_page_free(w,fresh[j]);
+            p->paused=1;
+            return CURL_WRITEFUNC_PAUSE;
+        }
+        fresh[count++]=n;
+    }
+    const uint8_t *src=(const uint8_t *)ptr;
+    size_t left=bytes;
+    int nextnew=0;
+    while(left){
+        if(p->page_tail<0 ||
+           w->pages[p->page_tail].length==(int)NOVA_WH_PAGE_BYTES){
+            int n=fresh[nextnew++];
+            if(p->page_tail<0)p->page_head=n;
+            else w->pages[p->page_tail].next=n;
+            p->page_tail=n;
+            p->page_count++;
+        }
+        nova_wh_page *page=&w->pages[p->page_tail];
+        size_t room=NOVA_WH_PAGE_BYTES-(size_t)page->length;
+        size_t take=left<room?left:room;
+        memcpy(nova_wh_page_ptr(w,p->page_tail)+page->length,src,take);
+        page->length+=(int)take;
+        src+=take;
+        left-=take;
+    }
+    p->filled+=(int)bytes;
+    p->owner->received_sample_bytes+=(uint64_t)bytes;
     return bytes;
 }
 
 static int nova_lite_prepare(nova_session *s)
 {
     if(s->lite)return 0;
+    if(!s->warehouse)s->warehouse=nova_shared_warehouse_new();
+    if(!s->warehouse)return AVERROR(ENOMEM);
     pthread_once(&nova_lite_curl_once,nova_lite_curl_initialize);
     nova_lite_state *e=(nova_lite_state *)calloc(1,sizeof(*e));
     if(!e)return AVERROR(ENOMEM);
@@ -299,12 +380,12 @@ static int nova_lite_prepare(nova_session *s)
         nova_lite_slot *p=&e->slots[i];
         p->owner=e;
         p->index=i;
-        p->data=(uint8_t *)malloc(NOVA_LITE_RANGE_BYTES);
+        p->page_head=p->page_tail=-1;
+        p->page_count=0;
         p->easy=curl_easy_init();
-        if(!p->data || !p->easy){
+        if(!p->easy){
             for(int k=0;k<=i;++k){
                 if(e->slots[k].easy)curl_easy_cleanup(e->slots[k].easy);
-                free(e->slots[k].data);
             }
             curl_multi_cleanup(e->multi);
             free(e->request_url);
@@ -316,7 +397,7 @@ static int nova_lite_prepare(nova_session *s)
     s->lite=e;
     s->multi_buffers_ready=1;
     LOGI("NOVA_LITERANGE4_INIT workers=0 maxConnections=4 stagingBytes=%d",
-         NOVA_LITE_SLOTS*NOVA_LITE_RANGE_BYTES);
+         NOVA_LITE_STAGE_BYTES);
     return 0;
 }
 
@@ -329,6 +410,7 @@ static void nova_lite_reset_slots(nova_session *s)
         if(p->state==NOVA_MULTI_SLOT_ACTIVE)
             curl_multi_remove_handle(e->multi,p->easy);
         if(p->headers){curl_slist_free_all(p->headers);p->headers=NULL;}
+        nova_lite_release_pages(p);
         p->state=NOVA_MULTI_SLOT_EMPTY;
         p->filled=0;
         p->delivered=0;
@@ -353,6 +435,8 @@ static int nova_lite_launch(nova_lite_slot *p)
     p->filled=0;
     p->delivered=0;
     p->paused=0;
+    p->page_head=p->page_tail=-1;
+    p->page_count=0;
     snprintf(p->range_str,sizeof(p->range_str),"%" PRId64 "-%" PRId64,
              p->start,p->start+(int64_t)p->length-1);
     if(p->headers){curl_slist_free_all(p->headers);p->headers=NULL;}
@@ -672,7 +756,7 @@ static void nova_multi_set_target(nova_session *s,uint64_t target_bps)
     pthread_mutex_unlock(&s->multi_lock);
     LOGI("NOVA_LITERANGE4_TARGET bytesPerSec=%" PRIu64
          " maxLanes=4 workers=0 stagingBytes=%d",
-         target_bps,NOVA_LITE_SLOTS*NOVA_LITE_RANGE_BYTES);
+         target_bps,NOVA_LITE_STAGE_BYTES);
 }
 
 static void nova_adaptive_record_single(nova_session *s,int bytes)
@@ -733,7 +817,7 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     LOGI("NOVA_LITERANGE4_START maxLanes=%d lanes=%d threads=0"
          " at=%" PRId64 " stagingBytes=%d",
          NOVA_MULTI_MAX_LANES,lanes,start,
-         NOVA_LITE_SLOTS*NOVA_LITE_RANGE_BYTES);
+         NOVA_LITE_STAGE_BYTES);
     return 0;
 }
 
@@ -805,11 +889,16 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
     e->last_sample_ms=now;
 }
 
-static int nova_multi_read(nova_session *s,uint8_t *dst,int size)
+/* Non-ISO transfers ownership of a staged page directly to RAW.
+ * ISO/libbluray retains bytewise reads from the same staged page chain. */
+static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
+                                int *out_page)
 {
-    if(!s || !dst || size<=0 || !s->lite || !s->multi_active)
-        return NOVA_MULTI_FALLBACK;
+    if(!s || size<=0 || !s->lite || !s->multi_active ||
+       (!dst && !out_page))return NOVA_MULTI_FALLBACK;
+    if(out_page)*out_page=-1;
     nova_lite_state *e=s->lite;
+    nova_shared_warehouse *w=s->warehouse;
     int64_t began=nova_iso_uptime_ms();
     while(!s->stopping && s->multi_run){
         if(s->multi_committed_cursor>=s->upstream_size)return AVERROR_EOF;
@@ -827,37 +916,41 @@ static int nova_multi_read(nova_session *s,uint8_t *dst,int size)
             current->state==NOVA_MULTI_SLOT_READY) &&
            current->status==206 && current->range_ok &&
            current->encoding_ok){
-            /* Commit validated contiguous bytes immediately, even while
-             * the remainder of this 4X HTTP Range is still arriving. */
             int offset=(int)(s->multi_committed_cursor-current->start);
             if(offset!=current->delivered)return NOVA_MULTI_FALLBACK;
+            int n=current->page_head;
             int available=current->filled-current->delivered;
-            if(available>0){
-                int take=available<size?available:size;
-                size_t at=(size_t)current->delivered%NOVA_LITE_RANGE_BYTES;
-                size_t first=(size_t)take;
-                if(first>NOVA_LITE_RANGE_BYTES-at)first=NOVA_LITE_RANGE_BYTES-at;
-                memcpy(dst,current->data+at,first);
-                if(first<(size_t)take)
-                    memcpy(dst+first,current->data,(size_t)take-first);
+            if(available>0 && n>=0){
+                nova_wh_page *page=&w->pages[n];
+                int unread=page->length-page->consumed;
+                if(unread<=0)return NOVA_MULTI_FALLBACK;
+                int take=out_page?unread:(unread<size?unread:size);
+                if(out_page && unread>size)return NOVA_MULTI_FALLBACK;
+                if(!out_page)memcpy(dst,nova_wh_page_ptr(w,n)+page->consumed,
+                                    (size_t)take);
                 current->delivered+=take;
                 s->multi_committed_cursor+=take;
                 if(s->mode==NOVA_MODE_FILE)s->file_cursor=s->multi_committed_cursor;
                 e->committed_sample_bytes+=(uint64_t)take;
+                if(out_page || page->consumed+take==page->length){
+                    current->page_head=page->next;
+                    if(current->page_head<0)current->page_tail=-1;
+                    current->page_count--;
+                    page->next=-1;
+                    if(out_page){
+                        page->state=NOVA_WH_RAW;
+                        page->consumed=0;
+                        *out_page=n;
+                    }else nova_wh_page_free(w,n);
+                }else page->consumed+=take;
                 if(current->state==NOVA_MULTI_SLOT_READY &&
                    current->delivered==current->length){
                     current->state=NOVA_MULTI_SLOT_EMPTY;
                     current->filled=0;
                     current->delivered=0;
-                } else if(current->state==NOVA_MULTI_SLOT_ACTIVE &&
-                          current->paused &&
-                          NOVA_LITE_RANGE_BYTES-(current->filled-current->delivered)
-                              >=NOVA_LITE_RESUME_FREE){
-                    /* Reusing the same easy handle resumes the very same
-                     * HTTP response, not a fresh 1 MiB request. */
-                    current->paused=0;
-                    curl_easy_pause(current->easy,CURLPAUSE_CONT);
-                }
+                    current->page_head=current->page_tail=-1;
+                    current->page_count=0;
+                }else nova_lite_maybe_resume(current);
                 nova_lite_schedule(s);
                 int64_t waited=nova_iso_uptime_ms()-began;
                 nova_lite_telemetry(s,waited>INT32_MAX?INT32_MAX:(int)waited);
@@ -871,8 +964,6 @@ static int nova_multi_read(nova_session *s,uint8_t *dst,int size)
         CURLMcode rc=curl_multi_perform(e->multi,&running);
         if(rc!=CURLM_OK)return NOVA_MULTI_FALLBACK;
         nova_lite_complete(s);
-        /* Refresh telemetry while a long 4X Range is blocked.
-         * Otherwise a stalled segment never calls successful-read telemetry. */
         int64_t tick=nova_iso_uptime_ms();
         if(tick-e->last_starve_tick_ms>=NOVA_LITE_WAIT_TRIGGER_MS &&
            tick-began>=NOVA_LITE_WAIT_TRIGGER_MS){
@@ -885,12 +976,19 @@ static int nova_multi_read(nova_session *s,uint8_t *dst,int size)
             rc=curl_multi_poll(e->multi,NULL,0,NOVA_LITE_POLL_MS,&fds);
             if(rc!=CURLM_OK)return NOVA_MULTI_FALLBACK;
         }else{
-            /* A completed/errored slot can be consumed on the next pass. */
             if(e->running==0 && s->multi_next_offset>=s->upstream_size &&
                !current)return NOVA_MULTI_FALLBACK;
         }
     }
     return AVERROR_EXIT;
+}
+static int nova_multi_read(nova_session *s,uint8_t *dst,int size)
+{
+    return nova_multi_read_core(s,dst,size,NULL);
+}
+static int nova_multi_take_page(nova_session *s,int *page,int max_bytes)
+{
+    return nova_multi_read_core(s,NULL,max_bytes,page);
 }
 
 static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
@@ -929,7 +1027,6 @@ static void nova_multi_destroy(nova_session *s)
             nova_lite_slot *p=&e->slots[i];
             if(p->headers)curl_slist_free_all(p->headers);
             if(p->easy)curl_easy_cleanup(p->easy);
-            free(p->data);
         }
         if(e->multi)curl_multi_cleanup(e->multi);
         free(e->request_url);
