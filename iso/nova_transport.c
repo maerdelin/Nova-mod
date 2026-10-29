@@ -1571,6 +1571,9 @@ void nova_transport_page_release(void *warehouse_data,int page)
     nova_shared_warehouse *w=nova_shared_warehouse_from_data(warehouse_data);
     nova_wh_page_free(w,page);
 }
+/* Forward declaration: the page fallback retains the original 403/Seek logic. */
+int nova_transport_read(uint64_t generation,uint8_t *dst,int size);
+
 __attribute__((visibility("default")))
 int nova_transport_page_take(uint64_t generation, int *out_page, int max_bytes)
 {
