@@ -1553,6 +1553,25 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
  * libbluray, so the caller uses the legacy read path for ISO.
  * The RAW owner keeps a shared-warehouse reference across session close. */
 __attribute__((visibility("default")))
+void *nova_transport_page_data(void *warehouse_data,int page)
+{
+    nova_shared_warehouse *w=nova_shared_warehouse_from_data(warehouse_data);
+    return nova_wh_page_ptr(w,page);
+}
+__attribute__((visibility("default")))
+int nova_transport_page_length(void *warehouse_data,int page)
+{
+    nova_shared_warehouse *w=nova_shared_warehouse_from_data(warehouse_data);
+    if(!w || page<0 || page>=(int)NOVA_WH_PAGES)return -1;
+    return w->pages[page].length;
+}
+__attribute__((visibility("default")))
+void nova_transport_page_release(void *warehouse_data,int page)
+{
+    nova_shared_warehouse *w=nova_shared_warehouse_from_data(warehouse_data);
+    nova_wh_page_free(w,page);
+}
+__attribute__((visibility("default")))
 int nova_transport_page_take(uint64_t generation, int *out_page, int max_bytes)
 {
     if(!out_page || max_bytes<=0)return AVERROR(EINVAL);
