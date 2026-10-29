@@ -80,21 +80,29 @@ def main():
                 "NOVA_LITERANGE4_RANGE_ERROR status=403" in t[t.rfind(marker):] and
                 "NOVA_MULTI_HTTP403_COOLDOWN attempt=1 waitMs=4000" in t[t.rfind(marker):],
                 110,"injected 403 and cooldown")
-            text=wait_for(lambda t:marker in t and
-                "NOVA_NONISO_SINGLE_GET_V1:" in t[t.rfind(marker):] and
-                "NOVA_MULTI_HTTP403_RETRY attempt=1" in t[t.rfind(marker):] and
-                "NOVA_LITERANGE4_PAIR_ENABLE" in t[t.rfind(marker):] and
-                re.search(r"NOVA_LITERANGE4_NET lanes=2[^\n]*pending=2",t[t.rfind(marker):]),
-                150,"valid single 206 and paired Range reactivation")
+            # This test plays TS (FFmpeg AVIO fallback), not MKV (Java
+            # DirectRangeHttp). Both must prove open-ended 206 against the
+            # actual HTTP server; requiring an MKV-only log tag is invalid.
+            def recovered(logcat):
+                if marker not in logcat:
+                    return False
+                tail=logcat[logcat.rfind(marker):]
+                with lock:
+                    verified_single=counts["single_after"]>=1
+                    verified_pair=counts["bounded_after"]>=2
+                return (verified_single and verified_pair
+                    and "NOVA_MULTI_HTTP403_RETRY attempt=1" in tail
+                    and "NOVA_LITERANGE4_PAIR_ENABLE" in tail
+                    and re.search(r"NOVA_LITERANGE4_NET lanes=2[^\n]*pending=2",tail))
+            text=wait_for(recovered,95,
+                "server-verified single HTTP 206 and native paired Range reactivation")
             section=text[text.rfind(marker):]
-            if not re.search(r"NOVA_NONISO_SINGLE_GET_V1:[^\n]*http=206",section):
-                raise RuntimeError("canonical single GET 206 not observed")
             with lock:snapshot=dict(counts)
             if snapshot["denied"]!=1 or snapshot["single_after"]<1 or snapshot["bounded_after"]<2:
                 raise RuntimeError("real server request trace inadequate: "+str(snapshot))
             if "FATAL EXCEPTION" in section or "Fatal signal" in section:
                 raise RuntimeError("app crashed during HTTP403 recovery")
-            result.update(status="PASS",requests=snapshot,java_206=True,w2_restored=True)
+            result.update(status="PASS",requests=snapshot,single_fallback_http206=True,w2_restored=True)
             print("NOVA_HTTP403_REAL_RECOVERY_PASS="+json.dumps(result))
     except Exception as exc:
         result["error"]=str(exc);raise
