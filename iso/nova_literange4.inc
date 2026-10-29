@@ -924,6 +924,14 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
                 nova_wh_page *page=&w->pages[n];
                 int unread=page->length-page->consumed;
                 if(unread<=0)return NOVA_MULTI_FALLBACK;
+                /* Preserve page density: wait for a full 64 KiB page
+                 * while an HTTP response is still delivering.  Publishing
+                 * 16 KiB libcurl callbacks as separate pages would consume
+                 * the physical page pool 4x faster than its byte budget. */
+                if(out_page && page->length<(int)NOVA_WH_PAGE_BYTES &&
+                   current->state==NOVA_MULTI_SLOT_ACTIVE &&
+                   current->filled<current->length)
+                    goto shared42_await_more;
                 int take=out_page?unread:(unread<size?unread:size);
                 if(out_page && unread>size)return NOVA_MULTI_FALLBACK;
                 if(!out_page)memcpy(dst,nova_wh_page_ptr(w,n)+page->consumed,
@@ -959,6 +967,7 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
         }
         if(current && current->state==NOVA_MULTI_SLOT_ERROR)
             return NOVA_MULTI_FALLBACK;
+shared42_await_more:
         nova_lite_schedule(s);
         int running=0;
         CURLMcode rc=curl_multi_perform(e->multi,&running);
