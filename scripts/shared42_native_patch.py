@@ -103,6 +103,10 @@ def patch(text):
               "    raw->capacity_bytes = raw->shared_pages ? 86 * 1024 * 1024 : NOVA_RAW_FALLBACK_CAP_BYTES;\n    if(raw->shared_pages){\n        int cap=(int)raw->capacity_bytes;\n        if(resume_bytes>cap)resume_bytes=cap;\n        if(low_bytes>=resume_bytes)low_bytes=resume_bytes>2?resume_bytes/2:1;\n        raw->resume_bytes=resume_bytes;\n        raw->low_bytes=low_bytes;\n    }\n    pthread_cond_broadcast(&raw->can_write);","policy capacity")
     text=once(text,"    raw->s->rebuffer_capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;",
               "    raw->s->rebuffer_capacity_bytes = raw->capacity_bytes;","policy report")
+    text=once(text,
+              "        int64_t ask = room < contiguous ? room : contiguous;",
+              "        int64_t ask = raw->shared_pages ? room : (room < contiguous ? room : contiguous);",
+              "shared pages ignore byte-ring wrap")
     text=once(text,"        if( ask > NOVA_RAW_IO_BYTES ) ask = NOVA_RAW_IO_BYTES;",
               "        if( ask > (raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES) )\n            ask = raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES;","producer ask")
     old="""        int got = avio_read(raw->source, raw->ring + write_off, want);
