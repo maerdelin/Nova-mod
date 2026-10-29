@@ -111,6 +111,10 @@ def patch(text):
               "        if( ask > (raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES) )\n            ask = raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES;","producer ask")
     old="""        int got = avio_read(raw->source, raw->ring + write_off, want);
         pthread_mutex_unlock(&raw->source_mutex);
+        if(got>0 && raw->shared_pages && raw->source && raw->source->direct){
+            raw->source->error=0;
+            raw->source->eof_reached=0;
+        }
 
         pthread_mutex_lock(&raw->mutex);
         if( generation != raw->generation ) {
