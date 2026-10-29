@@ -25,13 +25,13 @@ def main():
             media=Path(td)/"history.ts"
             run(["ffmpeg","-v","error","-y","-f","lavfi","-i",
                  "testsrc2=size=640x360:rate=25","-f","lavfi","-i",
-                 "sine=frequency=550:sample_rate=48000","-t","150",
+                 "sine=frequency=550:sample_rate=48000","-t","300",
                  "-c:v","libx264","-preset","ultrafast","-pix_fmt","yuv420p",
                  "-g","25","-b:v","4M","-c:a","aac","-b:a","128k",
-                 "-f","mpegts",str(media)],timeout=180)
+                 "-f","mpegts",str(media)],timeout=300)
             total=media.stat().st_size
-            if total<65*1024*1024:
-                raise RuntimeError("TS test fixture unexpectedly small")
+            if total<125*1024*1024:
+                raise RuntimeError("TS test fixture too short for a 15s cooldown and continued native reads")
             class Handler(http.server.BaseHTTPRequestHandler):
                 protocol_version="HTTP/1.1"
                 def log_message(self,*_):
