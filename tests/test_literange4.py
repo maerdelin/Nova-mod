@@ -36,7 +36,7 @@ class LiteRange4Tests(unittest.TestCase):
                       'NOVA_LITERANGE4_PIECE',
                       'current->state==NOVA_MULTI_SLOT_ACTIVE',
                       'CURL_WRITEFUNC_PAUSE',
-                      'curl_easy_pause(current->easy,CURLPAUSE_CONT)',
+                      'curl_easy_pause(p->easy,CURLPAUSE_CONT)',
                       'wireBps=', 'NOVA_LITERANGE4_PAIR_HOLD',
                       'NOVA_LITERANGE4_REBASE',
                       'NOVA_LITERANGE4_PAIR_ENABLE',
