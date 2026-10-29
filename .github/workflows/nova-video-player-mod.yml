@@ -89,6 +89,16 @@ jobs:
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo | sudo tee /usr/local/bin/repo >/dev/null
           sudo chmod a+x /usr/local/bin/repo
 
+      - name: Inspect original TV popup focus and animation smali
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f inputs/official.apk -o work/tv-forensics
+          python3 scripts/tv_focus_forensics.py work/tv-forensics reports/tv-focus-forensics
+          test -s reports/tv-focus-forensics/original/TVCardView.smali.txt
+          test -s 'reports/tv-focus-forensics/original/TVCardView$ExpandAnimation.smali.txt'
+          test -s reports/tv-focus-forensics/original/TVMenuAdapter.smali.txt
+
       - name: Resolve and download official latest stable APK
         id: upstream
         env:
