@@ -95,6 +95,35 @@ typedef struct nova_iso_track_lang {
     char lang[4];
 } nova_iso_track_lang;
 
+/* Shared 128 MiB physical warehouse: 86 MiB committed RAW + 42 MiB staged.
+ * The owner/session and the libavos reader independently hold references.
+ * Keeping the mapping alive across a retiring session prevents UAF on seek/
+ * close while the reader is draining or stopping. */
+#define NOVA_SHARED_WAREHOUSE_BYTES (128u * 1024u * 1024u)
+#define NOVA_SHARED_STAGE_BYTES (42u * 1024u * 1024u)
+#define NOVA_SHARED_RAW_BYTES (NOVA_SHARED_WAREHOUSE_BYTES - NOVA_SHARED_STAGE_BYTES)
+typedef struct nova_shared_warehouse {
+    unsigned refs;
+    uint8_t data[NOVA_SHARED_WAREHOUSE_BYTES];
+} nova_shared_warehouse;
+
+static nova_shared_warehouse *nova_shared_warehouse_new(void)
+{
+    nova_shared_warehouse *w=(nova_shared_warehouse *)malloc(sizeof(*w));
+    if(w)__atomic_store_n(&w->refs,1u,__ATOMIC_RELEASE);
+    return w;
+}
+static void nova_shared_warehouse_unref(nova_shared_warehouse *w)
+{
+    if(w && __atomic_sub_fetch(&w->refs,1u,__ATOMIC_ACQ_REL)==0u)free(w);
+}
+static nova_shared_warehouse *nova_shared_warehouse_from_data(void *data)
+{
+    if(!data)return NULL;
+    return (nova_shared_warehouse *)((uint8_t *)data -
+                 offsetof(nova_shared_warehouse,data));
+}
+
 typedef struct nova_session {
     uint64_t generation;
     volatile int stopping;
@@ -170,6 +199,7 @@ typedef struct nova_session {
     int64_t adaptive_last_network_ms;
     int adaptive_lanes;
     struct nova_lite_state *lite;
+    nova_shared_warehouse *warehouse; /* One owner ref; RAW borrows another. */
     nova_multi_slot multi_slots[NOVA_MULTI_SLOT_COUNT];
     nova_multi_worker multi_workers[NOVA_MULTI_MAX_LANES];
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
@@ -1242,6 +1272,28 @@ static void session_release(nova_session *s)
     pthread_mutex_unlock(&g_lock);
 }
 
+/* Raw prefetcher obtains the exact same 128 MiB allocation as LiteRange.
+ * The returned pointer is owned by the caller until pool_release(), even
+ * after this session is retired.  RAW must only use the first 86 MiB. */
+__attribute__((visibility("default")))
+void *nova_transport_warehouse_acquire(uint64_t generation)
+{
+    nova_session *s=session_acquire(generation);
+    if(!s)return NULL;
+    pthread_mutex_lock(&s->io_lock);
+    if(!s->warehouse)s->warehouse=nova_shared_warehouse_new();
+    nova_shared_warehouse *w=s->warehouse;
+    if(w)__atomic_add_fetch(&w->refs,1u,__ATOMIC_ACQ_REL);
+    pthread_mutex_unlock(&s->io_lock);
+    session_release(s);
+    return w ? (void *)w->data : NULL;
+}
+__attribute__((visibility("default")))
+void nova_transport_warehouse_release(void *data)
+{
+    nova_shared_warehouse_unref(nova_shared_warehouse_from_data(data));
+}
+
 static void session_free(nova_session *s)
 {
     if (!s)
@@ -1273,6 +1325,8 @@ static void session_free(nova_session *s)
     free(s->upstream_url);
     free(s->upstream_headers);
     nova_file_release_java(s);
+    nova_shared_warehouse_unref(s->warehouse);
+    s->warehouse=NULL;
     free(s);
 }
 
