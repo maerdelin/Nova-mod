@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
@@ -140,6 +140,7 @@ jobs:
           python3 scripts/v66_subtitle_jni_patch.py --native native-src/native/avos
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
+          python3 scripts/shared42_native_patch.py --native native-src/native/avos
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
           python3 scripts/main655_ts_eof_lead_gate.py --native native-src/native/avos --report reports/main655-ts-eof-leadgate.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
