@@ -94,7 +94,7 @@ def run_case(media,keepalive):
             # authoritative actual W2 activation marker; completed Range
             # checks below still require BOTH slot=0 and slot=1.
             two_lanes=bool(re.search(
-                r"NOVA_LITERANGE4_REBASE[^\\n]*lanes=2\\b",log)
+                r"NOVA_LITERANGE4_REBASE[^\n]*lanes=2\b",log)
                 or "NOVA_LITERANGE4_PAIR_ENABLE" in log)
             return (len(found)>=6 and two_lanes and
                     "NOVA_STARTUP_TRACE first_frame_sink" in log)
