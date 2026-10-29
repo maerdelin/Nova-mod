@@ -141,6 +141,7 @@ jobs:
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/shared42_native_patch.py --native native-src/native/avos
+          python3 scripts/shared42_pool_audit_v2_patch.py --transport iso/nova_transport.c
           python3 scripts/playback_completion_patch.py native-src/native/avos --report reports/playback-completion-native.json
           python3 scripts/main655_ts_eof_lead_gate.py --native native-src/native/avos --report reports/main655-ts-eof-leadgate.json
           python3 scripts/ts_bitrate_patch.py native-src/native/avos --report reports/ts-bitrate.json
@@ -160,6 +161,7 @@ jobs:
           python3 scripts/seek_sfdec2_frame_return_patch.py --native native-src/native/avos
           grep -Fq 'NOVA_SFDEC2_NO_OUTPUT_RETURN_V1' native-src/native/avos/Source/codec_sfdec2.c
           python3 scripts/seek_engine_diag_patch.py --native native-src/native/avos
+          python3 scripts/seek_stall_forensics_v2_patch.py --native native-src/native/avos
           python3 scripts/seek_codec_pool_diag_patch.py --native native-src/native/avos
           grep -Fq 'NOVA_SUB_HISTORY_DISABLED_ALL_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_LATE_STALL_SELF_HEAL_V1' native-src/native/avos/Source/codec_sfdec2.c
