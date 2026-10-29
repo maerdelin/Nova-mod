@@ -1549,6 +1549,50 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
     return s;
 }
 
+/* Zero-copy page handoff for ordinary WebDAV files.  ISO goes through
+ * libbluray, so the caller uses the legacy read path for ISO.
+ * The RAW owner keeps a shared-warehouse reference across session close. */
+__attribute__((visibility("default")))
+int nova_transport_page_take(uint64_t generation, int *out_page, int max_bytes)
+{
+    if(!out_page || max_bytes<=0)return AVERROR(EINVAL);
+    *out_page=-1;
+    nova_session *s=session_acquire(generation);
+    if(!s)return AVERROR_EXIT;
+    pthread_mutex_lock(&s->io_lock);
+    int ret=NOVA_MULTI_FALLBACK;
+    if(s->stopping)ret=AVERROR_EXIT;
+    else if(s->mode==NOVA_MODE_FILE && s->multi_active &&
+            s->multi_http_ready && !s->multi_seek_guard){
+        ret=nova_multi_take_page(s,out_page,max_bytes);
+    }
+    /* Every fallback still uses original nova_transport_read so 403,
+     * 429, MKV single GET, and short seek gates are unchanged. */
+    if(ret==NOVA_MULTI_FALLBACK && !s->stopping){
+        if(!s->warehouse)s->warehouse=nova_shared_warehouse_new();
+        nova_shared_warehouse *w=s->warehouse;
+        int n=nova_wh_page_alloc(w,NOVA_WH_RAW);
+        if(n>=0){
+            pthread_mutex_unlock(&s->io_lock);
+            session_release(s);
+            int size=max_bytes<(int)NOVA_WH_PAGE_BYTES?
+                max_bytes:(int)NOVA_WH_PAGE_BYTES;
+            int got=nova_transport_read(generation,nova_wh_page_ptr(w,n),size);
+            if(got>0){
+                w->pages[n].length=got;
+                *out_page=n;
+                return got;
+            }
+            nova_wh_page_free(w,n);
+            return got;
+        }
+        ret=AVERROR(ENOMEM);
+    }
+    pthread_mutex_unlock(&s->io_lock);
+    session_release(s);
+    return ret;
+}
+
 __attribute__((visibility("default")))
 int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
 {
