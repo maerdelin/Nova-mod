@@ -110,14 +110,6 @@ def patch(text):
     text=once(text,"        if( ask > NOVA_RAW_IO_BYTES ) ask = NOVA_RAW_IO_BYTES;",
               "        if( ask > (raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES) )\n            ask = raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES;","producer ask")
     old="""        int got = avio_read(raw->source, raw->ring + write_off, want);
-        /* page_take bypasses avio_read(), so the source AVIO's
-         * logical position must still advance. Otherwise FFmpeg may
-         * seek based on an old offset and skip required MKV GOPs. */
-        if(got>0 && raw->shared_pages && raw->source){
-            raw->source->pos+=got;
-            raw->source->buf_ptr=raw->source->buffer;
-            raw->source->buf_end=raw->source->buffer;
-        }
         pthread_mutex_unlock(&raw->source_mutex);
         if(got>0 && raw->shared_pages && raw->source && raw->source->direct){
             raw->source->error=0;
@@ -136,6 +128,14 @@ def patch(text):
         int got=raw->shared_pages ?
             raw->page_take(raw->transport_generation,&incoming_page,want) :
             avio_read(raw->source, raw->ring + write_off, want);
+        /* page_take bypasses avio_read(), so the source AVIO's
+         * logical position must still advance. Otherwise FFmpeg may
+         * seek based on an old offset and skip required MKV GOPs. */
+        if(got>0 && raw->shared_pages && raw->source){
+            raw->source->pos+=got;
+            raw->source->buf_ptr=raw->source->buffer;
+            raw->source->buf_end=raw->source->buffer;
+        }
         pthread_mutex_unlock(&raw->source_mutex);
 
         pthread_mutex_lock(&raw->mutex);
