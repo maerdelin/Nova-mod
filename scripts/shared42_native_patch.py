@@ -100,7 +100,7 @@ def patch(text):
 }"""
     text=once(text,old,new,"shared reset")
     text=once(text,"    raw->capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;\n    pthread_cond_broadcast(&raw->can_write);",
-              "    raw->capacity_bytes = raw->shared_pages ? 86 * 1024 * 1024 : NOVA_RAW_FALLBACK_CAP_BYTES;\n    pthread_cond_broadcast(&raw->can_write);","policy capacity")
+              "    raw->capacity_bytes = raw->shared_pages ? 86 * 1024 * 1024 : NOVA_RAW_FALLBACK_CAP_BYTES;\n    if(raw->shared_pages){\n        int cap=(int)raw->capacity_bytes;\n        if(resume_bytes>cap)resume_bytes=cap;\n        if(low_bytes>=resume_bytes)low_bytes=resume_bytes>2?resume_bytes/2:1;\n        raw->resume_bytes=resume_bytes;\n        raw->low_bytes=low_bytes;\n    }\n    pthread_cond_broadcast(&raw->can_write);","policy capacity")
     text=once(text,"    raw->s->rebuffer_capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;",
               "    raw->s->rebuffer_capacity_bytes = raw->capacity_bytes;","policy report")
     text=once(text,"        if( ask > NOVA_RAW_IO_BYTES ) ask = NOVA_RAW_IO_BYTES;",
