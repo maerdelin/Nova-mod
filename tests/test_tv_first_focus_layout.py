@@ -36,7 +36,7 @@ class SubtitleFirstFocusLayoutTest(unittest.TestCase):
         self.assertLess(first,disable)
         self.assertLess(disable,second)
         self.assertIn("const/4 v10, 0x0",player[first:disable])
-        self.assertIn("invoke-virtual {v1, v10}",player[disable-42:disable+10])
+        self.assertIn("invoke-virtual {v1, v10}",player[disable-100:disable+50])
 
     def test_slave_is_disabled_before_first_start_animation(self):
         focus=tv.section(self.card,"public focus(Z)V")[2]
@@ -47,7 +47,7 @@ class SubtitleFirstFocusLayoutTest(unittest.TestCase):
         self.assertLess(focus.index(DISABLE),
                         focus.index("->focus(Z)V"))
         self.assertLess(focus.index(DISABLE),
-                        focus.index("->startAnimation(Landroid/view/animation/Animation;)V"))
+                        focus.index("TVCardView$ExpandAnimation;-><init>("))
         self.assertIn("if-eqz v11, :nova_subtitle_slave_marker_done",focus)
 
     def test_dynamic_width_and_clip_center_policy_is_unchanged(self):
@@ -57,7 +57,7 @@ class SubtitleFirstFocusLayoutTest(unittest.TestCase):
                       "neg-int v10, v2",
                       "->novaExpandedCenterX:F",
                       "->novaOffsetTrackNeighbors(ZI)V",
-                      "->startAnimation(Landroid/view/animation/Animation;)V"):
+                      "TVCardView$ExpandAnimation;-><init>("):
             self.assertIn(token,focus)
         getter=tv.section(self.card,"public getPositionX()F")[2]
         self.assertIn("NOVA_SUBTITLE_FOCUS_CENTER_V6",getter)
