@@ -437,7 +437,8 @@ static void *nova_raw_thread(void *opaque)
          * requests RAW stop before parser join. Never spin AVERROR_EXIT in the
          * transient 50 ms retry loop.
          */
-        if( !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||
+        if( got == AVERROR_EXIT ||
+            !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||
             (raw->s && stream_abort(raw->s)) ) {
             __atomic_store_n( &raw->run, 0, __ATOMIC_RELEASE );
             raw->error = AVERROR_EXIT;

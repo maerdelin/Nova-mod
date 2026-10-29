@@ -47,7 +47,7 @@ class LiteRange4Tests(unittest.TestCase):
 
     def test_data_warehouse_budget_and_shutdown(self):
         raw=(ROOT/"scripts/native_rebuffer_patch.py").read_text()
-        self.assertIn("NOVA_RAW_FALLBACK_CAP_BYTES   (64 * 1024 * 1024)",raw)
+        self.assertIn("NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)",raw)
         self.assertIn("NOVA_LITE_RANGE_BYTES (32 * 1024 * 1024)",self.lite)
         self.assertIn("NOVA_LITE_SLOTS 2",self.lite)
         self.assertIn("got == AVERROR_EXIT",raw)
