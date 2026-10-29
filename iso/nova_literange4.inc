@@ -545,9 +545,12 @@ static void nova_lite_complete(nova_session *s)
             (uint64_t)(tls_end_us-connect_us)/1000:0;
         uint64_t first_byte_ms=ttfb_us>0?(uint64_t)ttfb_us/1000:0;
         uint64_t duration_ms=total_us>0?(uint64_t)total_us/1000:0;
-        /* A preconnect failure with NUM_CONNECTS=0 is not reuse. */
-        int reused=new_connections==0 && redirects==0 && code==206 &&
-                   msg->data.result==CURLE_OK && p->range_ok && p->encoding_ok;
+        /* NUM_CONNECTS accounts for all hops in a redirected transfer:
+         * redirects=1 is NOT evidence of a new socket. Count reuse only
+         * after a complete verified final 206; failed preconnect is not reuse. */
+        int valid206=code==206 && msg->data.result==CURLE_OK &&
+                     p->range_ok && p->encoding_ok && p->filled==p->length;
+        int reused=valid206 && new_connections==0;
         e->metric_requests++;
         e->metric_new_connections+=(uint64_t)new_connections;
         if(reused)e->metric_reused_requests++;
@@ -582,17 +585,35 @@ static void nova_lite_complete(nova_session *s)
             /* Following HTTP403, promote to W2 only after one verified 206.
              * After eight clean paired segments, clear the backoff history. */
             if(s->multi_http403_failures){
-                e->successful_ranges++;
-                if(s->multi_active_lanes==2 && e->successful_ranges>=8){
-                    if(s->multi_backoff_status==403)
-                        LOGI("NOVA_MULTI_HTTP403_RECOVERED validRanges=%u",
-                             e->successful_ranges);
-                    else
-                        LOGI("NOVA_MULTI_RANGE_RECOVERED validRanges=%u",
-                             e->successful_ranges);
+                /* Reset limiter history only after sustained error-free time.
+                 * Eight clean ranges prove data integrity, NOT that WebDAV
+                 * has stopped rate-limiting us for the next few seconds. */
+                int64_t now=nova_iso_uptime_ms();
+                if(s->multi_backoff_last_failure_ms>0 &&
+                   now>=s->multi_backoff_last_failure_ms &&
+                   now-s->multi_backoff_last_failure_ms>=NOVA_MULTI_BACKOFF_RESET_MS){
+                    LOGI("NOVA_MULTI_RANGE_HISTORY_CLEAR quietMs=%" PRId64
+                         " priorFailures=%u",
+                         now-s->multi_backoff_last_failure_ms,
+                         s->multi_http403_failures);
                     s->multi_http403_failures=0;
                     s->multi_http403_retry_ms=0;
+                    s->multi_backoff_last_failure_ms=0;
+                    s->multi_backoff_recovered_logged=0;
                     s->multi_backoff_status=0;
+                }else{
+                    e->successful_ranges++;
+                    if(s->multi_active_lanes==2 && e->successful_ranges>=8 &&
+                       !s->multi_backoff_recovered_logged){
+                        if(s->multi_backoff_status==403)
+                            LOGI("NOVA_MULTI_HTTP403_RECOVERED validRanges=%u",
+                                 e->successful_ranges);
+                        else
+                            LOGI("NOVA_MULTI_RANGE_RECOVERED validRanges=%u",
+                                 e->successful_ranges);
+                        /* Mark this epoch healthy, but retain backoff tier. */
+                        s->multi_backoff_recovered_logged=1;
+                    }
                 }
             }
             /* A piece may already be fully consumed before CURLMSG_DONE. */
@@ -684,7 +705,8 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     /* This variant has exactly two slots. Even a seek restoring 4 old
      * lanes must be capped at two when the new epoch is created. */
     lanes=lanes>2?2:lanes;
-    if(s->adaptive_target_bps>0 && !s->multi_http403_failures)lanes=2;
+    if(s->multi_http403_failures)lanes=1; /* safe W1 after backoff/seek */
+    else if(s->adaptive_target_bps>0)lanes=2;
     s->multi_active_lanes=lanes;
     s->adaptive_lanes=lanes;
     s->multi_committed_cursor=start;
@@ -762,8 +784,16 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
     /* W=2 only, never the obsolete 1->2->3->4 escalation.
      * Start second lane once real X is known; completed future work
      * remains a reservation until prefix is committed. */
+    /* A repeat denial needs two verified full 206s before W2; the
+     * first denial keeps the previously proven single-range rearm rule.
+     * Never upgrade just because time has elapsed or single GET opened. */
+    unsigned required_valid=s->multi_http403_failures>1?2:1;
     if(target>0 && s->multi_active_lanes<2 && !s->multi_seek_guard &&
-       (!s->multi_http403_failures || e->successful_ranges>=1)){
+       (!s->multi_http403_failures ||
+        e->successful_ranges>=required_valid)){
+        if(s->multi_http403_failures)
+            LOGI("NOVA_MULTI_PAIR_REARM verified=%u required=%u failures=%u",
+                 e->successful_ranges,required_valid,s->multi_http403_failures);
         s->multi_active_lanes=2;
         LOGI("NOVA_LITERANGE4_PAIR_ENABLE x=%" PRIu64
              " from=1 to=2",target);

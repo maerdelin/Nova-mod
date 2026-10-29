@@ -68,10 +68,12 @@ class LiteRange4Tests(unittest.TestCase):
                       's->file_cursor < s->upstream_size',
                       'nova_multi_stop(s, "lane-error", 1)'):
             self.assertIn(token, self.transport)
-        for token in ("e->successful_ranges>=1",
+        for token in ("e->successful_ranges>=required_valid",
+                      "required_valid=s->multi_http403_failures>1?2:1",
                       "NOVA_MULTI_HTTP403_RECOVERED",
+                      "NOVA_MULTI_PAIR_REARM",
                       "CURLINFO_REDIRECT_COUNT",
-                      "!s->multi_http403_failures"):
+                      "if(s->multi_http403_failures)lanes=1"):
             self.assertIn(token, self.lite)
         self.assertIn("n == 1 ? 4000 : n == 2 ? 15000 : 60000", self.transport)
 
