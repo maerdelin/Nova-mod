@@ -38,7 +38,13 @@ class DirectLifecycleTests(unittest.TestCase):
 
     def test_native_close_drains_calls_and_preserves_new_generation(self):
         source = (ROOT / 'iso/nova_transport.c').read_text()
-        acquire_free = source[source.index('static nova_session *session_acquire'):source.index('static nova_session *session_create')]
+        # Extract only the lifecycle functions. Shared-page transport ABI
+        # exports are tested separately and require the real page allocator.
+        start = source.index('static nova_session *session_acquire')
+        exposed = source.index('/* Raw prefetcher', start)
+        cleanup = source.index('static void session_free', exposed)
+        finish = source.index('static nova_session *session_create', cleanup)
+        acquire_free = source[start:exposed] + source[cleanup:finish]
         close = source[source.index('static void transport_close'):source.index('JNIEXPORT void JNICALL', source.index('static void transport_close'))]
         release = source[source.index('static void nova_iso_meta_release'):source.index('static int nova_iso_meta_read')]
         harness = r'''
@@ -68,6 +74,7 @@ typedef struct nova_session {
     int iso_meta_active;
     char *upstream_url;
     char *upstream_headers;
+    void *warehouse;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
 } nova_session;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -87,6 +94,9 @@ static void log_event(const char *format, ...) {
 static void bd_close(void *p) { (void)p; }
 static void nova_file_release_java(nova_session *s) { (void)s; }
 static void nova_multi_destroy(nova_session *s) { (void)s; }
+/* The host lifecycle harness does not exercise page allocation; it
+ * verifies that the session relinquishes its one warehouse reference. */
+static void nova_shared_warehouse_unref(void *w) { (void)w; }
 static void avio_closep(void **p) {
     *p = NULL;
     pthread_mutex_lock(&evidence_lock);
