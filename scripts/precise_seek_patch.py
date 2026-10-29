@@ -232,6 +232,8 @@ def engine_text(src):
                 if (!cancelled && !stream_abort(s)) stream_set_error(s,VE_FILE_ERROR);
                 if (idle_engine) thread_state_set(&s->engine_tstate,engine_state);
                 _seek_un_pause(s,was_paused);
+                /* Precise seek failure/cancellation must release the logical transport seek guard. */
+                nova_multi_seek_signal(s,2);
                 return cancelled ? 0 : 1;
             }
         } else if( !s->seek_skip_initial_play ) {

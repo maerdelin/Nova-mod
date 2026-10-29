@@ -13,6 +13,7 @@ typedef int (*nova_transport_read_fn)(uint64_t, uint8_t *, int);
 typedef int64_t (*nova_transport_seek_fn)(uint64_t, int64_t, int);
 typedef int64_t (*nova_transport_size_fn)(uint64_t);
 typedef int (*nova_transport_abort_fn)(uint64_t);
+typedef int (*nova_transport_set_target_bps_fn)(uint64_t, uint64_t);
 
 static uint64_t nova_direct_generation(const char *url)
 {
@@ -66,8 +67,10 @@ static int nova_direct_source_open(NOVA_RAW_PREFETCH *raw, const char *url)
         raw->transport_handle, "nova_transport_size");
     raw->direct_abort = (nova_transport_abort_fn)dlsym(
         raw->transport_handle, "nova_transport_abort");
+    raw->direct_set_target_bps = (nova_transport_set_target_bps_fn)dlsym(
+        raw->transport_handle, "nova_transport_set_target_bps");
     if (!raw->direct_read || !raw->direct_seek ||
-        !raw->direct_size || !raw->direct_abort)
+        !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)
         return AVERROR(ENOSYS);
 
     unsigned char *buffer = av_malloc(NOVA_RAW_IO_BYTES);
@@ -118,6 +121,79 @@ static void nova_direct_source_close(NOVA_RAW_PREFETCH *raw)
 }
 '''
 
+
+
+
+SEEK_GUARD_HELPERS = r'''
+/* NOVA_MULTI_SEEK_SIGNAL_V1: AVOS owns logical seek completion.
+ * phase -1 begin, 0 superseded by queued seek, 1 rendered, 2 terminal. */
+typedef int (*nova_transport_seek_begin_fn)(uint64_t);
+typedef int (*nova_transport_seek_complete_fn)(uint64_t, int);
+static uint64_t nova_multi_seek_generation(const char *url)
+{
+    const char *prefix="novatransport://";
+    if (!url || strncmp(url,prefix,strlen(prefix))) return 0;
+    char *end=NULL;
+    unsigned long long v=strtoull(url+strlen(prefix),&end,10);
+    return end!=url+strlen(prefix) ? (uint64_t)v : 0;
+}
+static void nova_multi_seek_signal(STREAM *s,int success)
+{
+    if (!s) return;
+    const char *url=s->src.url;
+    uint64_t generation=nova_multi_seek_generation(url);
+    const char *path=url ? strstr(url,"/stream") : NULL;
+    if (!generation || !path || (path[7] && path[7]!='?')) return;
+    void *handle=dlopen("libnova_transport.so",RTLD_NOW|RTLD_LOCAL);
+    if (!handle) return;
+    int rc=-1;
+    if (success < 0) {
+        nova_transport_seek_begin_fn fn=
+            (nova_transport_seek_begin_fn)dlsym(handle,"nova_transport_seek_begin");
+        rc=fn ? fn(generation) : -1;
+    } else {
+        nova_transport_seek_complete_fn fn=
+            (nova_transport_seek_complete_fn)dlsym(handle,"nova_transport_seek_complete");
+        rc=fn ? fn(generation,success) : -1;
+    }
+    serprintf("NOVA_MULTI_SEEK_SIGNAL: generation=%llu phase=%d rc=%d\n",
+              (unsigned long long)generation,success,rc);
+    dlclose(handle);
+}
+'''
+def patch_stream_video(root: Path) -> dict:
+    path=root/"Source"/"stream_video.c"
+    text=path.read_text()
+    if "NOVA_MULTI_SEEK_SIGNAL_V1" in text: raise RuntimeError("seek signal already installed")
+    if "#include <dlfcn.h>" not in text:
+        text=once(text,'#include "stream_sync.h"\n','#include "stream_sync.h"\n#include <dlfcn.h>\n',"stream video dlfcn")
+    marker="// *****************************************************************************\n//\n//\t_stream_seek_real"
+    text=once(text,marker,SEEK_GUARD_HELPERS+"\n"+marker,"seek helpers")
+    begin_anchor="\tint engine_state = idle_engine ? thread_state_set( &s->engine_tstate, THREAD_IDLE ) : THREAD_RUNNING;\n\n\t_seek_init( s );"
+    begin_repl="\tint engine_state = idle_engine ? thread_state_set( &s->engine_tstate, THREAD_IDLE ) : THREAD_RUNNING;\n\n\tnova_multi_seek_signal(s,-1);\n\t_seek_init( s );"
+    text=once(text,begin_anchor,begin_repl,"logical seek begin signal")
+    failed="""\tif (err) {
+\t\t// A failed seek provides no valid anchor and may have changed demux
+\t\t// state already. Do not reset playback clocks to sc's default zero.
+\t\tif (!stream_abort(s)) stream_set_error(s, VE_FILE_ERROR);
+\t\ts->seek = 0;
+\t\tif( idle_engine )
+\t\t\tthread_state_set( &s->engine_tstate, engine_state );
+\t\t_seek_un_pause(s, was_paused);
+\t\treturn err;
+\t}
+"""
+    text=once(text,failed,failed.replace("\t\treturn err;\n","\t\tnova_multi_seek_signal(s,2);\n\t\treturn err;\n"),"failed seek signal")
+    success="""\t// un_pause the stream
+\tif( idle_engine )
+\t\tthread_state_set( &s->engine_tstate, engine_state );
+\t_seek_un_pause( s, was_paused );
+\t
+\treturn err;\t
+"""
+    text=once(text,success,success.replace("\t_seek_un_pause( s, was_paused );\n","\t_seek_un_pause( s, was_paused );\n\tnova_multi_seek_signal(s,1);\n"),"success seek signal")
+    path.write_text(text)
+    return {"seek_guard_signal":"NOVA_MULTI_SEEK_SIGNAL_V1"}
 
 def patch_avos_mp(root: Path) -> dict:
     path = root / "Source" / "avos_mp.c"
@@ -202,6 +278,7 @@ def apply(root: Path, report: Path|None=None):
     nova_transport_seek_fn direct_seek;
     nova_transport_size_fn direct_size;
     nova_transport_abort_fn direct_abort;
+    nova_transport_set_target_bps_fn direct_set_target_bps;
 """,
         "direct fields",
     )
@@ -212,12 +289,21 @@ def apply(root: Path, report: Path|None=None):
 typedef int64_t (*nova_transport_seek_fn)(uint64_t, int64_t, int);
 typedef int64_t (*nova_transport_size_fn)(uint64_t);
 typedef int (*nova_transport_abort_fn)(uint64_t);
+typedef int (*nova_transport_set_target_bps_fn)(uint64_t, uint64_t);
 
 """
     text = text[:idx] + pre + text[idx:]
 
     marker = "static int nova_raw_interrupt(void *opaque)"
     text = once(text, marker, HELPERS + "\n" + marker, "direct helpers")
+
+    policy_anchor = "        nova_raw_set_policy(&ff_p->raw, low, resume);\n"
+    policy_new = policy_anchor + """        if (ff_p->raw.direct_transport && ff_p->raw.direct_set_target_bps &&
+            ff_p->raw.transport_generation)
+            ff_p->raw.direct_set_target_bps(
+                ff_p->raw.transport_generation, nova_x);
+"""
+    text = once(text, policy_anchor, policy_new, "publish average bitrate to direct transport")
 
     old_guard = """    if( strncmp(url, "http://", 7) && strncmp(url, "https://", 8) )
         return 0;
@@ -270,6 +356,7 @@ typedef int (*nova_transport_abort_fn)(uint64_t);
     required = (
         "novatransport://", "NOVA_DIRECT_SOURCE_OPEN",
         'dlsym(', '"nova_transport_read"', '"nova_transport_seek"',
+        '"nova_transport_set_target_bps"',
         "raw->direct_abort(raw->transport_generation)",
     )
     missing = [x for x in required if x not in text]
@@ -278,14 +365,16 @@ typedef int (*nova_transport_abort_fn)(uint64_t);
 
     path.write_text(text)
     datasource = patch_avos_mp(root)
+    seek_guard = patch_stream_video(root)
     result = {
         "status":"PASS",
         "direct_scheme":"novatransport",
         "localhost_transport":False,
         "raw_capacity_bytes":128*1024*1024,
         "priority_policy_changed":False,
-        "transport_symbols":["read","seek","size","abort"],
+        "transport_symbols":["read","seek","size","abort","set_target_bps","seek_begin","seek_complete"],
         "datasource_scheme_registered":datasource["scheme"],
+        "seek_guard_signal":seek_guard["seek_guard_signal"],
     }
     if report:
         report.write_text(json.dumps(result, indent=2)+"\n")

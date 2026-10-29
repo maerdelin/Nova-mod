@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <curl/curl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,43 @@ typedef enum {
     NOVA_MODE_FILE = 0,
     NOVA_MODE_BLURAY_ISO = 1,
 } nova_mode;
+
+#define NOVA_MULTI_MAX_LANES 4
+#define NOVA_MULTI_SLOT_COUNT 8
+#define NOVA_MULTI_SEGMENT_BYTES (2 * 1024 * 1024)
+#define NOVA_MULTI_READ_BYTES (256 * 1024)
+#define NOVA_MULTI_SAMPLE_MS 1500
+#define NOVA_MULTI_IDLE_RESET_MS 3000
+#define NOVA_MULTI_WORKER_STACK_BYTES (256 * 1024)
+#define NOVA_MULTI_SLOT_EMPTY 0
+#define NOVA_MULTI_SLOT_QUEUED 1
+#define NOVA_MULTI_SLOT_ACTIVE 2
+#define NOVA_MULTI_SLOT_READY 3
+#define NOVA_MULTI_SLOT_ERROR 4
+#define NOVA_MULTI_FALLBACK AVERROR(EAGAIN)
+
+struct nova_session;
+typedef struct nova_multi_slot {
+    int state;
+    uint64_t generation;
+    int64_t start;
+    int length;
+    int filled;
+    int error;
+    uint8_t *data;
+} nova_multi_slot;
+
+typedef struct nova_multi_worker {
+    struct nova_session *session;
+    int id;
+    pthread_t thread;
+    int started;
+    jobject conn;
+    jobject stream;
+    jmethodID read;
+    jmethodID disconnect;
+    jmethodID close;
+} nova_multi_worker;
 
 /* NOVA_ISO_TRACK_LANG_V1: immutable main-title Blu-ray track metadata.
  * CLPI/playlist PIDs and ISO-639 language codes live only in this ISO
@@ -87,9 +125,11 @@ typedef struct nova_session {
     jclass resolver_class;
     jmethodID resolver_method;
     int requires_origin_refresh;
-    /* NOVA_NONISO_SINGLE_GET_V1: live one-GET HTTP range via JNI.
-     * ISO never uses these fields or callbacks. */
+    /* NOVA_NONISO_SINGLE_GET_V1 remains the MKV baseline single-GET path.
+     * NOVA_MULTI_SCOPE_V3 exposes the same DirectRangeHttp byte source to
+     * every WebDAV format after open, including ISO movie-data LBAs. */
     int file_http_mode;
+    int multi_http_ready;
     jobject file_conn;
     jobject file_stream;
     jclass file_http_class;
@@ -97,6 +137,33 @@ typedef struct nova_session {
     jmethodID file_conn_disconnect;
     jmethodID file_stream_read;
     jmethodID file_stream_close;
+    /* Test2 native adaptive multi-Range. RAW128 stays the only large warehouse. */
+    pthread_mutex_t multi_lock;
+    pthread_cond_t multi_cond;
+    int multi_sync_ready;
+    int multi_buffers_ready;
+    int multi_active;
+    int multi_run;
+    int multi_disabled;
+    int multi_worker_failed;
+    uint64_t multi_generation;
+    int multi_active_lanes;
+    int multi_upgrade_pending;
+    int multi_capacity_idle;
+    /* NOVA_MULTI_SEEK_GUARD_V1: every FILE seek keeps packet/preroll reads
+     * on the proven single stream until AVOS declares logical seek completion. */
+    int multi_seek_guard;
+    int multi_seek_restore_lanes;
+    int64_t multi_next_offset;
+    int64_t multi_committed_cursor;
+    uint64_t adaptive_target_bps;
+    uint64_t adaptive_sample_bytes;
+    int64_t adaptive_sample_start_ms;
+    int64_t adaptive_last_network_ms;
+    int adaptive_lanes;
+    struct nova_lite_state *lite;
+    nova_multi_slot multi_slots[NOVA_MULTI_SLOT_COUNT];
+    nova_multi_worker multi_workers[NOVA_MULTI_MAX_LANES];
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
     uint64_t iso_meta_tick;
     uint64_t iso_meta_reads;
@@ -117,6 +184,18 @@ static int nova_file_open_fresh_at(nova_session *s, int64_t target);
 static int nova_file_java_open_at(nova_session *s,int64_t target);
 static int nova_file_java_read(nova_session *s,uint8_t *dst,int bytes);
 static void nova_file_java_close_active(nova_session *s);
+static int nova_multi_session_init(nova_session *s);
+static void nova_multi_destroy(nova_session *s);
+static void nova_multi_abort(nova_session *s);
+static void nova_multi_reset_sample(nova_session *s);
+static void nova_adaptive_record_single(nova_session *s,int bytes);
+static int nova_adaptive_take_upgrade(nova_session *s);
+static int nova_multi_start(nova_session *s,int64_t start,int lanes);
+static void nova_multi_stop(nova_session *s,const char *reason,int disable);
+static int nova_multi_read(nova_session *s,uint8_t *dst,int size);
+static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,int64_t target,int bytes);
+static int nova_multi_current_lanes(nova_session *s);
+static void nova_multi_set_target(nova_session *s,uint64_t target_bps);
 
 
 static int transport_interrupt(void *opaque)
@@ -515,9 +594,12 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
              " retain_pages=1 weak_page_bytes=%d", target, NOVA_ISO_WEAK_PAGE_BYTES);
         s->iso_meta_degraded = 1;
     }
-    /* Demand-read only the requested UDF blocks, reconnecting at the exact
-     * byte offset after transient errors. Previously cached pages survive. */
-    int got = nova_upstream_read_exact_retry(s, (uint8_t *)buf, target, bytes);
+    /* Metadata scanning stays on the proven demand-read/cache path.
+     * After the scan, movie-data LBAs use the generic WebDAV byte source.
+     * Physical LBA jumps (including seek) reseed inside that source only. */
+    int got = (!s->iso_meta_active && s->multi_http_ready)
+        ? nova_multi_read_exact_at(s, (uint8_t *)buf, target, bytes)
+        : nova_upstream_read_exact_retry(s, (uint8_t *)buf, target, bytes);
     return got == bytes ? num_blocks : -1;
 }
 
@@ -650,15 +732,13 @@ static JNIEnv *nova_file_get_env(JavaVM *vm,int *needs_detach)
 
 static void nova_file_release_java(nova_session *s)
 {
-    if(s->file_http_mode){
-        nova_file_java_close_active(s);
-        if(s->file_http_class && s->resolver_vm){
-            int detached=0;
-            JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
-            if(env)(*env)->DeleteGlobalRef(env,s->file_http_class);
-            if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
-            s->file_http_class=NULL;
-        }
+    nova_file_java_close_active(s);
+    if(s->file_http_class && s->resolver_vm){
+        int detached=0;
+        JNIEnv *env=nova_file_get_env(s->resolver_vm,&detached);
+        if(env)(*env)->DeleteGlobalRef(env,s->file_http_class);
+        if(detached)(*s->resolver_vm)->DetachCurrentThread(s->resolver_vm);
+        s->file_http_class=NULL;
     }
     if(s->resolver_class && s->resolver_vm){
         int detach=0;
@@ -811,6 +891,43 @@ static int nova_file_java_http_error(jint code)
         case 416:return AVERROR(EINVAL);
         default:return AVERROR(EIO);
     }
+}
+
+#include "nova_literange4.inc"
+
+static int nova_multi_enable_http(JNIEnv *env,nova_session *s,
+                                  const char *origin,const char *auth)
+{
+    if(!env || !s || !origin || !*origin || !g_java_vm ||
+       !s->multi_sync_ready)
+        return AVERROR(EINVAL);
+    s->resolver_vm=g_java_vm;
+    if(!s->origin_url)s->origin_url=strdup(origin);
+    if(!s->origin_auth)s->origin_auth=strdup(auth ? auth : "");
+    if(!s->origin_url || !s->origin_auth)return AVERROR(ENOMEM);
+
+    if(!s->file_http_class){
+        jclass local=(*env)->FindClass(env,
+            "com/archos/mediacenter/video/player/DirectRangeHttp");
+        if(local){
+            s->file_http_class=(jclass)(*env)->NewGlobalRef(env,local);
+            (*env)->DeleteLocalRef(env,local);
+        }else{
+            nova_file_java_clear_exception(env);
+        }
+    }
+    if(s->file_http_class && !s->file_http_open){
+        s->file_http_open=(*env)->GetStaticMethodID(env,s->file_http_class,
+            "open","(Ljava/lang/String;Ljava/lang/String;J)Ljava/net/HttpURLConnection;");
+        nova_file_java_clear_exception(env);
+    }
+    if(!s->file_http_class || !s->file_http_open)
+        return AVERROR(ENOSYS);
+
+    s->multi_http_ready=1;
+    LOGI("NOVA_MULTI_SCOPE_V3 mode=%s all_formats=1",
+         s->mode==NOVA_MODE_BLURAY_ISO ? "iso" : "file");
+    return 0;
 }
 
 /* Verifies a real Content-Range START and immutable TOTAL before committing
@@ -1091,6 +1208,7 @@ static void session_free(nova_session *s)
         pthread_cond_wait(&s->idle, &g_lock);
     pthread_mutex_unlock(&g_lock);
 
+    nova_multi_destroy(s);
     pthread_mutex_lock(&s->io_lock);
     if (s->bd) {
         bd_close(s->bd);
@@ -1122,6 +1240,10 @@ static nova_session *session_create(const char *url, const char *headers, int is
     s->mode = iso ? NOVA_MODE_BLURAY_ISO : NOVA_MODE_FILE;
     pthread_mutex_init(&s->io_lock, NULL);
     pthread_cond_init(&s->idle, NULL);
+    if(nova_multi_session_init(s)<0){
+        session_free(s);
+        return NULL;
+    }
 
     s->upstream_url = strdup(url);
     s->upstream_headers = strdup(headers ? headers : "");
@@ -1197,11 +1319,16 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
     if(!s)return NULL;
     s->mode=NOVA_MODE_FILE;
     s->file_http_mode=1;
+    s->multi_http_ready=1;
     s->resolver_vm=g_java_vm;
     s->upstream_pos=-1;
     s->upstream_size=-1;
     pthread_mutex_init(&s->io_lock,NULL);
     pthread_cond_init(&s->idle,NULL);
+    if(nova_multi_session_init(s)<0){
+        session_free(s);
+        return NULL;
+    }
     s->origin_url=strdup(url ? url : "");
     s->origin_auth=strdup(auth ? auth : "");
     s->upstream_url=strdup(url ? url : "");
@@ -1266,18 +1393,47 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
     if (s->stopping) {
         ret = AVERROR_EXIT;
     } else if (s->mode == NOVA_MODE_BLURAY_ISO) {
+        /* Keep libbluray/RAW128/decoder architecture unchanged. The generic
+         * multi-Range source is used only inside upstream_read_blocks(). */
         ret = bd_read(s->bd, dst, size);
         if (ret == 0)
             ret = AVERROR_EOF;
+    } else if (s->multi_http_ready) {
+        if (s->multi_seek_guard) {
+            ret = s->file_http_mode
+                ? nova_mkv_single_get_read(s, dst, size)
+                : nova_upstream_read_some_retry(s, dst, size);
+        } else if (s->multi_active) {
+            ret = nova_multi_read(s, dst, size);
+            if (ret == NOVA_MULTI_FALLBACK && !s->stopping) {
+                int64_t fallback_at = s->file_cursor;
+                LOGI("NOVA_MULTI_FALLBACK mode=file cursor=%" PRId64,
+                     fallback_at);
+                nova_multi_stop(s, "lane-error", 1);
+                s->upstream_pos = -1;
+                ret = s->file_http_mode
+                    ? nova_mkv_single_get_read(s, dst, size)
+                    : nova_upstream_read_some_retry(s, dst, size);
+            }
+        } else {
+            ret = s->file_http_mode
+                ? nova_mkv_single_get_read(s, dst, size)
+                : nova_upstream_read_some_retry(s, dst, size);
+            if (ret > 0 && !s->multi_disabled) {
+                /* Start native LiteRange at the already-committed byte;
+                 * no extra native download threads. */
+                int rc = nova_multi_start(s, s->file_cursor, 1);
+                if(rc<0)
+                    LOGI("NOVA_LITERANGE4_START_FAIL rc=%d",rc);
+            }
+        }
     } else {
-        ret = s->file_http_mode ? nova_mkv_single_get_read(s, dst, size)
-                                : nova_upstream_read_some_retry(s, dst, size);
+        ret = nova_upstream_read_some_retry(s, dst, size);
     }
     pthread_mutex_unlock(&s->io_lock);
     session_release(s);
     return ret;
 }
-
 
 __attribute__((visibility("default")))
 int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
@@ -1287,6 +1443,9 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
         return AVERROR_EXIT;
 
     pthread_mutex_lock(&s->io_lock);
+    /* Low-level AVIO seeks also occur during probe/tail discovery. They must
+     * never create the logical seek guard. AVOS explicitly calls
+     * nova_transport_seek_begin() only for a real player seek. */
     int64_t ret = AVERROR(EINVAL);
     if (whence == AVSEEK_SIZE) {
         ret = (int64_t)s->output_size;
@@ -1327,11 +1486,30 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
             else if (whence != SEEK_SET)
                 target = -1;
             if (target>=0 && target<=s->upstream_size) {
+                /*
+                 * NOVA_LITERANGE4_BYTE_SEEK_RESEED_V1: FFmpeg probes tail
+                 * bytes before playback and then returns to byte zero.
+                 * Any active curl window belongs to the prior byte cursor.
+                 * Shut down it under io_lock BEFORE running a new underlying
+                 * seek; only successful seek commits the new file_cursor.
+                 * This does not set the logical/presentation seek guard.
+                 */
+                if (s->multi_active &&
+                    s->multi_committed_cursor != target) {
+                    LOGI("NOVA_LITERANGE4_BYTE_SEEK_RESEED from=%" PRId64
+                         " to=%" PRId64, s->multi_committed_cursor,target);
+                    nova_multi_stop(s,"lowlevel-byte-seek",0);
+                }
                 int rc=s->file_http_mode ? nova_mkv_seek_retry(s,target) :
                                          nova_file_seek_retry(s,target);
                 if (rc==0) {
                     s->file_cursor=target;
                     ret=target;
+                    nova_multi_reset_sample(s);
+                    if (s->multi_seek_guard)
+                        LOGI("NOVA_MULTI_SEEK_GUARD_TARGET target=%" PRId64
+                             " restoreLanes=%d", target,
+                             s->multi_seek_restore_lanes);
                 } else {
                     ret=rc;
                     LOGI("NOVA_FILE_SEEK_FAIL: requested=%" PRId64
@@ -1350,6 +1528,66 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
 }
 
 __attribute__((visibility("default")))
+int nova_transport_seek_begin(uint64_t generation)
+{
+    nova_session *s = session_acquire(generation);
+    if (!s) return AVERROR_EXIT;
+
+    pthread_mutex_lock(&s->io_lock);
+    if (!s->stopping && s->mode == NOVA_MODE_FILE && s->multi_http_ready) {
+        if (!s->multi_seek_guard) {
+            int restore_lanes =
+                s->multi_active ? nova_multi_current_lanes(s) : 1;
+            if (s->multi_active)
+                nova_multi_stop(s, "seek", 0);
+            s->multi_seek_restore_lanes = restore_lanes;
+            s->multi_seek_guard = 1;
+            nova_multi_reset_sample(s);
+            LOGI("NOVA_MULTI_SEEK_GUARD_BEGIN lanes=%d cursor=%" PRId64,
+                 restore_lanes, s->file_cursor);
+        } else {
+            LOGI("NOVA_MULTI_SEEK_GUARD_CONTINUE restoreLanes=%d cursor=%" PRId64,
+                 s->multi_seek_restore_lanes, s->file_cursor);
+        }
+    }
+    pthread_mutex_unlock(&s->io_lock);
+    session_release(s);
+    return 0;
+}
+
+__attribute__((visibility("default")))
+int nova_transport_seek_complete(uint64_t generation, int success)
+{
+    nova_session *s = session_acquire(generation);
+    if (!s) return AVERROR_EXIT;
+    pthread_mutex_lock(&s->io_lock);
+    int rc = 0;
+    if (s->mode == NOVA_MODE_FILE && s->multi_seek_guard) {
+        int lanes = s->multi_seek_restore_lanes > 1 ? s->multi_seek_restore_lanes : 1;
+        int64_t cursor = s->file_cursor;
+        /* Outcome 0 transfers the guard to a queued newer seek; 1 commits
+         * a rendered target; 2 terminates a failed/aborted operation. A real
+         * failure must not retain HOLD or revive speculative old lanes. */
+        if (success > 0) {
+            s->multi_seek_guard = 0;
+            s->multi_seek_restore_lanes = 1;
+            nova_multi_reset_sample(s);
+            if (success == 1 && !s->stopping && !s->multi_disabled && s->multi_http_ready && lanes > 1 && cursor >= 0 && cursor < s->upstream_size)
+                rc = nova_multi_start(s, cursor, lanes);
+            if (success == 1)
+                LOGI("NOVA_MULTI_SEEK_GUARD_END success=1 restoredLanes=%d cursor=%" PRId64 " restartRc=%d", lanes, cursor, rc);
+            else
+                LOGI("NOVA_MULTI_SEEK_GUARD_FAIL outcome=terminal restoredLanes=1 cursor=%" PRId64, cursor);
+        } else {
+            LOGI("NOVA_MULTI_SEEK_GUARD_HOLD success=0 restoreLanes=%d cursor=%" PRId64, lanes, cursor);
+        }
+    }
+    pthread_mutex_unlock(&s->io_lock);
+    session_release(s);
+    return rc;
+}
+
+__attribute__((visibility("default")))
 int64_t nova_transport_size(uint64_t generation)
 {
     nova_session *s = session_acquire(generation);
@@ -1359,6 +1597,19 @@ int64_t nova_transport_size(uint64_t generation)
     session_release(s);
     return size;
 }
+
+__attribute__((visibility("default")))
+int nova_transport_set_target_bps(uint64_t generation, uint64_t target_bps)
+{
+    nova_session *s = session_acquire(generation);
+    if (!s)
+        return AVERROR_EXIT;
+    if (s->multi_http_ready)
+        nova_multi_set_target(s, target_bps);
+    session_release(s);
+    return 0;
+}
+
 
 /* Read-only ISO metadata bridge, resolved by dlsym from the already-loaded
  * libnova_transport.so. Wrong generation, FILE or absent PID returns no data.
@@ -1414,18 +1665,15 @@ int nova_transport_iso_track_codec(uint64_t generation, int pid, int kind)
 __attribute__((visibility("default")))
 int nova_transport_abort(uint64_t generation)
 {
-    pthread_mutex_lock(&g_lock);
-    nova_session *s = g_session;
-    if (!s || s->generation != generation) {
-        pthread_mutex_unlock(&g_lock);
+    nova_session *s = session_acquire(generation);
+    if (!s)
         return 0;
-    }
     s->stopping = 1;
-    pthread_mutex_unlock(&g_lock);
+    nova_multi_abort(s);
+    session_release(s);
     LOGI("ABORT generation=%" PRIu64, generation);
     return 1;
 }
-
 
 /* Match only the original logical path; ignore signed query parameters. */
 static int nova_is_mkv_origin_url(const char *url)
@@ -1449,11 +1697,12 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
     const char *headers = jheaders
         ? (*env)->GetStringUTFChars(env, jheaders, NULL) : NULL;
 
-    /* NOVA_MKV_SINGLE_GET_V2: only canonical *.mkv selects single live GET.
-     * All other formats preserve Run687 transport creation and credentials. */
-    const char *origin=(!jiso && jorigin_url)
+    /* Preserve current format-specific baseline open, but expose the
+     * canonical WebDAV origin to the generic multi-Range download layer for
+     * every format. ISO attaches only after its metadata scan has completed. */
+    const char *origin=jorigin_url
         ? (*env)->GetStringUTFChars(env,jorigin_url,NULL) : NULL;
-    const char *original_auth=(!jiso && jorigin_auth)
+    const char *original_auth=jorigin_auth
         ? (*env)->GetStringUTFChars(env,jorigin_auth,NULL) : NULL;
     const int mkv=(!jiso && origin && nova_is_mkv_origin_url(origin));
     nova_session *fresh=mkv ?
@@ -1487,6 +1736,16 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
                 fresh->requires_origin_refresh=1;
                 LOGI("NOVA_FILE_ORIGIN_FRESH_V1: enabled=1");
             }
+    }
+    if(fresh && origin && *origin){
+        int multi_rc=nova_multi_enable_http(env,fresh,origin,
+                         original_auth ? original_auth : "");
+        if(multi_rc<0){
+            LOGE("NOVA_MULTI_SCOPE_V3 enable_failed=%d mode=%s",
+                 multi_rc,jiso ? "iso" : "file");
+            session_free(fresh);
+            fresh=NULL;
+        }
     }
     if(original_auth)(*env)->ReleaseStringUTFChars(env,jorigin_auth,original_auth);
     if(origin)(*env)->ReleaseStringUTFChars(env,jorigin_url,origin);

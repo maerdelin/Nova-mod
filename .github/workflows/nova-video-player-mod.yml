@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: [main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028']
+    branches: [main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029']
 
 permissions:
   contents: write
@@ -62,6 +62,7 @@ jobs:
           mkdir -p inputs dist tools work reports
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
+          python3 -m unittest discover -s tests -p test_literange4.py -v
           python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
           python3 -m unittest discover -s tests -p test_iso_index_seek_v2.py -v
@@ -79,7 +80,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
           python3 -m py_compile scripts/mkv_bbc_cue_seek_patch.py scripts/iso_track_metadata_patch.py scripts/smoke_noniso_single_get_android.py
           python3 -m py_compile scripts/granular.py scripts/granular_build.py scripts/direct_transport_native_patch.py scripts/direct_transport_apply.py scripts/direct_transport_audit.py scripts/webdav_credential_coldboot_patch.py scripts/smoke_direct_webdav.py scripts/av_diag_patch.py scripts/startup_freeze_trace_patch.py scripts/final_freeze_forensics_patch.py scripts/pgs_history_bypass_ab_patch.py scripts/mp4_seek_slow_read_grace_patch.py scripts/seek_priority_patch.py scripts/seek_cache_window_patch.py scripts/seek_video_index_patch.py scripts/smoke_mp4_raw_seek_race.py scripts/disable_all_subtitle_history_patch.py scripts/late_stall_self_heal_patch.py scripts/seek_safe_serial_v2_patch.py scripts/seek_engine_diag_patch.py scripts/seek_sfdec2_frame_return_patch.py scripts/seek_codec_pool_diag_patch.py scripts/iso_index_seek_patch.py scripts/libbluray_iso_index_patch.py
-          python3 -m py_compile scripts/tv_small_card_spacing_patch.py scripts/webdav_resume_local_only_patch.py scripts/smoke_webdav_resume_local_only.py
+          python3 -m py_compile scripts/tv_small_card_spacing_patch.py scripts/webdav_resume_local_only_patch.py scripts/smoke_webdav_resume_local_only.py scripts/smoke_literange4_concurrency.py
           echo 'CI preflight: apktool download (max 120s)'
           timeout 120s curl -fL --retry 2 --connect-timeout 15 --max-time 45 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
           echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
@@ -256,6 +257,11 @@ jobs:
               strings "$avos" | grep -E '(NOVA_ISO|NOVA_RAW_FIXED128_POLICY)' | head -20 || true
               exit 1
             fi
+            for symbol in NOVA_LITERANGE4_START NOVA_LITERANGE4_NET NOVA_LITERANGE4_PIECE NOVA_MULTI_SEEK_GUARD_BEGIN NOVA_MULTI_SEEK_GUARD_END NOVA_MULTI_SCOPE_V3; do
+              grep -aq "$symbol" "$transport" || { echo "::error::Dual-Range marker missing: $symbol in $abi"; exit 1; }
+            done
+            grep -aq NOVA_MULTI_SEEK_SIGNAL "$avos" || { echo "::error::AVOS seek guard missing in $abi"; exit 1; }
+            echo "NOVA_DUAL2_SEEK_GUARD_ELF_PASS $abi"
             echo "RUN672_INDEX_SYMBOLS_PASS $abi"
           done
 
@@ -360,6 +366,7 @@ jobs:
             # verifies one-use signed redirects, first frame, Range and Seek.
             # A standalone app_process on Android 11 was OOM-killed twice.
             python3 scripts/smoke_direct_webdav.py --reports reports
+            python3 scripts/smoke_literange4_concurrency.py --reports reports
             python3 scripts/smoke_weaknet_webdav_formats.py --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
             python3 scripts/smoke_seek_eof_completion.py --reports reports
