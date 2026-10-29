@@ -89,6 +89,12 @@ jobs:
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo | sudo tee /usr/local/bin/repo >/dev/null
           sudo chmod a+x /usr/local/bin/repo
 
+      - name: Resolve and download official latest stable APK
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+
       - name: Inspect original TV popup focus and animation smali
         shell: bash
         run: |
@@ -98,12 +104,6 @@ jobs:
           test -s reports/tv-focus-forensics/original/TVCardView.smali.txt
           test -s 'reports/tv-focus-forensics/original/TVCardView$ExpandAnimation.smali.txt'
           test -s reports/tv-focus-forensics/original/TVMenuAdapter.smali.txt
-
-      - name: Resolve and download official latest stable APK
-        id: upstream
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
 
       - name: Verify original APK signature
         shell: bash
