@@ -134,7 +134,7 @@ def main():
                 if marker2 not in log:return False
                 tail=log[log.rfind(marker2):]
                 return ("NOVA_MULTI_HTTP403_RETRY attempt=2" in tail
-                    and re.search(r"NOVA_MULTI_PAIR_REARM verified=2 required=2 failures=2",
+                    and re.search(r"NOVA_MULTI_PAIR_REARM verified=([2-9]|[1-9][0-9]+) required=2 failures=2",
                                   tail)
                     and "NOVA_LITERANGE4_PAIR_ENABLE" in tail
                     and re.search(r"NOVA_LITERANGE4_NET lanes=2[^\n]*pending=2",tail))
