@@ -116,6 +116,11 @@ typedef struct {
     uint64_t mkv_seek_bytes;
     unsigned generation;
     int mkv_single_get,mkv_seek_active,mkv_seek_failed,eof,error;
+    /* The extracted production reset now also drains shared RAW pages. */
+    void *shared_base;
+    int shared_pages;
+    int page_queue[2048],page_head,page_tail,page_queued,page_head_consumed;
+    void (*page_release)(void *,int);
 } NOVA_RAW_PREFETCH;
 static int64_t now_us, delay_us, seek_result;
 static int64_t av_gettime_relative(void) { return now_us; }
