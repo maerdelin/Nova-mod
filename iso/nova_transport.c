@@ -96,33 +96,100 @@ typedef struct nova_iso_track_lang {
     char lang[4];
 } nova_iso_track_lang;
 
-/* Shared 128 MiB physical warehouse: 86 MiB committed RAW + 42 MiB staged.
- * The owner/session and the libavos reader independently hold references.
- * Keeping the mapping alive across a retiring session prevents UAF on seek/
- * close while the reader is draining or stopping. */
-#define NOVA_SHARED_WAREHOUSE_BYTES (128u * 1024u * 1024u)
-#define NOVA_SHARED_STAGE_BYTES (42u * 1024u * 1024u)
-#define NOVA_SHARED_RAW_BYTES (NOVA_SHARED_WAREHOUSE_BYTES - NOVA_SHARED_STAGE_BYTES)
+/* NOVA_SHARED42: one 128 MiB physical backing allocation for BOTH
+ * dual-range staging and the committed RAW playback page queue.
+ * 42 MiB staging (6 MiB head guarantee, 36 MiB future bound), 86 MiB RAW.
+ * Page descriptors, not media bytes, transfer into the RAW queue.
+ * The 6/36 quotas belong to logical order, never fixed slot numbers. */
+#define NOVA_WH_PAGE_BYTES (64u * 1024u)
+#define NOVA_WH_TOTAL_BYTES (128u * 1024u * 1024u)
+#define NOVA_WH_STAGE_BYTES (42u * 1024u * 1024u)
+#define NOVA_WH_RAW_BYTES (86u * 1024u * 1024u)
+#define NOVA_WH_HEAD_BYTES (6u * 1024u * 1024u)
+#define NOVA_WH_FUTURE_BYTES (36u * 1024u * 1024u)
+#define NOVA_WH_PAGES (NOVA_WH_TOTAL_BYTES / NOVA_WH_PAGE_BYTES)
+#define NOVA_WH_STAGE_PAGES (NOVA_WH_STAGE_BYTES / NOVA_WH_PAGE_BYTES)
+#define NOVA_WH_HEAD_PAGES (NOVA_WH_HEAD_BYTES / NOVA_WH_PAGE_BYTES)
+#define NOVA_WH_FUTURE_PAGES (NOVA_WH_FUTURE_BYTES / NOVA_WH_PAGE_BYTES)
+#define NOVA_WH_RAW_PAGES (NOVA_WH_RAW_BYTES / NOVA_WH_PAGE_BYTES)
+#define NOVA_WH_FREE 0
+#define NOVA_WH_STAGE 1
+#define NOVA_WH_RAW 2
+typedef struct nova_wh_page {
+    int next;
+    int length;
+    int consumed;
+    int state;
+} nova_wh_page;
 typedef struct nova_shared_warehouse {
     unsigned refs;
-    uint8_t data[NOVA_SHARED_WAREHOUSE_BYTES];
+    pthread_mutex_t lock;
+    int free_count;
+    int free_stack[NOVA_WH_PAGES];
+    nova_wh_page pages[NOVA_WH_PAGES];
+    /* The only large allocation; metadata costs < 64 KiB. */
+    uint8_t data[NOVA_WH_TOTAL_BYTES];
 } nova_shared_warehouse;
-
 static nova_shared_warehouse *nova_shared_warehouse_new(void)
 {
     nova_shared_warehouse *w=(nova_shared_warehouse *)malloc(sizeof(*w));
-    if(w)__atomic_store_n(&w->refs,1u,__ATOMIC_RELEASE);
+    if(!w)return NULL;
+    if(pthread_mutex_init(&w->lock,NULL)){free(w);return NULL;}
+    __atomic_store_n(&w->refs,1u,__ATOMIC_RELEASE);
+    w->free_count=NOVA_WH_PAGES;
+    for(unsigned i=0;i<NOVA_WH_PAGES;++i){
+        w->free_stack[i]=(int)i;
+        w->pages[i].next=-1;
+        w->pages[i].length=0;
+        w->pages[i].consumed=0;
+        w->pages[i].state=NOVA_WH_FREE;
+    }
     return w;
 }
 static void nova_shared_warehouse_unref(nova_shared_warehouse *w)
 {
-    if(w && __atomic_sub_fetch(&w->refs,1u,__ATOMIC_ACQ_REL)==0u)free(w);
+    if(w && __atomic_sub_fetch(&w->refs,1u,__ATOMIC_ACQ_REL)==0u){
+        pthread_mutex_destroy(&w->lock);
+        free(w);
+    }
 }
 static nova_shared_warehouse *nova_shared_warehouse_from_data(void *data)
 {
     if(!data)return NULL;
     return (nova_shared_warehouse *)((uint8_t *)data -
                  offsetof(nova_shared_warehouse,data));
+}
+static int nova_wh_page_alloc(nova_shared_warehouse *w,int state)
+{
+    if(!w)return -1;
+    pthread_mutex_lock(&w->lock);
+    int n=w->free_count>0?w->free_stack[--w->free_count]:-1;
+    if(n>=0){
+        w->pages[n].state=state;
+        w->pages[n].next=-1;
+        w->pages[n].length=0;
+        w->pages[n].consumed=0;
+    }
+    pthread_mutex_unlock(&w->lock);
+    return n;
+}
+static void nova_wh_page_free(nova_shared_warehouse *w,int n)
+{
+    if(!w || n<0 || n>=(int)NOVA_WH_PAGES)return;
+    pthread_mutex_lock(&w->lock);
+    if(w->pages[n].state!=NOVA_WH_FREE && w->free_count<(int)NOVA_WH_PAGES){
+        w->pages[n].state=NOVA_WH_FREE;
+        w->pages[n].next=-1;
+        w->pages[n].length=0;
+        w->pages[n].consumed=0;
+        w->free_stack[w->free_count++]=n;
+    }else LOGE("NOVA_SHARED42_DOUBLE_RELEASE page=%d",n);
+    pthread_mutex_unlock(&w->lock);
+}
+static uint8_t *nova_wh_page_ptr(nova_shared_warehouse *w,int n)
+{
+    if(!w || n<0 || n>=(int)NOVA_WH_PAGES)return NULL;
+    return w->data+(size_t)n*NOVA_WH_PAGE_BYTES;
 }
 
 typedef struct nova_session {
