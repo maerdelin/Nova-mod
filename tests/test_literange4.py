@@ -23,7 +23,7 @@ class LiteRange4Tests(unittest.TestCase):
         self.assertNotIn("while(e->running<s->multi_active_lanes)",self.lite)
 
     def test_exact_bounded_range_and_tls(self):
-        for token in ('NOVA_LITE_RANGE_BYTES (32 * 1024 * 1024)',
+        for token in ('NOVA_LITE_STAGE_BYTES NOVA_WH_STAGE_BYTES',
                       'NOVA_LITE_SLOTS 2','CURLOPT_RANGE',
                       'CURLOPT_SSL_VERIFYPEER,1L','CURLOPT_SSL_VERIFYHOST,2L',
                       'CURLINFO_RESPONSE_CODE','p->range_ok',
@@ -48,7 +48,12 @@ class LiteRange4Tests(unittest.TestCase):
     def test_data_warehouse_budget_and_shutdown(self):
         raw=(ROOT/"scripts/native_rebuffer_patch.py").read_text()
         self.assertIn("NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)",raw)
-        self.assertIn("NOVA_LITE_RANGE_BYTES (32 * 1024 * 1024)",self.lite)
+        self.assertIn("NOVA_LITE_STAGE_BYTES NOVA_WH_STAGE_BYTES",self.lite)
+        self.assertIn("NOVA_WH_STAGE_BYTES (42u * 1024u * 1024u)",self.transport)
+        self.assertIn("NOVA_WH_RAW_BYTES (86u * 1024u * 1024u)",self.transport)
+        self.assertIn("NOVA_WH_HEAD_BYTES (6u * 1024u * 1024u)",self.transport)
+        self.assertIn("NOVA_WH_FUTURE_BYTES (36u * 1024u * 1024u)",self.transport)
+        self.assertNotIn("malloc(NOVA_LITE_RANGE_BYTES)",self.lite)
         self.assertIn("NOVA_LITE_SLOTS 2",self.lite)
         self.assertIn("got == AVERROR_EXIT",raw)
         self.assertIn("s->lite->piece_origin=start",self.lite)
