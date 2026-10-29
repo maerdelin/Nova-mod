@@ -104,19 +104,20 @@ def patch(root):
 \tnova_seek_diag_v2(s,17);""","seek enters pause")
     region=once(region,"\tif( _stream_wait_for_idle( s, 1000 ) ) {",
        "\tnova_seek_diag_v2(s,18); /* decoder safe-point wait */\n\tif( _stream_wait_for_idle( s, 1000 ) ) {","decoder wait")
+    # Preserve the original engine-gate condition. Match the one C statement,
+    # not its neighboring blank lines (later native patches can insert code).
     region=once(region,
-        "\tint idle_engine = s->engine_thread_started && s->video_dec && s->video_dec->async;\n\tint engine_state = idle_engine ? thread_state_set( &s->engine_tstate, THREAD_IDLE ) : THREAD_RUNNING;\n\n\t_seek_init( s );",
-        """\tint idle_engine = s->engine_thread_started && s->video_dec && s->video_dec->async;
-\tint engine_state = THREAD_RUNNING;
+        "\tint engine_state = idle_engine ? thread_state_set( &s->engine_tstate, THREAD_IDLE ) : THREAD_RUNNING;",
+        """\tint engine_state = THREAD_RUNNING;
 \tif(idle_engine){
 \t\tnova_seek_diag_v2(s,20); /* engine idle request */
 \t\tif(!first_start){
-\t\t\t/* Existing athread.c helper restores the requested state
-\t\t\t * atomically if the engine cannot acknowledge in 2s. Never
-\t\t\t * mutate queues or parser cursor on this failed seek. */
+\t\t\t/* Only the async-engine IDLE acknowledgement is bounded:
+\t\t\t * the upstream helper restores the old request on timeout.
+\t\t\t * No parser seek or queue reset happens after failed ownership. */
 \t\t\tif(thread_state_try_idle(&s->engine_tstate,2000,&engine_state)){
 \t\t\t\t__atomic_add_fetch(&s->nova_seek_diag_timeout_count,1,__ATOMIC_RELAXED);
-\t\t\t\tserprintf("NOVA_SEEK_ENGINE_IDLE_TIMEOUT_V2: seq=%d epoch=%d engineAck=%d engineWanted=%d videoState=%d\n",
+\t\t\t\tserprintf("NOVA_SEEK_ENGINE_IDLE_TIMEOUT_V2: seq=%d epoch=%d engineAck=%d engineWanted=%d videoState=%d\\n",
 \t\t\t\t    s->nova_seek_diag_seq,s->seek_epoch,
 \t\t\t\t    thread_state_get(&s->engine_tstate),
 \t\t\t\t    thread_state_asked(&s->engine_tstate),s->video_state);
@@ -127,10 +128,13 @@ def patch(root):
 \t\t\t}
 \t\t}else engine_state=thread_state_set(&s->engine_tstate,THREAD_IDLE);
 \t\tnova_seek_diag_v2(s,21); /* engine acknowledged */
-\t}
-\tnova_seek_diag_v2(s,22); /* _seek_init entry */
-\t_seek_init( s );
-\tnova_seek_diag_v2(s,23); /* _seek_init returned */""","bounded engine gate")
+\t}""","bounded engine gate")
+    region=once(region,
+        "\t_seek_init( s );",
+        "\tnova_seek_diag_v2(s,22); /* _seek_init entry */\n"
+        "\t_seek_init( s );\n"
+        "\tnova_seek_diag_v2(s,23); /* _seek_init returned */",
+        "seek init entry/exit")
     region=once(region,
         "\tif( time != -1 ) {\n\t\tchar hms_buf[32];",
         "\tnova_seek_diag_v2(s,24); /* parser seek entry */\n\tif( time != -1 ) {\n\t\tchar hms_buf[32];",
