@@ -89,8 +89,14 @@ def run_case(media,keepalive):
 
         def complete(log):
             found=PATTERN.findall(log)
-            return (len(found)>=6 and
-                    "NOVA_LITERANGE4_NET lanes=2" in log and
+            # A fast local server can finish every 4s Range before the
+            # 1500ms periodic NET ticker fires. REBASE lanes=2 is the
+            # authoritative actual W2 activation marker; completed Range
+            # checks below still require BOTH slot=0 and slot=1.
+            two_lanes=bool(re.search(
+                r"NOVA_LITERANGE4_REBASE[^\\n]*lanes=2\\b",log)
+                or "NOVA_LITERANGE4_PAIR_ENABLE" in log)
+            return (len(found)>=6 and two_lanes and
                     "NOVA_STARTUP_TRACE first_frame_sink" in log)
         output=wait_for(complete,110,"real signed APK pool A/B completed transfers")
         if "FATAL EXCEPTION" in output or "Fatal signal" in output:
