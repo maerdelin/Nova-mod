@@ -101,6 +101,7 @@ typedef struct nova_lite_slot {
     long status;
     int range_ok;
     int encoding_ok;
+    long retry_after_sec;
     char range_str[64];
     char curl_error[CURL_ERROR_SIZE];
 } nova_lite_slot;
@@ -128,6 +129,9 @@ typedef struct nova_lite_state {
     CURLcode last_curl_error;
     long last_http_status;
     unsigned successful_ranges;
+    long last_retry_after_sec;
+    uint64_t metric_requests,metric_new_connections,metric_reused_requests;
+    uint64_t metric_connect_ms,metric_tls_ms,metric_ttfb_ms;
 } nova_lite_state;
 
 /* Android CA roots are hashed with an older algorithm and cannot be passed
@@ -208,6 +212,7 @@ static size_t nova_lite_header(char *ptr,size_t size,size_t nmemb,void *userdata
         slot->status=0;
         slot->range_ok=0;
         slot->encoding_ok=1;
+        slot->retry_after_sec=0;
         const char *space=memchr(ptr,' ',len);
         if(space && space+4<=ptr+len)
             slot->status=strtol(space+1,NULL,10);
@@ -220,6 +225,19 @@ static size_t nova_lite_header(char *ptr,size_t size,size_t nmemb,void *userdata
                             last==slot->start+slot->length-1 &&
                             total==s->upstream_size);
         }
+    } else if(len>12 && !strncasecmp(ptr,"Retry-After:",12)) {
+        /* Accept a bounded integer Retry-After only; never trust raw text. */
+        const char *p=ptr+12,*end=ptr+len;
+        while(p<end && (*p==' ' || *p=='\t'))p++;
+        long seconds=0;
+        const char *first=p;
+        while(p<end && *p>='0' && *p<='9'){
+            if(seconds<120)seconds=seconds*10+(*p-'0');
+            if(seconds>120)seconds=120;
+            p++;
+        }
+        while(p<end && (*p==' ' || *p=='\t' || *p=='\r' || *p=='\n'))p++;
+        if(p==end && p>first)slot->retry_after_sec=seconds;
     } else if(len>17 && !strncasecmp(ptr,"Content-Encoding:",17)) {
         /* Byte-for-byte ranges must not be transparently decompressed. */
         const char *value=ptr+17;
@@ -331,6 +349,7 @@ static int nova_lite_launch(nova_lite_slot *p)
     p->status=0;
     p->range_ok=0;
     p->encoding_ok=1;
+    p->retry_after_sec=0;
     p->filled=0;
     p->delivered=0;
     p->paused=0;
@@ -382,6 +401,8 @@ static int nova_lite_launch(nova_lite_slot *p)
     NOVA_CURL_SET(CURLOPT_LOW_SPEED_LIMIT,1024L);
     NOVA_CURL_SET(CURLOPT_LOW_SPEED_TIME,15L);
     NOVA_CURL_SET(CURLOPT_TCP_KEEPALIVE,1L);
+    NOVA_CURL_SET(CURLOPT_FRESH_CONNECT,0L);
+    NOVA_CURL_SET(CURLOPT_FORBID_REUSE,0L);
     NOVA_CURL_SET(CURLOPT_TCP_NODELAY,1L);
     NOVA_CURL_SET(CURLOPT_ACCEPT_ENCODING,"identity");
 #undef NOVA_CURL_SET
@@ -507,6 +528,52 @@ static void nova_lite_complete(nova_session *s)
         if(!p)continue;
         long code=0;
         curl_easy_getinfo(p->easy,CURLINFO_RESPONSE_CODE,&code);
+        /* NOVA_LITERANGE4_CONN_V1: query before remove_handle; do not log
+         * URL, host, IP, auth, signed redirect, or curl error text. */
+        long new_connections=0,redirects=0;
+        curl_off_t conn_id=-1,connect_us=0,tls_end_us=0,ttfb_us=0,total_us=0;
+        curl_easy_getinfo(p->easy,CURLINFO_NUM_CONNECTS,&new_connections);
+        curl_easy_getinfo(p->easy,CURLINFO_REDIRECT_COUNT,&redirects);
+        curl_easy_getinfo(p->easy,CURLINFO_CONN_ID,&conn_id);
+        curl_easy_getinfo(p->easy,CURLINFO_CONNECT_TIME_T,&connect_us);
+        curl_easy_getinfo(p->easy,CURLINFO_APPCONNECT_TIME_T,&tls_end_us);
+        curl_easy_getinfo(p->easy,CURLINFO_STARTTRANSFER_TIME_T,&ttfb_us);
+        curl_easy_getinfo(p->easy,CURLINFO_TOTAL_TIME_T,&total_us);
+        if(new_connections<0)new_connections=0;
+        uint64_t connect_ms=connect_us>0?(uint64_t)connect_us/1000:0;
+        uint64_t tls_ms=tls_end_us>connect_us?
+            (uint64_t)(tls_end_us-connect_us)/1000:0;
+        uint64_t first_byte_ms=ttfb_us>0?(uint64_t)ttfb_us/1000:0;
+        uint64_t duration_ms=total_us>0?(uint64_t)total_us/1000:0;
+        /* A preconnect failure with NUM_CONNECTS=0 is not reuse. */
+        int reused=new_connections==0 && redirects==0 && code==206 &&
+                   msg->data.result==CURLE_OK && p->range_ok && p->encoding_ok;
+        e->metric_requests++;
+        e->metric_new_connections+=(uint64_t)new_connections;
+        if(reused)e->metric_reused_requests++;
+        e->metric_connect_ms+=connect_ms;
+        e->metric_tls_ms+=tls_ms;
+        e->metric_ttfb_ms+=first_byte_ms;
+        LOGI("NOVA_LITERANGE4_CONN slot=%d at=%" PRId64
+             " len=%d new=%ld reused=%d connId=%" PRId64
+             " connectMs=%" PRIu64 " tlsMs=%" PRIu64
+             " ttfbMs=%" PRIu64 " totalMs=%" PRIu64
+             " redirects=%ld http=%ld curl=%d",
+             p->index,p->start,p->length,new_connections,reused,
+             (int64_t)conn_id,connect_ms,tls_ms,first_byte_ms,
+             duration_ms,redirects,code,(int)msg->data.result);
+        if(e->metric_requests%10==0){
+            LOGI("NOVA_LITERANGE4_CONN_SUMMARY requests=%" PRIu64
+                 " newConnections=%" PRIu64 " reused=%" PRIu64
+                 " newPer100=%" PRIu64 " avgConnectMs=%" PRIu64
+                 " avgTlsMs=%" PRIu64 " avgTtfbMs=%" PRIu64,
+                 e->metric_requests,e->metric_new_connections,
+                 e->metric_reused_requests,
+                 e->metric_new_connections*100/e->metric_requests,
+                 e->metric_connect_ms/e->metric_requests,
+                 e->metric_tls_ms/e->metric_requests,
+                 e->metric_ttfb_ms/e->metric_requests);
+        }
         curl_multi_remove_handle(e->multi,p->easy);
         if(p->headers){curl_slist_free_all(p->headers);p->headers=NULL;}
         if(e->running>0)e->running--;
@@ -517,10 +584,15 @@ static void nova_lite_complete(nova_session *s)
             if(s->multi_http403_failures){
                 e->successful_ranges++;
                 if(s->multi_active_lanes==2 && e->successful_ranges>=8){
-                    LOGI("NOVA_MULTI_HTTP403_RECOVERED validRanges=%u",
-                         e->successful_ranges);
+                    if(s->multi_backoff_status==403)
+                        LOGI("NOVA_MULTI_HTTP403_RECOVERED validRanges=%u",
+                             e->successful_ranges);
+                    else
+                        LOGI("NOVA_MULTI_RANGE_RECOVERED validRanges=%u",
+                             e->successful_ranges);
                     s->multi_http403_failures=0;
                     s->multi_http403_retry_ms=0;
+                    s->multi_backoff_status=0;
                 }
             }
             /* A piece may already be fully consumed before CURLMSG_DONE. */
@@ -537,6 +609,7 @@ static void nova_lite_complete(nova_session *s)
             curl_easy_getinfo(p->easy,CURLINFO_REDIRECT_COUNT,&redirects);
             e->last_curl_error=msg->data.result;
             e->last_http_status=code;
+            e->last_retry_after_sec=p->retry_after_sec;
             /* Never print libcurl error text: some backends include signed
              * CDN URLs or Authorization fragments in it. Codes are safe. */
             LOGI("NOVA_LITERANGE4_RANGE_ERROR status=%ld curl=%d tlsVerify=%ld at=%" PRId64
@@ -628,6 +701,7 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     s->lite->last_raise_ms=nova_iso_uptime_ms();
     s->lite->last_curl_error=CURLE_OK;
     s->lite->last_http_status=0;
+    s->lite->last_retry_after_sec=0;
     s->lite->successful_ranges=0;
     nova_multi_reset_sample(s);
     nova_lite_schedule(s);

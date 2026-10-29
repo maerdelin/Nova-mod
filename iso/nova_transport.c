@@ -148,6 +148,8 @@ typedef struct nova_session {
     /* Isolated bounded Range 403 may recover after verified single GET. */
     unsigned multi_http403_failures;
     int64_t multi_http403_retry_ms;
+    /* Reuse existing bounded recovery state for transient range failures. */
+    long multi_backoff_status;
     int multi_worker_failed;
     uint64_t multi_generation;
     int multi_active_lanes;
@@ -898,6 +900,28 @@ static int nova_file_java_http_error(jint code)
 
 #include "nova_literange4.inc"
 
+/* NOVA_MULTI_RANGE_BACKOFF_V1: retry network/temporary rate limiting only.
+ * Never retry a bad Content-Range, unexpected HTTP 200, auth error or TLS
+ * verification failure as if it were valid media data. */
+static int nova_multi_recoverable_range_error(long http,CURLcode err)
+{
+    if(http==403 || http==408 || http==429 || http==500 ||
+       http==502 || http==503 || http==504)return 1;
+    if(http!=0 && http!=206)return 0;
+    switch(err){
+        case CURLE_OPERATION_TIMEDOUT:
+        case CURLE_RECV_ERROR:
+        case CURLE_SEND_ERROR:
+        case CURLE_PARTIAL_FILE:
+        case CURLE_GOT_NOTHING:
+        case CURLE_COULDNT_CONNECT:
+        case CURLE_COULDNT_RESOLVE_HOST:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static int nova_multi_enable_http(JNIEnv *env,nova_session *s,
                                   const char *origin,const char *auth)
 {
@@ -1414,19 +1438,32 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
                      fallback_at);
                 /* The failed curl 4X Range must not permanently latch
                  * single when the canonical Java open-ended Range works. */
-                int http403 = s->lite && s->lite->last_http_status == 403;
-                if (http403) {
+                long http_status=s->lite ? s->lite->last_http_status : 0;
+                CURLcode curl_rc=s->lite ? s->lite->last_curl_error : CURLE_OK;
+                int http403=http_status==403;
+                if (nova_multi_recoverable_range_error(http_status,curl_rc)) {
                     if (s->multi_http403_failures < 1000)
                         s->multi_http403_failures++;
                     unsigned n = s->multi_http403_failures;
                     int delay = n == 1 ? 4000 : n == 2 ? 15000 : 60000;
+                    /* Honor Retry-After for HTTP throttling with a 120s bound. */
+                    if ((http_status==429 || http_status==503) && s->lite) {
+                        long server_ms=s->lite->last_retry_after_sec*1000;
+                        if(server_ms>delay && server_ms<=120000)
+                            delay=(int)server_ms;
+                    }
                     s->multi_http403_retry_ms = nova_iso_uptime_ms() + delay;
-                    nova_multi_stop(s, "http403-cooldown", 0);
-                    LOGI("NOVA_MULTI_HTTP403_COOLDOWN attempt=%u waitMs=%d cursor=%" PRId64,
-                         n, delay, fallback_at);
+                    s->multi_backoff_status = http_status;
+                    nova_multi_stop(s, http403 ? "http403-cooldown" : "range-backoff", 0);
+                    if(http403)
+                        LOGI("NOVA_MULTI_HTTP403_COOLDOWN attempt=%u waitMs=%d cursor=%" PRId64,
+                             n, delay, fallback_at);
+                    else
+                        LOGI("NOVA_MULTI_RANGE_BACKOFF http=%ld curl=%d attempt=%u waitMs=%d cursor=%" PRId64,
+                             http_status,(int)curl_rc,n,delay,fallback_at);
                 } else {
-                    /* Invalid byte ranges, unclassified curl errors, etc.
-                     * keep the previously validated fail-closed policy. */
+                    LOGI("NOVA_MULTI_RANGE_TERMINAL http=%ld curl=%d cursor=%" PRId64,
+                         http_status,(int)curl_rc,fallback_at);
                     nova_multi_stop(s, "lane-error", 1);
                 }
                 s->upstream_pos = -1;
@@ -1443,9 +1480,14 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
                 nova_iso_uptime_ms() >= s->multi_http403_retry_ms) {
                 /* Start native LiteRange at the already-committed byte;
                  * no extra native download threads. */
-                if (s->multi_http403_failures)
-                    LOGI("NOVA_MULTI_HTTP403_RETRY attempt=%u cursor=%" PRId64,
-                         s->multi_http403_failures, s->file_cursor);
+                if (s->multi_http403_failures) {
+                    if(s->multi_backoff_status==403)
+                        LOGI("NOVA_MULTI_HTTP403_RETRY attempt=%u cursor=%" PRId64,
+                             s->multi_http403_failures,s->file_cursor);
+                    else
+                        LOGI("NOVA_MULTI_RANGE_RETRY http=%ld attempt=%u cursor=%" PRId64,
+                             s->multi_backoff_status,s->multi_http403_failures,s->file_cursor);
+                }
                 int rc = nova_multi_start(s, s->file_cursor, 1);
                 if(rc<0)
                     LOGI("NOVA_LITERANGE4_START_FAIL rc=%d",rc);
@@ -1518,27 +1560,36 @@ int64_t nova_transport_seek(uint64_t generation, int64_t offset, int whence)
                  * seek; only successful seek commits the new file_cursor.
                  * This does not set the logical/presentation seek guard.
                  */
-                if (s->multi_active &&
-                    s->multi_committed_cursor != target) {
-                    LOGI("NOVA_LITERANGE4_BYTE_SEEK_RESEED from=%" PRId64
-                         " to=%" PRId64, s->multi_committed_cursor,target);
-                    nova_multi_stop(s,"lowlevel-byte-seek",0);
-                }
-                int rc=s->file_http_mode ? nova_mkv_seek_retry(s,target) :
-                                         nova_file_seek_retry(s,target);
-                if (rc==0) {
+                /* Avoid duplicate reopens only for unguarded, truly
+                 * idempotent low-level seeks at active native cursor. */
+                if (s->multi_active && !s->multi_seek_guard &&
+                    s->multi_committed_cursor == target) {
                     s->file_cursor=target;
                     ret=target;
-                    nova_multi_reset_sample(s);
-                    if (s->multi_seek_guard)
-                        LOGI("NOVA_MULTI_SEEK_GUARD_TARGET target=%" PRId64
-                             " restoreLanes=%d", target,
-                             s->multi_seek_restore_lanes);
+                    LOGI("NOVA_LITERANGE4_SEEK_NOOP target=%" PRId64,target);
                 } else {
-                    ret=rc;
-                    LOGI("NOVA_FILE_SEEK_FAIL: requested=%" PRId64
-                         " committed=%" PRId64 " rc=%d",
-                         target,s->file_cursor,rc);
+                    if (s->multi_active &&
+                        s->multi_committed_cursor != target) {
+                        LOGI("NOVA_LITERANGE4_BYTE_SEEK_RESEED from=%" PRId64
+                             " to=%" PRId64, s->multi_committed_cursor,target);
+                        nova_multi_stop(s,"lowlevel-byte-seek",0);
+                    }
+                    int rc=s->file_http_mode ? nova_mkv_seek_retry(s,target) :
+                                             nova_file_seek_retry(s,target);
+                    if (rc==0) {
+                        s->file_cursor=target;
+                        ret=target;
+                        nova_multi_reset_sample(s);
+                        if (s->multi_seek_guard)
+                            LOGI("NOVA_MULTI_SEEK_GUARD_TARGET target=%" PRId64
+                                 " restoreLanes=%d", target,
+                                 s->multi_seek_restore_lanes);
+                    } else {
+                        ret=rc;
+                        LOGI("NOVA_FILE_SEEK_FAIL: requested=%" PRId64
+                             " committed=%" PRId64 " rc=%d",
+                             target,s->file_cursor,rc);
+                    }
                 }
             }
         }
