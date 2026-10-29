@@ -145,6 +145,9 @@ typedef struct nova_session {
     int multi_active;
     int multi_run;
     int multi_disabled;
+    /* Isolated bounded Range 403 may recover after verified single GET. */
+    unsigned multi_http403_failures;
+    int64_t multi_http403_retry_ms;
     int multi_worker_failed;
     uint64_t multi_generation;
     int multi_active_lanes;
@@ -1409,7 +1412,23 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
                 int64_t fallback_at = s->file_cursor;
                 LOGI("NOVA_MULTI_FALLBACK mode=file cursor=%" PRId64,
                      fallback_at);
-                nova_multi_stop(s, "lane-error", 1);
+                /* The failed curl 4X Range must not permanently latch
+                 * single when the canonical Java open-ended Range works. */
+                int http403 = s->lite && s->lite->last_http_status == 403;
+                if (http403) {
+                    if (s->multi_http403_failures < 1000)
+                        s->multi_http403_failures++;
+                    unsigned n = s->multi_http403_failures;
+                    int delay = n == 1 ? 4000 : n == 2 ? 15000 : 60000;
+                    s->multi_http403_retry_ms = nova_iso_uptime_ms() + delay;
+                    nova_multi_stop(s, "http403-cooldown", 0);
+                    LOGI("NOVA_MULTI_HTTP403_COOLDOWN attempt=%u waitMs=%d cursor=%" PRId64,
+                         n, delay, fallback_at);
+                } else {
+                    /* Invalid byte ranges, unclassified curl errors, etc.
+                     * keep the previously validated fail-closed policy. */
+                    nova_multi_stop(s, "lane-error", 1);
+                }
                 s->upstream_pos = -1;
                 ret = s->file_http_mode
                     ? nova_mkv_single_get_read(s, dst, size)
@@ -1419,9 +1438,14 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
             ret = s->file_http_mode
                 ? nova_mkv_single_get_read(s, dst, size)
                 : nova_upstream_read_some_retry(s, dst, size);
-            if (ret > 0 && !s->multi_disabled) {
+            if (ret > 0 && !s->multi_disabled &&
+                s->file_cursor < s->upstream_size &&
+                nova_iso_uptime_ms() >= s->multi_http403_retry_ms) {
                 /* Start native LiteRange at the already-committed byte;
                  * no extra native download threads. */
+                if (s->multi_http403_failures)
+                    LOGI("NOVA_MULTI_HTTP403_RETRY attempt=%u cursor=%" PRId64,
+                         s->multi_http403_failures, s->file_cursor);
                 int rc = nova_multi_start(s, s->file_cursor, 1);
                 if(rc<0)
                     LOGI("NOVA_LITERANGE4_START_FAIL rc=%d",rc);
@@ -1572,7 +1596,7 @@ int nova_transport_seek_complete(uint64_t generation, int success)
             s->multi_seek_guard = 0;
             s->multi_seek_restore_lanes = 1;
             nova_multi_reset_sample(s);
-            if (success == 1 && !s->stopping && !s->multi_disabled && s->multi_http_ready && lanes > 1 && cursor >= 0 && cursor < s->upstream_size)
+            if (success == 1 && !s->stopping && !s->multi_disabled && s->multi_http_ready && lanes > 1 && cursor >= 0 && cursor < s->upstream_size && nova_iso_uptime_ms() >= s->multi_http403_retry_ms)
                 rc = nova_multi_start(s, cursor, lanes);
             if (success == 1)
                 LOGI("NOVA_MULTI_SEEK_GUARD_END success=1 restoredLanes=%d cursor=%" PRId64 " restartRc=%d", lanes, cursor, rc);

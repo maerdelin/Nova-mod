@@ -59,6 +59,22 @@ class LiteRange4Tests(unittest.TestCase):
         self.assertIn('curl_multi_remove_handle(',self.lite)
         self.assertIn('NOVA_MULTI_SEEK_GUARD_BEGIN',self.transport)
 
+    def test_http403_recovery_is_bounded_and_seek_safe(self):
+        for token in ("multi_http403_failures", "multi_http403_retry_ms",
+                      "NOVA_MULTI_HTTP403_COOLDOWN",
+                      "NOVA_MULTI_HTTP403_RETRY",
+                      'nova_multi_stop(s, "http403-cooldown", 0)',
+                      'nova_iso_uptime_ms() >= s->multi_http403_retry_ms',
+                      's->file_cursor < s->upstream_size',
+                      'nova_multi_stop(s, "lane-error", 1)'):
+            self.assertIn(token, self.transport)
+        for token in ("e->successful_ranges>=1",
+                      "NOVA_MULTI_HTTP403_RECOVERED",
+                      "CURLINFO_REDIRECT_COUNT",
+                      "!s->multi_http403_failures"):
+            self.assertIn(token, self.lite)
+        self.assertIn("n == 1 ? 4000 : n == 2 ? 15000 : 60000", self.transport)
+
     def test_static_dependencies_linked(self):
         for token in ('curl-8_16_0','openssl-3.5.4',
                       'libcurl.a','libssl.a','libcrypto.a'):

@@ -512,6 +512,17 @@ static void nova_lite_complete(nova_session *s)
         if(e->running>0)e->running--;
         if(msg->data.result==CURLE_OK && code==206 &&
            p->range_ok && p->encoding_ok && p->filled==p->length){
+            /* Following HTTP403, promote to W2 only after one verified 206.
+             * After eight clean paired segments, clear the backoff history. */
+            if(s->multi_http403_failures){
+                e->successful_ranges++;
+                if(s->multi_active_lanes==2 && e->successful_ranges>=8){
+                    LOGI("NOVA_MULTI_HTTP403_RECOVERED validRanges=%u",
+                         e->successful_ranges);
+                    s->multi_http403_failures=0;
+                    s->multi_http403_retry_ms=0;
+                }
+            }
             /* A piece may already be fully consumed before CURLMSG_DONE. */
             if(p->delivered==p->length){
                 p->state=NOVA_MULTI_SLOT_EMPTY;
@@ -521,15 +532,16 @@ static void nova_lite_complete(nova_session *s)
             p->paused=0;
         }else{
             p->state=NOVA_MULTI_SLOT_ERROR;
-            long ssl_verify=0;
+            long ssl_verify=0,redirects=0;
             curl_easy_getinfo(p->easy,CURLINFO_SSL_VERIFYRESULT,&ssl_verify);
+            curl_easy_getinfo(p->easy,CURLINFO_REDIRECT_COUNT,&redirects);
             e->last_curl_error=msg->data.result;
             e->last_http_status=code;
             /* Never print libcurl error text: some backends include signed
              * CDN URLs or Authorization fragments in it. Codes are safe. */
             LOGI("NOVA_LITERANGE4_RANGE_ERROR status=%ld curl=%d tlsVerify=%ld at=%" PRId64
-                 " received=%d requested=%d",
-                 code,(int)msg->data.result,ssl_verify,p->start,p->filled,p->length);
+                 " received=%d requested=%d redirects=%ld",
+                 code,(int)msg->data.result,ssl_verify,p->start,p->filled,p->length,redirects);
         }
     }
 }
@@ -599,7 +611,7 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     /* This variant has exactly two slots. Even a seek restoring 4 old
      * lanes must be capped at two when the new epoch is created. */
     lanes=lanes>2?2:lanes;
-    if(s->adaptive_target_bps>0)lanes=2;
+    if(s->adaptive_target_bps>0 && !s->multi_http403_failures)lanes=2;
     s->multi_active_lanes=lanes;
     s->adaptive_lanes=lanes;
     s->multi_committed_cursor=start;
@@ -616,6 +628,7 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     s->lite->last_raise_ms=nova_iso_uptime_ms();
     s->lite->last_curl_error=CURLE_OK;
     s->lite->last_http_status=0;
+    s->lite->successful_ranges=0;
     nova_multi_reset_sample(s);
     nova_lite_schedule(s);
     /* Leave Java connections and the legacy AVIO path available only as
@@ -675,7 +688,8 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
     /* W=2 only, never the obsolete 1->2->3->4 escalation.
      * Start second lane once real X is known; completed future work
      * remains a reservation until prefix is committed. */
-    if(target>0 && s->multi_active_lanes<2 && !s->multi_seek_guard){
+    if(target>0 && s->multi_active_lanes<2 && !s->multi_seek_guard &&
+       (!s->multi_http403_failures || e->successful_ranges>=1)){
         s->multi_active_lanes=2;
         LOGI("NOVA_LITERANGE4_PAIR_ENABLE x=%" PRIu64
              " from=1 to=2",target);
