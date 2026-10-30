@@ -226,6 +226,9 @@ typedef struct nova_session {
      * NOVA_MULTI_SCOPE_V3 exposes the same DirectRangeHttp byte source to
      * every WebDAV format after open, including ISO movie-data LBAs. */
     int file_http_mode;
+    /* NOVA_STARTUP_ONEPASS_V1: observational scoped pre-probe cancellation. */
+    volatile int startup_probe_complete;
+    volatile int startup_read_preempt;
     int multi_http_ready;
     jobject file_conn;
     jobject file_stream;
@@ -1599,6 +1602,9 @@ int nova_transport_page_take(uint64_t generation, int *out_page, int max_bytes)
     pthread_mutex_lock(&s->io_lock);
     int ret=NOVA_MULTI_FALLBACK;
     if(s->stopping)ret=AVERROR_EXIT;
+    else if(s->mode==NOVA_MODE_FILE &&
+            __atomic_load_n(&s->startup_read_preempt,__ATOMIC_ACQUIRE))
+        ret=AVERROR(EINTR); /* transient relocation, never terminal abort */
     else if(s->mode==NOVA_MODE_FILE && s->multi_active &&
             s->multi_http_ready && !s->multi_seek_guard){
         ret=nova_multi_take_page(s,out_page,max_bytes);
@@ -1643,6 +1649,9 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
     int ret;
     if (s->stopping) {
         ret = AVERROR_EXIT;
+    } else if (s->mode == NOVA_MODE_FILE &&
+               __atomic_load_n(&s->startup_read_preempt,__ATOMIC_ACQUIRE)) {
+        ret = AVERROR(EINTR);
     } else if (s->mode == NOVA_MODE_BLURAY_ISO) {
         /* Keep libbluray/RAW128/decoder architecture unchanged. The generic
          * multi-Range source is used only inside upstream_read_blocks(). */
@@ -1941,6 +1950,23 @@ int64_t nova_transport_size(uint64_t generation)
 }
 
 __attribute__((visibility("default")))
+/* Called outside source_mutex by the demux seek thread. The CURLM owner
+ * notices the atomic bit and returns EINTR without stopping the session.
+ * The subsequent transport seek retires obsolete CURL ranges under io_lock. */
+__attribute__((visibility("default")))
+int nova_transport_startup_probe_hint(uint64_t generation, int active)
+{
+    nova_session *s=session_acquire(generation);
+    if(!s)return AVERROR_EXIT;
+    int enabled=s->mode==NOVA_MODE_FILE &&
+        !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE);
+    if(enabled)
+        __atomic_store_n(&s->startup_read_preempt,active!=0,__ATOMIC_RELEASE);
+    session_release(s);
+    return enabled;
+}
+
+__attribute__((visibility("default")))
 int nova_transport_set_target_bps(uint64_t generation, uint64_t target_bps)
 {
     nova_session *s = session_acquire(generation);
@@ -1948,6 +1974,12 @@ int nova_transport_set_target_bps(uint64_t generation, uint64_t target_bps)
         return AVERROR_EXIT;
     if (s->multi_http_ready)
         nova_multi_set_target(s, target_bps);
+    /* This callback follows native format probing, NOT the post-start
+     * buffering lifecycle. Never preempt a running movie download. */
+    if(s->mode==NOVA_MODE_FILE) {
+        __atomic_store_n(&s->startup_read_preempt,0,__ATOMIC_RELEASE);
+        __atomic_store_n(&s->startup_probe_complete,1,__ATOMIC_RELEASE);
+    }
     session_release(s);
     return 0;
 }

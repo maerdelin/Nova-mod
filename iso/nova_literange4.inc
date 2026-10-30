@@ -108,6 +108,9 @@ typedef struct nova_lite_slot {
     int range_ok;
     int encoding_ok;
     long retry_after_sec;
+    /* NOVA_STARTUP_ONEPASS_V1: retry an expired signed redirect once at origin. */
+    int used_probe_redirect;
+    int origin_retry_once;
     char range_str[64];
     char curl_error[CURL_ERROR_SIZE];
 } nova_lite_slot;
@@ -128,6 +131,10 @@ typedef struct nova_lite_state {
     unsigned starvation_count;
     unsigned good_samples;
     char *request_url;
+    /* Never persisted or logged: verified per-session final 206 URL. */
+    char *probe_redirect_url;
+    int64_t probe_redirect_expires;
+    int probe_piece_switchover;
     char *ca_pem;
     size_t ca_pem_len;
     unsigned ca_count;
@@ -509,7 +516,8 @@ static int nova_lite_launch(nova_lite_slot *p)
              p->start,p->start+(int64_t)p->length-1);
     if(p->headers){curl_slist_free_all(p->headers);p->headers=NULL;}
     p->headers=curl_slist_append(p->headers,"Accept-Encoding: identity");
-    if(s->origin_auth && *s->origin_auth){
+    /* A cross-host signed CDN URL must NEVER receive origin credentials. */
+    if(s->origin_auth && *s->origin_auth && !p->used_probe_redirect){
         size_t n=strlen(s->origin_auth)+16;
         char *line=(char *)malloc(n);
         if(!line)return AVERROR(ENOMEM);
@@ -526,7 +534,13 @@ static int nova_lite_launch(nova_lite_slot *p)
     if(checked!=CURLE_OK && opt==CURLE_OK)opt=checked; \
 }while(0)
     NOVA_CURL_SET(CURLOPT_ERRORBUFFER,p->curl_error);
-    NOVA_CURL_SET(CURLOPT_URL,e->request_url);
+    p->used_probe_redirect = s->mode==NOVA_MODE_FILE &&
+        !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) &&
+        !p->origin_retry_once && e->probe_redirect_url &&
+        nova_iso_uptime_ms() < e->probe_redirect_expires;
+    const char *startup_request_url=p->used_probe_redirect ?
+        e->probe_redirect_url : e->request_url;
+    NOVA_CURL_SET(CURLOPT_URL,startup_request_url);
     NOVA_CURL_SET(CURLOPT_RANGE,p->range_str);
     NOVA_CURL_SET(CURLOPT_HTTPHEADER,p->headers);
     NOVA_CURL_SET(CURLOPT_WRITEFUNCTION,nova_lite_write);
@@ -539,7 +553,7 @@ static int nova_lite_launch(nova_lite_slot *p)
     NOVA_CURL_SET(CURLOPT_UNRESTRICTED_AUTH,0L);
     NOVA_CURL_SET(CURLOPT_PROTOCOLS_STR,"http,https");
     NOVA_CURL_SET(CURLOPT_REDIR_PROTOCOLS_STR,
-                     !strncasecmp(s->origin_url,"https:",6)?"https":"http,https");
+                     !strncasecmp(startup_request_url,"https:",6)?"https":"http,https");
     NOVA_CURL_SET(CURLOPT_SSL_VERIFYPEER,1L);
     NOVA_CURL_SET(CURLOPT_SSL_VERIFYHOST,2L);
     if(e->ca_pem){
@@ -581,7 +595,16 @@ static uint64_t nova_lite_piece_quantum(nova_session *s)
     pthread_mutex_lock(&s->multi_lock);
     x=s->adaptive_target_bps;
     pthread_mutex_unlock(&s->multi_lock);
-    if(!x)return 1024 * 1024; /* temporary pre-probe choice */
+    if(!x){
+        /* A FILE probe previously issued 1 MiB serial 302/206 ranges.
+         * Read larger sequential pieces only until format probing ends.
+         * ISO and rate-limit/backoff paths retain their old size. */
+        if(s->mode==NOVA_MODE_FILE &&
+           !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) &&
+           !s->multi_http403_failures)
+            return 4ULL*1024*1024;
+        return 1024*1024;
+    }
     if(x>UINT64_MAX/NOVA_LITE_SEGMENT_SECONDS)
         return NOVA_LITE_MAX_PIECE_BYTES;
     uint64_t quantum=x*NOVA_LITE_SEGMENT_SECONDS;
@@ -634,7 +657,10 @@ static void nova_lite_schedule(nova_session *s)
     }
     /* The bitrate becomes known after probing. Freeze 4X from the next
      * available slice; any currently ACTIVE range keeps its original end. */
-    if(e->piece_bytes==1024*1024 && s->adaptive_target_bps>0){
+    if(!e->probe_piece_switchover && s->adaptive_target_bps>0 &&
+       (e->piece_bytes==1024*1024 ||
+        (s->mode==NOVA_MODE_FILE && e->piece_bytes==4ULL*1024*1024))){
+        e->probe_piece_switchover=1;
         e->piece_bytes=nova_lite_piece_quantum(s);
         e->piece_origin=s->multi_next_offset;
         LOGI("NOVA_LITERANGE4_RATE_READY origin=%" PRId64
@@ -649,6 +675,7 @@ static void nova_lite_schedule(nova_session *s)
                 p=&e->slots[i];break;
             }
         if(!p)break;
+        p->origin_retry_once=0;
         p->start=s->multi_next_offset;
         p->length=nova_lite_piece_length(s,p->start);
         if(p->length<=0){p->state=NOVA_MULTI_SLOT_ERROR;break;}
@@ -732,6 +759,26 @@ static void nova_lite_complete(nova_session *s)
          * after a complete verified final 206; failed preconnect is not reuse. */
         int valid206=code==206 && msg->data.result==CURLE_OK &&
                      p->range_ok && p->encoding_ok && p->filled==p->length;
+        /* Cache ONLY an integrity-verified final 206, never a redirect
+         * header or unverified/partial response. Session-only, short TTL. */
+        if(valid206 && redirects>0 && !p->used_probe_redirect &&
+           s->mode==NOVA_MODE_FILE &&
+           !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE)){
+            char *effective=NULL;
+            curl_easy_getinfo(p->easy,CURLINFO_EFFECTIVE_URL,&effective);
+            if(effective && strlen(effective)<NOVA_LITE_URL_LIMIT &&
+               (!strncasecmp(effective,"https://",8) ||
+                (!strncasecmp(e->request_url,"http://",7) &&
+                 !strncasecmp(effective,"http://",7)))){
+                char *copy=strdup(effective);
+                if(copy){
+                    free(e->probe_redirect_url);
+                    e->probe_redirect_url=copy;
+                    e->probe_redirect_expires=nova_iso_uptime_ms()+15000;
+                    LOGI("NOVA_STARTUP_REDIRECT_CACHE verified=1 ttlMs=15000");
+                }
+            }
+        }
         int reused=valid206 && new_connections==0;
         e->metric_requests++;
         e->metric_new_connections+=(uint64_t)new_connections;
@@ -762,6 +809,22 @@ static void nova_lite_complete(nova_session *s)
         curl_multi_remove_handle(e->multi,p->easy);
         if(p->headers){curl_slist_free_all(p->headers);p->headers=NULL;}
         if(e->running>0)e->running--;
+        if(!valid206 && p->used_probe_redirect &&
+           !p->origin_retry_once && s->mode==NOVA_MODE_FILE &&
+           !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE)){
+            /* Signed CDN URL expired or cannot handle a new Range.
+             * Reissue this SAME piece once via canonical origin before
+             * recording any HTTP403 cooldown or advancing its cursor. */
+            free(e->probe_redirect_url);
+            e->probe_redirect_url=NULL;
+            e->probe_redirect_expires=0;
+            nova_lite_release_pages(p);
+            p->state=NOVA_MULTI_SLOT_QUEUED;
+            p->origin_retry_once=1;
+            LOGI("NOVA_STARTUP_REDIRECT_ORIGIN_RETRY slot=%d http=%ld curl=%d",
+                 p->index,code,(int)msg->data.result);
+            if(nova_lite_launch(p)==0)continue;
+        }
         if(msg->data.result==CURLE_OK && code==206 &&
            p->range_ok && p->encoding_ok && p->filled==p->length){
             /* Following HTTP403, promote to W2 only after one verified 206.
@@ -897,6 +960,7 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     s->lite->generation=s->multi_generation;
     s->lite->piece_origin=start;
     s->lite->piece_bytes=nova_lite_piece_quantum(s);
+    s->lite->probe_piece_switchover=0;
     s->lite->last_gate_log_ms=0;
     LOGI("NOVA_LITERANGE4_REBASE origin=%" PRId64
          " piece=%" PRIu64 " x=%" PRIu64
@@ -1007,6 +1071,14 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
     nova_shared_warehouse *w=s->warehouse;
     int64_t began=nova_iso_uptime_ms();
     while(!s->stopping && s->multi_run){
+        /* The demuxer requested a different file byte during probing.
+         * Only the CURLM owner reacts; no other thread touches handles. */
+        if(s->mode==NOVA_MODE_FILE &&
+           __atomic_load_n(&s->startup_read_preempt,__ATOMIC_ACQUIRE)){
+            LOGI("NOVA_STARTUP_CURL_CANCEL reason=probe-byte-seek cursor=%" PRId64,
+                 s->multi_committed_cursor);
+            return AVERROR(EINTR);
+        }
         if(s->multi_committed_cursor>=s->upstream_size)return AVERROR_EOF;
         nova_lite_slot *current=NULL;
         for(int i=0;i<NOVA_LITE_SLOTS;++i){
@@ -1093,6 +1165,9 @@ shared42_await_more:
             nova_lite_telemetry(s,NOVA_LITE_WAIT_TRIGGER_MS);
         }
         if(s->stopping)return AVERROR_EXIT;
+        if(s->mode==NOVA_MODE_FILE &&
+           __atomic_load_n(&s->startup_read_preempt,__ATOMIC_ACQUIRE))
+            return AVERROR(EINTR);
         if(running>0){
             int fds=0;
             rc=curl_multi_poll(e->multi,NULL,0,NOVA_LITE_POLL_MS,&fds);
@@ -1152,6 +1227,7 @@ static void nova_multi_destroy(nova_session *s)
         }
         if(e->multi)curl_multi_cleanup(e->multi);
         free(e->request_url);
+        free(e->probe_redirect_url);
         free(e->ca_pem);
         free(e);
         s->lite=NULL;
