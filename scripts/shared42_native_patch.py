@@ -32,6 +32,7 @@ def patch(text):
     int page_tail;
     int page_queued;
     int page_head_consumed;
+    /* NOVA_SHARED42_BACKPRESSURE_V2: cap physical RAW ownership. */
 """
     text=once(text,"    nova_transport_set_target_bps_fn direct_set_target_bps;\n",fields,"shared RAW fields")
     pre=r"""/* Shared-page transport ABI is resolved through the already open handle. */
@@ -220,6 +221,18 @@ def patch(text):
     new="""    s->rebuffer_capacity_bytes = raw->capacity_bytes;
     __atomic_store_n(&s->raw_prefetch_enabled, 1, __ATOMIC_RELEASE);"""
     text=once(text,old,new,"open capacity telemetry")
+    # Enforce physical page ownership independent of logical byte count:
+    # partially filled pages still occupy a complete 64 KiB slot.
+    text=once(text,
+              "(raw->eof || raw->used_bytes >= raw->capacity_bytes) ) {",
+              "(raw->eof || raw->used_bytes >= raw->capacity_bytes ||\n"
+              "                 (raw->shared_pages && raw->page_queued >= 1376)) ) {",
+              "RAW producer wait physical quota")
+    text=once(text,
+              "raw->eof || raw->used_bytes >= raw->capacity_bytes ) {",
+              "raw->eof || raw->used_bytes >= raw->capacity_bytes ||\n"
+              "             (raw->shared_pages && raw->page_queued >= 1376) ) {",
+              "RAW producer recheck physical quota")
     # The post-patch cleanup hook is installed by the previous direct source
     # patch; no extra raw->ring cleanup needed (null for shared).
     return text
