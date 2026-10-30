@@ -68,6 +68,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_shared42_backpressure.py -v
           python3 -m unittest discover -s tests -p test_literange4_keepalive.py -v
           python3 -m unittest discover -s tests -p test_literange4_hardening.py -v
+          python3 -m unittest discover -s tests -p test_redirect_timeout_classifier.py -v
           python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
           python3 -m unittest discover -s tests -p test_iso_index_seek_v2.py -v

@@ -1029,7 +1029,21 @@ static int nova_multi_recoverable_range_error(long http,CURLcode err)
 {
     if(http==403 || http==408 || http==429 || http==500 ||
        http==502 || http==503 || http==504)return 1;
-    if(http!=0 && http!=206)return 0;
+    /* NOVA_REDIRECT_TIMEOUT_RECOVERABLE_V1:
+     * libcurl may report the last intermediate 301/302/303/307/308 when
+     * connect/transfer times out while following a signed redirect.
+     * Such a transport error is transient; it must enter the existing
+     * bounded single-GET + backoff/retry recovery, not permanently disable
+     * multi-Range for this playback session.
+     *
+     * Keep 3xx + CURLE_OK (an incomplete/invalid redirect), auth failures,
+     * TLS verification failures, unexpected HTTP 200, and invalid ranges
+     * TERMINAL. Only the explicit transient CURLcode cases below recover.
+     * No changes to 403/429 rules, 4-second slices, or startup/seek logic.
+     */
+    if(http!=0 && http!=206 &&
+       http!=301 && http!=302 && http!=303 &&
+       http!=307 && http!=308)return 0;
     switch(err){
         case CURLE_OPERATION_TIMEDOUT:
         case CURLE_RECV_ERROR:
