@@ -72,7 +72,8 @@ class FourStartupFixTests(unittest.TestCase):
     def test_probe_first_verified_range_gets_bandwidth_priority(self):
         self.assertIn("startup_first206_complete",self.curl)
         self.assertIn("NOVA_STARTUP_FIRST206_READY",self.curl)
-        self.assertIn("(s->mode!=NOVA_MODE_FILE || e->startup_first206_complete)",self.curl)
+        self.assertIn("(s->mode!=NOVA_MODE_FILE || e->startup_first206_complete ||",self.curl)
+        self.assertIn("e->slots[0].delivered>=512*1024",self.curl)
         self.assertIn("s->startup_probe_complete",self.curl)
         self.assertIn("if(valid206 && s->mode==NOVA_MODE_FILE",self.curl)
         self.assertIn("#define NOVA_LITE_SEGMENT_SECONDS 4",self.curl)
