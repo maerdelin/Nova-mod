@@ -946,8 +946,10 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
                     current->page_count--;
                     page->next=-1;
                     if(out_page){
+                        /* NOVA_SHARED42_MKV_PAGE_VIEW_V1: preserve the
+                         * consumed prefix, exposed by page_data/length.
+                         * The remaining bytes transfer by descriptor only. */
                         page->state=NOVA_WH_RAW;
-                        page->consumed=0;
                         *out_page=n;
                     }else nova_wh_page_free(w,n);
                 }else page->consumed+=take;
