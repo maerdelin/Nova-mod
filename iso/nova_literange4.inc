@@ -1063,7 +1063,13 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
      * Never upgrade just because time has elapsed or single GET opened. */
     unsigned required_valid=s->multi_http403_failures>1?2:1;
     if(target>0 && s->multi_active_lanes<2 && !s->multi_seek_guard &&
-       (s->mode!=NOVA_MODE_FILE || e->startup_first206_complete) &&
+       /* NOVA_STARTUP_DEEP_V1: 512 KiB actually consumed is enough to
+        * establish first-range progress; do not wait for the entire
+        * 4 MiB 206 before preparing the second Range. Original
+        * HTTP403/rearm and generation guards remain unchanged. */
+       (s->mode!=NOVA_MODE_FILE || e->startup_first206_complete ||
+        (e->slots[0].state==NOVA_MULTI_SLOT_ACTIVE &&
+         e->slots[0].delivered>=512*1024)) &&
        (!s->multi_http403_failures ||
         e->successful_ranges>=required_valid)){
         if(s->multi_http403_failures)
