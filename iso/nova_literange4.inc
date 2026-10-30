@@ -134,6 +134,8 @@ typedef struct nova_lite_state {
     /* Never persisted or logged: verified per-session final 206 URL. */
     char *probe_redirect_url;
     int64_t probe_redirect_expires;
+    /* When a signed final URL rejects a DIFFERENT Range, avoid further probes. */
+    int probe_redirect_disabled;
     int probe_piece_switchover;
     char *ca_pem;
     size_t ca_pem_len;
@@ -515,8 +517,16 @@ static int nova_lite_launch(nova_lite_slot *p)
     snprintf(p->range_str,sizeof(p->range_str),"%" PRId64 "-%" PRId64,
              p->start,p->start+(int64_t)p->length-1);
     if(p->headers){curl_slist_free_all(p->headers);p->headers=NULL;}
+    /* NOVA_STARTUP_FOURFIX_V1: compute URL selection BEFORE auth headers.
+     * The old order reused a stale flag: cached CDN got origin credentials,
+     * then canonical-origin retry omitted Authorization and returned 401. */
+    p->used_probe_redirect = s->mode==NOVA_MODE_FILE &&
+        !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) &&
+        !p->origin_retry_once && !e->probe_redirect_disabled &&
+        e->probe_redirect_url &&
+        nova_iso_uptime_ms() < e->probe_redirect_expires;
     p->headers=curl_slist_append(p->headers,"Accept-Encoding: identity");
-    /* A cross-host signed CDN URL must NEVER receive origin credentials. */
+    /* Credentials belong to canonical origin only; never cached CDN URL. */
     if(s->origin_auth && *s->origin_auth && !p->used_probe_redirect){
         size_t n=strlen(s->origin_auth)+16;
         char *line=(char *)malloc(n);
@@ -534,10 +544,6 @@ static int nova_lite_launch(nova_lite_slot *p)
     if(checked!=CURLE_OK && opt==CURLE_OK)opt=checked; \
 }while(0)
     NOVA_CURL_SET(CURLOPT_ERRORBUFFER,p->curl_error);
-    p->used_probe_redirect = s->mode==NOVA_MODE_FILE &&
-        !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) &&
-        !p->origin_retry_once && e->probe_redirect_url &&
-        nova_iso_uptime_ms() < e->probe_redirect_expires;
     const char *startup_request_url=p->used_probe_redirect ?
         e->probe_redirect_url : e->request_url;
     NOVA_CURL_SET(CURLOPT_URL,startup_request_url);
@@ -762,7 +768,7 @@ static void nova_lite_complete(nova_session *s)
         /* Cache ONLY an integrity-verified final 206, never a redirect
          * header or unverified/partial response. Session-only, short TTL. */
         if(valid206 && redirects>0 && !p->used_probe_redirect &&
-           s->mode==NOVA_MODE_FILE &&
+           !e->probe_redirect_disabled && s->mode==NOVA_MODE_FILE &&
            !__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE)){
             char *effective=NULL;
             curl_easy_getinfo(p->easy,CURLINFO_EFFECTIVE_URL,&effective);
@@ -818,6 +824,11 @@ static void nova_lite_complete(nova_session *s)
             free(e->probe_redirect_url);
             e->probe_redirect_url=NULL;
             e->probe_redirect_expires=0;
+            /* The same signed URL passed its FIRST byte-range but rejected
+             * a DIFFERENT one. Do not repeat this 400->401 sequence on
+             * the next probe piece; canonical redirects remain supported. */
+            e->probe_redirect_disabled=1;
+            LOGI("NOVA_STARTUP_REDIRECT_INCOMPATIBLE reuse=off http=%ld",code);
             nova_lite_release_pages(p);
             p->state=NOVA_MULTI_SLOT_QUEUED;
             p->origin_retry_once=1;
