@@ -219,6 +219,8 @@ typedef struct NOVA_RAW_PREFETCH {
     uint64_t last_log_produced;
     uint64_t last_log_consumed;
     int64_t last_log_us;
+    unsigned nova_boot_producer_calls;
+    unsigned nova_boot_consumer_calls;
     /* NOVA_MKV_BBC_SEEK_GUARD_V1: only MKV one-GET source. */
     int mkv_single_get;
     volatile int mkv_seek_active;
@@ -396,7 +398,14 @@ static void *nova_raw_thread(void *opaque)
             continue;
         }
 
+        int64_t nova_boot_io_begin = av_gettime_relative();
         int got = avio_read(raw->source, raw->ring + write_off, want);
+        int64_t nova_boot_io_ms = (av_gettime_relative()-nova_boot_io_begin)/1000;
+        if( nova_boot_io_ms >= 100 || raw->nova_boot_producer_calls++ < 12 )
+            serprintf("NOVA_BOOT_RAW_SOURCE tMs=%lld thread=%lu generation=%u want=%d got=%d waitMs=%lld\n",
+                      (long long)(av_gettime_relative()/1000),
+                      (unsigned long)pthread_self(),generation,want,got,
+                      (long long)nova_boot_io_ms);
         pthread_mutex_unlock(&raw->source_mutex);
 
         pthread_mutex_lock(&raw->mutex);
@@ -497,6 +506,7 @@ static int nova_raw_read(void *opaque, uint8_t *dst, int size)
     if( size <= 0 )
         return AVERROR(EINVAL);
 
+    int64_t nova_boot_read_begin = av_gettime_relative();
     pthread_mutex_lock(&raw->mutex);
     if( nova_mkv_seek_guard_failed(raw) ) {
         pthread_mutex_unlock(&raw->mutex);
@@ -523,6 +533,13 @@ static int nova_raw_read(void *opaque, uint8_t *dst, int size)
         }
     }
 
+    int64_t nova_boot_read_wait_ms = (av_gettime_relative()-nova_boot_read_begin)/1000;
+    if( nova_boot_read_wait_ms >= 100 || raw->nova_boot_consumer_calls++ < 12 )
+        serprintf("NOVA_BOOT_RAW_CONSUMER tMs=%lld thread=%lu want=%d used=%lld waitMs=%lld generation=%u\n",
+                  (long long)(av_gettime_relative()/1000),
+                  (unsigned long)pthread_self(),size,
+                  (long long)raw->used_bytes,
+                  (long long)nova_boot_read_wait_ms,raw->generation);
     if( raw->used_bytes == 0 ) {
         int ret = raw->eof ? AVERROR_EOF : AVERROR_EXIT;
         pthread_mutex_unlock(&raw->mutex);
@@ -586,8 +603,17 @@ static int64_t nova_raw_seek(void *opaque, int64_t offset, int whence)
 
     // Serialize the actual source protocol. The producer never holds the raw
     // queue mutex while blocked in network I/O, so seek cannot deadlock it.
+    int64_t nova_boot_seek_wait_begin=av_gettime_relative();
     pthread_mutex_lock(&raw->source_mutex);
+    int64_t nova_boot_mutex_wait_ms=(av_gettime_relative()-nova_boot_seek_wait_begin)/1000;
+    int64_t nova_boot_seek_io_begin=av_gettime_relative();
     int64_t result = avio_seek(raw->source, target, SEEK_SET);
+    int64_t nova_boot_seek_io_ms=(av_gettime_relative()-nova_boot_seek_io_begin)/1000;
+    serprintf("NOVA_BOOT_RAW_SEEK tMs=%lld thread=%lu current=%lld target=%lld result=%lld mutexWaitMs=%lld ioMs=%lld\n",
+              (long long)(av_gettime_relative()/1000),
+              (unsigned long)pthread_self(),
+              (long long)current,(long long)target,(long long)result,
+              (long long)nova_boot_mutex_wait_ms,(long long)nova_boot_seek_io_ms);
     if( result < 0 && raw->mkv_single_get &&
         __atomic_load_n(&raw->mkv_seek_active, __ATOMIC_ACQUIRE) ) {
         __atomic_store_n(&raw->mkv_seek_failed, 1, __ATOMIC_RELEASE);
