@@ -20,6 +20,8 @@ TRACE_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/NovaL
 .source "NovaLoadingTrace.java"
 
 .field private static sActive:Z
+.field private static sSession:I
+.field private static sHttpId:I
 
 .method private constructor <init>()V
     .locals 0
@@ -29,6 +31,9 @@ TRACE_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/NovaL
 
 .method public static begin()V
     .locals 1
+    sget v0, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->sSession:I
+    add-int/lit8 v0, v0, 0x1
+    sput v0, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->sSession:I
     const/4 v0, 0x1
     sput-boolean v0, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->sActive:Z
     const-string v0, "UI_START"
@@ -62,7 +67,11 @@ TRACE_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/NovaL
     move-result v2
     new-instance v3, Ljava/lang/StringBuilder;
     invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
-    const-string v4, "tMs="
+    const-string v4, "sid="
+    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    sget v4, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->sSession:I
+    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v4, " tMs="
     invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     invoke-virtual {v3, v0, v1}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
     const-string v4, " tid="
@@ -90,6 +99,33 @@ TRACE_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/NovaL
     const-string v1, " status="
     invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     invoke-virtual {v0, p2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v0
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->mark(Ljava/lang/String;)V
+    return-void
+.end method
+.method public static synchronized nextHttp()I
+    .locals 1
+    sget v0, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->sHttpId:I
+    add-int/lit8 v0, v0, 0x1
+    sput v0, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->sHttpId:I
+    return v0
+.end method
+
+.method public static markReq(Ljava/lang/String;III)V
+    .locals 3
+    new-instance v0, Ljava/lang/StringBuilder;
+    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
+    invoke-virtual {v0, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    const-string v1, " req="
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0, p1}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v1, " hop="
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0, p2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    const-string v1, " status="
+    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v0, p3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
     invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v0
     invoke-static {v0}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->mark(Ljava/lang/String;)V
@@ -145,6 +181,7 @@ def _log_method_entry(body: str, stage: str) -> str:
 
 def patch_activity(text: str) -> str:
     text = _method(text, " start()V", lambda body: _inject_begin(body))
+    text = _method(text, " stop()V", lambda body: _log_method_entry(body, "UI_STOP"))
     text = _method(text, " postVideoInfoAndPrepared()V", _inject_hide)
     # Actual UI visibility event, not the 500ms-delayed start entry.
     # Add an unambiguous trace at the VISIBLE instruction, preserving flow.
@@ -236,11 +273,15 @@ def patch_range_http(text: str) -> str:
         "HTTP_HOP_CONNECT_BEGIN")
     text = _replace_1(text,
         "    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I\n    move-result v6\n",
-        _log("v13", "HTTP_RESPONSE_WAIT_BEGIN") +
-        "    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I\n"
-        "    move-result v6\n"
-        '    const-string v13, "HTTP_RESPONSE_WAIT_END"\n'
-        f"    invoke-static {{v13, v2, v6}}, {TRACE}->markHttp(Ljava/lang/String;II)V\n",
+        '    invoke-static {}, ' + TRACE + '->nextHttp()I\n'
+        '    move-result v13\n'
+        '    const-string v5, "HTTP_RESPONSE_WAIT_BEGIN"\n'
+        '    const/4 v6, -0x1\n'
+        + f"    invoke-static {{v5, v13, v2, v6}}, {TRACE}->markReq(Ljava/lang/String;III)V\n"
+        + "    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I\n"
+        + "    move-result v6\n"
+        + '    const-string v5, "HTTP_RESPONSE_WAIT_END"\n'
+        + f"    invoke-static {{v5, v13, v2, v6}}, {TRACE}->markReq(Ljava/lang/String;III)V\n",
         "HTTP_RESPONSE_WAIT")
     text = _replace_1(text,
         "    :redirect\n    const-string v7, \"Location\"\n",
@@ -264,9 +305,15 @@ def patch_redirect_resolver(text: str) -> str:
             "RESOLVER_HOP_CONNECT_BEGIN")
         body = _replace_1(body,
             "    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I\n    move-result v5\n",
-            _log(reg, "RESOLVER_RESPONSE_WAIT_BEGIN") +
-            "    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I\n    move-result v5\n" +
-            _log(reg, "RESOLVER_RESPONSE_WAIT_END"),
+            '    invoke-static {}, ' + TRACE + '->nextHttp()I\n'
+            + '    move-result ' + reg + '\n'
+            + '    const-string v9, "RESOLVER_RESPONSE_WAIT_BEGIN"\n'
+            + '    const/4 v5, -0x1\n'
+            + f"    invoke-static {{v9, {reg}, v3, v5}}, {TRACE}->markReq(Ljava/lang/String;III)V\n"
+            + "    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I\n"
+            + "    move-result v5\n"
+            + '    const-string v9, "RESOLVER_RESPONSE_WAIT_END"\n'
+            + f"    invoke-static {{v9, {reg}, v3, v5}}, {TRACE}->markReq(Ljava/lang/String;III)V\n",
             "RESOLVER_RESPONSE_WAIT")
         return body
     return _method(text, " resolve(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;", edit)
