@@ -1207,6 +1207,11 @@ def main():
     from startup_loading_diag_patch import apply_smali_trace
     apply_smali_trace(root)
 
+    # Guard malformed torrent stdout without changing listing or playback.
+    from torrent_crash_guard_patch import patch_torrent_observer
+    torrent=one(root.glob("smali*/com/archos/mediacenter/video/browser/TorrentObserverService.smali"),"TorrentObserverService")
+    torrent.write_text(patch_torrent_observer(torrent.read_text()))
+
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
         src=args.native_root/abi/"libnova_transport.so"
         if not src.is_file():
