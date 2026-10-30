@@ -148,7 +148,6 @@ def patch_activity(text: str) -> str:
     text = _method(text, " postVideoInfoAndPrepared()V", _inject_hide)
     # Actual UI visibility event, not the 500ms-delayed start entry.
     # Add an unambiguous trace at the VISIBLE instruction, preserving flow.
-    text = _method(text, " handleMessage(Landroid/os/Message;)V", _inject_visible)
     return text
 
 
@@ -299,6 +298,17 @@ def apply_smali_trace(root: Path) -> None:
         if new == old:
             raise RuntimeError("startup trace empty patch: " + name)
         path.write_text(new)
+    # UI Handler is a compiler-generated inner class, not PlayerActivity itself.
+    # Match the actual handler by its method body and enforce a unique anchor.
+    handlers = []
+    for h in root.glob("smali*/" + group + "/PlayerActivity$*.smali"):
+        content = h.read_text()
+        if " handleMessage(Landroid/os/Message;)V" in content and "setVisibility(I)V" in content:
+            handlers.append((h, content))
+    if len(handlers) != 1:
+        raise RuntimeError(f"startup spinner handler unique match required: {len(handlers)}")
+    h, content = handlers[0]
+    h.write_text(_method(content, " handleMessage(Landroid/os/Message;)V", _inject_visible))
     target = one("WeakStartProxy.smali").parent / "NovaLoadingTrace.smali"
     if target.exists():
         raise RuntimeError("startup trace helper already exists")
