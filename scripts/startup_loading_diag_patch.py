@@ -48,6 +48,31 @@ TRACE_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/NovaL
     return-void
 .end method
 
+.method public static visibility(I)V
+    .locals 1
+    if-nez p0, :done
+    const-string v0, "UI_HANDLER_VIEW_VISIBLE"
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->mark(Ljava/lang/String;)V
+    :done
+    return-void
+.end method
+
+.method public static markMessage(Landroid/os/Message;)V
+    .locals 3
+    if-eqz p0, :done
+    iget v0, p0, Landroid/os/Message;->what:I
+    new-instance v1, Ljava/lang/StringBuilder;
+    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
+    const-string v2, "UI_HANDLER_WHAT="
+    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    invoke-virtual {v1, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+    move-result-object v1
+    invoke-static {v1}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->mark(Ljava/lang/String;)V
+    :done
+    return-void
+.end method
+
 .method public static end()V
     .locals 1
     const-string v0, "UI_SPINNER_HIDE"
@@ -189,17 +214,37 @@ def patch_activity(text: str) -> str:
 
 
 def _inject_visible(body: str) -> str:
-    anchor = "Landroid/view/View;->setVisibility(I)V"
-    # This handler has precisely one visibility call for MSG_PROGRESS_VISIBLE.
-    if body.count(anchor) != 1:
-        raise RuntimeError("UI visible: expected one visibility call")
-    lines = body.splitlines(keepends=True)
-    for i, line in enumerate(lines):
-        if anchor in line:
-            lines.insert(i, f"    invoke-static {{}}, {TRACE}->visible()V\n")
-            return "".join(lines)
-    raise RuntimeError("UI visible anchor absent")
+    """Trace actual View.VISIBLE writes, or record the Handler message identity.
 
+    Never guess the meaning of a visibility call, and do not alter any
+    application condition, register allocation or original instruction.
+    """
+    anchor = re.compile(
+        r"(?m)^([ \t]*)invoke-virtual(?:/range)? \{([^}\n]+)\}, "
+        r"Landroid/view/View;->setVisibility\(I\)V[ \t]*$"
+    )
+    matches = list(anchor.finditer(body))
+    if matches:
+        for m in reversed(matches):
+            args = m.group(2).strip()
+            reg = args.split("..")[-1].strip() if ".." in args else args.split(",")[-1].strip()
+            if not re.fullmatch(r"[vp]\d+", reg):
+                raise RuntimeError(f"UI visible: invalid visibility argument register {reg!r}")
+            prefix = (
+                f"{m.group(1)}invoke-static/range {{{reg} .. {reg}}}, "
+                f"{TRACE}->visibility(I)V\n"
+            )
+            body = body[:m.start()] + prefix + body[m.start():]
+        print(f"NOVA_LOADING_DIAG_VISIBILITY=RUNTIME_CHECK count={len(matches)}")
+        return body
+    # Some upstream handlers delegate visibility writes to another method.
+    # Log Message.what rather than falsely claim the spinner is visible.
+    header = re.search(r"(?m)^    \.(?:locals|registers) \d+\n", body)
+    if not header or " handleMessage(Landroid/os/Message;)V" not in body.split("\n", 1)[0]:
+        raise RuntimeError("UI visible: handler method signature/register declaration changed")
+    print("NOVA_LOADING_DIAG_VISIBILITY=HANDLER_MESSAGE_FALLBACK count=0")
+    hook = f"    invoke-static/range {{p1 .. p1}}, {TRACE}->markMessage(Landroid/os/Message;)V\n"
+    return body[:header.end()] + hook + body[header.end():]
 
 def _inject_begin(body: str) -> str:
     if "NovaLoadingTrace" in body:
