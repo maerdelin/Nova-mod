@@ -12,7 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 def extract(source, name):
-    m = re.search(r"(?m)^(?:void \*|int) " + re.escape(name) +
+    m = re.search(r"(?m)^(?:void\s*\*\s*|int\s+)" + re.escape(name) +
                   r"\([^;]*\)\n\{", source)
     if m is None:
         raise AssertionError("missing production function: " + name)
