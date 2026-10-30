@@ -89,5 +89,33 @@ class FourStartupFixTests(unittest.TestCase):
         self.assertIn('ret = bd_seek(s->bd, (uint64_t)target);',self.transport)
         self.assertIn("nova_multi_recoverable_range_error",self.transport)
 
+    def test_deep_startup_java_bounded_connection_retry(self):
+        range_body=self.smali.split("DIRECT_RANGE_HTTP = r'''",1)[1].split("'''",1)[0]
+        range_body=range_body.split(".method public static open(",1)[1].split(".end method",1)[0]
+        resolver=self.smali.split("REDIRECT_RESOLVER = r'''",1)[1].split("'''",1)[0]
+        resolver=resolver.split(".method public static resolve(",1)[1].split(".end method",1)[0]
+        for body in (range_body,resolver):
+            self.assertIn("const/16 v5, 0xbb8",body)
+            self.assertIn("const/16 v5, 0x2710",body)
+            self.assertIn("setConnectTimeout(I)V",body)
+            self.assertIn("setReadTimeout(I)V",body)
+            self.assertIn("Ljava/net/SocketTimeoutException;",body)
+            self.assertIn("goto :",body)
+            self.assertNotIn("/*",body)
+        self.assertIn(":retry_stalled",range_body)
+        self.assertIn("if-nez v10, :fail",range_body)
+        self.assertIn("const/4 v10, 0x0",range_body)
+        self.assertIn("const/4 v10, 0x1",range_body)
+        self.assertIn(":catch_resolver_stalled",resolver)
+        self.assertIn("if-nez v10, :fail",resolver)
+
+    def test_deep_startup_early_second_range_is_guarded(self):
+        self.assertIn("NOVA_STARTUP_DEEP_V1",self.curl)
+        self.assertIn("e->slots[0].delivered>=512*1024",self.curl)
+        self.assertIn("e->slots[0].state==NOVA_MULTI_SLOT_ACTIVE",self.curl)
+        self.assertIn("!s->multi_seek_guard",self.curl)
+        self.assertIn("e->successful_ranges>=required_valid",self.curl)
+        self.assertIn("NOVA_LITERANGE4_PAIR_ENABLE",self.curl)
+
 if __name__=="__main__":
     unittest.main()
