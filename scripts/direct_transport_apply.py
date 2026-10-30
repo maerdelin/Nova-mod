@@ -730,7 +730,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
 .end method
 
 .method public static resolve(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;
-    .locals 10
+    .locals 11
     if-eqz p0, :fail
     new-instance v0, Ljava/net/URL;
     invoke-direct {v0, p0}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
@@ -739,7 +739,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     const/4 v3, 0x0
     # NOVA_STARTUP_FOURFIX_V1: per-hop first wait 3s, one retry with 10s.
     # Retain the old full 10s timeout as the single fallback.
-    const/4 v9, 0x0
+    const/4 v10, 0x0
     :loop
     const/4 v4, 0x6
     if-ge v3, v4, :fail
@@ -750,7 +750,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setInstanceFollowRedirects(Z)V
     const/16 v5, 0x2710
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
-    if-nez v9, :resolver_full_read_wait
+    if-nez v10, :resolver_full_read_wait
     const/16 v5, 0xbb8
     :resolver_full_read_wait
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setReadTimeout(I)V
@@ -807,7 +807,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     :keep_auth
     invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
     move-object v1, v7
-    const/4 v9, 0x0
+    const/4 v10, 0x0
     add-int/lit8 v3, v3, 0x1
     goto :loop
     :redirect_fail
@@ -830,8 +830,8 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     :catch_resolver_stalled
     move-exception v6
     invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
-    if-nez v9, :fail
-    const/4 v9, 0x1
+    if-nez v10, :fail
+    const/4 v10, 0x1
     goto :loop
 .end method
 '''
