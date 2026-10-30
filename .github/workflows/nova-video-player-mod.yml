@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
