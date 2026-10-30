@@ -189,6 +189,10 @@ jobs:
           grep -Fq 'NOVA_MKV_SEEK_DONE_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_ISO_INDEX_SEEK_V3' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_ISO_INDEX_MAP_V3' iso/nova_transport.c
+          python3 scripts/startup_boot_raw_diag.py --native native-src/native/avos
+          grep -Fq 'NOVA_BOOT_RAW_SOURCE' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'NOVA_BOOT_RAW_CONSUMER' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'NOVA_BOOT_RAW_SEEK' native-src/native/avos/Source/stream_parser_ffmpeg.c
           # Upstream prebuilt-ffmpeg v8_0 currently ships dist-full-* only.
           # AVOS base/full differ only by which FFmpeg directory is linked; no
           # AVOS source feature macro depends on LIBAV_CONFIG. Alias the same
