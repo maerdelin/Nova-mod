@@ -1552,18 +1552,33 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
 /* Zero-copy page handoff for ordinary WebDAV files.  ISO goes through
  * libbluray, so the caller uses the legacy read path for ISO.
  * The RAW owner keeps a shared-warehouse reference across session close. */
+/* NOVA_SHARED42_MKV_PAGE_VIEW_V1:
+ * A staged 64 KiB page can have a consumed prefix when a small RAW-room
+ * request temporarily uses the bytewise fallback.  Handing the page to RAW
+ * must expose ONLY [consumed, length); clearing consumed duplicates bytes,
+ * corrupts the MKV EBML stream and desynchronizes RAW byte accounting.
+ * This is still a descriptor-only handoff: no stage-to-RAW memcpy. */
 __attribute__((visibility("default")))
 void *nova_transport_page_data(void *warehouse_data,int page)
 {
     nova_shared_warehouse *w=nova_shared_warehouse_from_data(warehouse_data);
-    return nova_wh_page_ptr(w,page);
+    if(!w || page<0 || page>=(int)NOVA_WH_PAGES)return NULL;
+    nova_wh_page *p=&w->pages[page];
+    if(p->state!=NOVA_WH_RAW || p->consumed<0 ||
+       p->consumed>=p->length || p->length>(int)NOVA_WH_PAGE_BYTES)
+        return NULL;
+    return nova_wh_page_ptr(w,page)+p->consumed;
 }
 __attribute__((visibility("default")))
 int nova_transport_page_length(void *warehouse_data,int page)
 {
     nova_shared_warehouse *w=nova_shared_warehouse_from_data(warehouse_data);
     if(!w || page<0 || page>=(int)NOVA_WH_PAGES)return -1;
-    return w->pages[page].length;
+    nova_wh_page *p=&w->pages[page];
+    if(p->state!=NOVA_WH_RAW || p->consumed<0 ||
+       p->consumed>=p->length || p->length>(int)NOVA_WH_PAGE_BYTES)
+        return -1;
+    return p->length-p->consumed;
 }
 __attribute__((visibility("default")))
 void nova_transport_page_release(void *warehouse_data,int page)
