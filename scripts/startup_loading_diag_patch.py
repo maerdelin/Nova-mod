@@ -36,6 +36,13 @@ TRACE_SMALI = r'''.class public final Lcom/archos/mediacenter/video/player/NovaL
     return-void
 .end method
 
+.method public static visible()V
+    .locals 1
+    const-string v0, "UI_SPINNER_VISIBLE"
+    invoke-static {v0}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->mark(Ljava/lang/String;)V
+    return-void
+.end method
+
 .method public static end()V
     .locals 1
     const-string v0, "UI_SPINNER_HIDE"
@@ -139,7 +146,23 @@ def _log_method_entry(body: str, stage: str) -> str:
 def patch_activity(text: str) -> str:
     text = _method(text, " start()V", lambda body: _inject_begin(body))
     text = _method(text, " postVideoInfoAndPrepared()V", _inject_hide)
+    # Actual UI visibility event, not the 500ms-delayed start entry.
+    # Add an unambiguous trace at the VISIBLE instruction, preserving flow.
+    text = _method(text, " handleMessage(Landroid/os/Message;)V", _inject_visible)
     return text
+
+
+def _inject_visible(body: str) -> str:
+    anchor = "Landroid/view/View;->setVisibility(I)V"
+    # This handler has precisely one visibility call for MSG_PROGRESS_VISIBLE.
+    if body.count(anchor) != 1:
+        raise RuntimeError("UI visible: expected one visibility call")
+    lines = body.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if anchor in line:
+            lines.insert(i, f"    invoke-static {{}}, {TRACE}->visible()V\n")
+            return "".join(lines)
+    raise RuntimeError("UI visible anchor absent")
 
 
 def _inject_begin(body: str) -> str:
