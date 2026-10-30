@@ -46,9 +46,7 @@ def apply(root):
         "mark pre-probe RAW startup")
     s = once(s,
         "        pthread_mutex_lock(&raw->source_mutex);\n"
-        "        pthread_mutex_lock(&raw->mutex);\n"
-        "        if( !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||\n"
-        "            raw->eof || raw->used_bytes >= raw->capacity_bytes ) {\n",
+        "        pthread_mutex_lock(&raw->mutex);\n",
         "        /* Relocation gets first access to the shared AVIO source.\n"
         "         * Never race a network read with a seek or move RAW pages\n"
         "         * across generations. The cond wait releases raw->mutex. */\n"
@@ -59,9 +57,11 @@ def apply(root):
         "        pthread_mutex_unlock(&raw->mutex);\n"
         "        pthread_mutex_lock(&raw->source_mutex);\n"
         "        pthread_mutex_lock(&raw->mutex);\n"
-        "        if( raw->startup_reloc_pending ||\n"
-        "            !__atomic_load_n( &raw->run, __ATOMIC_ACQUIRE ) ||\n"
-        "            raw->eof || raw->used_bytes >= raw->capacity_bytes ) {\n",
+        "        if(raw->startup_reloc_pending){\n"
+        "            pthread_mutex_unlock(&raw->mutex);\n"
+        "            pthread_mutex_unlock(&raw->source_mutex);\n"
+        "            continue;\n"
+        "        }\n",
         "producer gives relocation priority")
     s = once(s,
         "        pthread_mutex_lock(&raw->mutex);\n"
