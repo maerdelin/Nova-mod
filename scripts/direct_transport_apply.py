@@ -164,6 +164,8 @@ DIRECT_RANGE_HTTP = r'''.class public final Lcom/archos/mediacenter/video/player
     invoke-direct {v0, p0}, Ljava/net/URL;-><init>(Ljava/lang/String;)V
     move-object v1, v0
     const/4 v2, 0x0
+    # NOVA_STARTUP_DEEP_V1: bounded first attempt and canonical slow fallback.
+    const/4 v10, 0x0
 
     :redirect_loop
     const/4 v3, 0x6
@@ -174,6 +176,9 @@ DIRECT_RANGE_HTTP = r'''.class public final Lcom/archos/mediacenter/video/player
     const/4 v5, 0x0
     invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setInstanceFollowRedirects(Z)V
     const/16 v5, 0x2710
+    if-nez v10, :full_timeout
+    const/16 v5, 0xbb8
+    :full_timeout
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setReadTimeout(I)V
     const-string v5, "GET"
@@ -204,8 +209,11 @@ DIRECT_RANGE_HTTP = r'''.class public final Lcom/archos/mediacenter/video/player
     invoke-virtual {v4, v5, p1}, Ljava/net/URLConnection;->setRequestProperty(Ljava/lang/String;Ljava/lang/String;)V
 
     :response
+    :try_response_start
     invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I
     move-result v6
+    :try_response_end
+    .catch Ljava/net/SocketTimeoutException; {:try_response_start .. :try_response_end} :retry_stalled
     const/16 v7, 0x12d
     if-eq v6, v7, :redirect
     const/16 v7, 0x12e
@@ -227,7 +235,15 @@ DIRECT_RANGE_HTTP = r'''.class public final Lcom/archos/mediacenter/video/player
     new-instance v8, Ljava/net/URL;
     invoke-direct {v8, v1, v7}, Ljava/net/URL;-><init>(Ljava/net/URL;Ljava/lang/String;)V
     move-object v1, v8
+    const/4 v10, 0x0
     add-int/lit8 v2, v2, 0x1
+    goto :redirect_loop
+
+    :retry_stalled
+    move-exception v7
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
+    if-nez v10, :fail
+    const/4 v10, 0x1
     goto :redirect_loop
 
     :fail
@@ -749,10 +765,11 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     const/4 v5, 0x0
     invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setInstanceFollowRedirects(Z)V
     const/16 v5, 0x2710
-    invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
     if-nez v10, :resolver_full_read_wait
     const/16 v5, 0xbb8
     :resolver_full_read_wait
+    # NOVA_STARTUP_DEEP_V1: apply the same timeout to connection + read.
+    invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setReadTimeout(I)V
     const-string v5, "GET"
     invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
