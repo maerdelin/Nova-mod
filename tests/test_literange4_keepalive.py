@@ -31,7 +31,11 @@ class KeepAliveRangeTests(unittest.TestCase):
                     "NOVA_LITERANGE4_CONN slot=","NOVA_LITERANGE4_CONN_SUMMARY",
                     "newPer100=","reused="):
             self.assertIn(key,self.inc)
-        self.assertNotIn("CURLINFO_EFFECTIVE_URL",self.inc)
+        # Startup-only verified redirect reuse holds the effective URL in memory,
+        # never in logs. Preserve the ban on printing sensitive endpoints.
+        self.assertIn("curl_easy_getinfo(p->easy,CURLINFO_EFFECTIVE_URL,&effective)",self.inc)
+        self.assertIn("NOVA_STARTUP_REDIRECT_CACHE verified=1",self.inc)
+        self.assertNotIn("LOGI(\"%s\",effective)",self.inc)
         self.assertNotIn("CURLINFO_PRIMARY_IP",self.inc)
 
     def test_transient_retry_and_terminal_range_fail(self):
