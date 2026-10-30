@@ -737,8 +737,8 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     move-object v1, v0
     move-object v2, p1
     const/4 v3, 0x0
-    /* NOVA_STARTUP_FOURFIX_V1: per-hop first wait 3s, one retry with 10s.
-     * A genuinely slow final 206 must never be discarded without fallback. */
+    # NOVA_STARTUP_FOURFIX_V1: per-hop first wait 3s, one retry with 10s.
+    # Retain the old full 10s timeout as the single fallback.
     const/4 v9, 0x0
     :loop
     const/4 v4, 0x6
