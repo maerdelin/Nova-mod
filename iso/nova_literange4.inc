@@ -100,7 +100,8 @@ typedef struct nova_lite_slot {
     int index;
     int filled;  /* all received bytes, including already delivered */
     int delivered; /* bytes consumed from this lane */
-    int paused;  /* CURL_WRITEFUNC_PAUSE until ring has space */
+    int paused;  /* CURL_WRITEFUNC_PAUSE until stage has room */
+    int pause_need_pages; /* exact callback allocation demand (0..16) */
     int length;
     int64_t start;
     long status;
@@ -290,17 +291,74 @@ static int nova_lite_can_stage(nova_lite_slot *p,int extra)
     pthread_mutex_unlock(&w->lock);
     return free_pages>=extra;
 }
-static void nova_lite_maybe_resume(nova_lite_slot *p)
+/* NOVA_SHARED42_BACKPRESSURE_V2: exact replay requirements.
+ * A paused libcurl callback is replayed in full (it is never partially
+ * accepted). Waiting for just 1 page when the pending callback needs 16
+ * causes immediate repeated pauses.  This helper executes on the sole
+ * CURLM owner (the RAW producer) and never changes HTTP connection/Range. */
+static int nova_lite_maybe_resume(nova_lite_slot *p)
 {
-    if(!p || p->state!=NOVA_MULTI_SLOT_ACTIVE || !p->paused)return;
+    if(!p || p->state!=NOVA_MULTI_SLOT_ACTIVE || !p->paused)return 0;
     nova_shared_warehouse *w=p->owner->session->warehouse;
-    if(!w)return;
-    int tail=p->page_tail;
-    int room=tail>=0?(int)NOVA_WH_PAGE_BYTES-w->pages[tail].length:0;
-    if(room<(int)NOVA_LITE_RESUME_FREE &&
-       !nova_lite_can_stage(p,1))return;
+    if(!w)return 0;
+    int required=p->pause_need_pages;
+    if(required<0 || required>16)return -1;
+    if(!nova_lite_can_stage(p,required))return 0;
+    int free_before;
+    pthread_mutex_lock(&w->lock);
+    free_before=w->free_count;
+    pthread_mutex_unlock(&w->lock);
+    /* curl_easy_pause may synchronously replay the paused write callback:
+     * clear 'paused' BEFORE the call; the callback can set it again. */
     p->paused=0;
-    curl_easy_pause(p->easy,CURLPAUSE_CONT); /* resume SAME HTTP response */
+    p->pause_need_pages=0;
+    CURLcode rc=curl_easy_pause(p->easy,CURLPAUSE_CONT);
+    if(rc!=CURLE_OK){
+        p->paused=1;
+        p->pause_need_pages=required;
+        LOGI("NOVA_SHARED42_RESUME_ERROR slot=%d curl=%d",
+             p->index,(int)rc);
+        return -1; /* let the existing transport fallback handle the error */
+    }
+    LOGI("NOVA_SHARED42_RESUME_V2 slot=%d needPages=%d freeBefore=%d"
+         " rePaused=%d nextNeed=%d at=%" PRId64,
+         p->index,required,free_before,p->paused,p->pause_need_pages,
+         p->start);
+    return 1;
+}
+
+/* Priority follows the in-order cursor. Do NOT resume a future range
+ * while the required head callback is still paused: otherwise repeated
+ * small RAW frees can be stolen by future work forever.  Crucially,
+ * call this on the empty-page WAIT path as well as after page delivery,
+ * so RAW -> free pages -> HTTP resume cannot deadlock. */
+static int nova_lite_resume_paused(nova_session *s)
+{
+    if(!s || !s->lite || !s->warehouse)return 0;
+    nova_lite_state *e=s->lite;
+    nova_lite_slot *head=NULL;
+    for(int i=0;i<NOVA_LITE_SLOTS;i++){
+        nova_lite_slot *p=&e->slots[i];
+        if(p->state==NOVA_MULTI_SLOT_ACTIVE && p->paused &&
+           s->multi_committed_cursor>=p->start &&
+           s->multi_committed_cursor<p->start+(int64_t)p->length){
+            head=p;
+            break;
+        }
+    }
+    if(head){
+        int rc=nova_lite_maybe_resume(head);
+        if(rc<0)return rc;
+        if(head->paused)return rc;
+    }
+    for(int i=0;i<NOVA_LITE_SLOTS;i++){
+        nova_lite_slot *p=&e->slots[i];
+        if(p==head || p->state!=NOVA_MULTI_SLOT_ACTIVE || !p->paused)
+            continue;
+        int rc=nova_lite_maybe_resume(p);
+        if(rc<0)return rc;
+    }
+    return 0;
 }
 static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
 {
@@ -318,7 +376,12 @@ static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
     int extra=(int)((beyond+NOVA_WH_PAGE_BYTES-1)/NOVA_WH_PAGE_BYTES);
     if(!nova_lite_can_stage(p,extra)){
         p->paused=1;
-        return CURL_WRITEFUNC_PAUSE; /* no partial callback consumption */
+        p->pause_need_pages=extra;
+        LOGI("NOVA_SHARED42_PAUSE_V2 slot=%d needPages=%d staged=%d"
+             " slotPages=%d future=%d",p->index,extra,
+             nova_lite_staged_pages(p->owner),p->page_count,
+             p->start>p->owner->session->multi_committed_cursor);
+        return CURL_WRITEFUNC_PAUSE; /* callback replay must be whole */
     }
     int fresh[16],count=0;
     for(int k=0;k<extra;k++){
@@ -326,6 +389,9 @@ static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
         if(n<0){
             for(int j=0;j<count;j++)nova_wh_page_free(w,fresh[j]);
             p->paused=1;
+            p->pause_need_pages=extra;
+            LOGI("NOVA_SHARED42_PAUSE_ALLOC_V2 slot=%d needPages=%d",
+                 p->index,extra);
             return CURL_WRITEFUNC_PAUSE;
         }
         fresh[count++]=n;
@@ -415,6 +481,7 @@ static void nova_lite_reset_slots(nova_session *s)
         p->filled=0;
         p->delivered=0;
         p->paused=0;
+        p->pause_need_pages=0;
         p->range_ok=0;
     }
     e->running=0;
@@ -435,6 +502,7 @@ static int nova_lite_launch(nova_lite_slot *p)
     p->filled=0;
     p->delivered=0;
     p->paused=0;
+    p->pause_need_pages=0;
     p->page_head=p->page_tail=-1;
     p->page_count=0;
     snprintf(p->range_str,sizeof(p->range_str),"%" PRId64 "-%" PRId64,
@@ -707,6 +775,7 @@ static void nova_lite_complete(nova_session *s)
                 p->delivered=0;
             }else p->state=NOVA_MULTI_SLOT_READY;
             p->paused=0;
+            p->pause_need_pages=0;
         }else{
             p->state=NOVA_MULTI_SLOT_ERROR;
             long ssl_verify=0,redirects=0;
@@ -960,7 +1029,8 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
                     current->delivered=0;
                     current->page_head=current->page_tail=-1;
                     current->page_count=0;
-                }else nova_lite_maybe_resume(current);
+                }else if(nova_lite_resume_paused(s)<0)
+                    return NOVA_MULTI_FALLBACK;
                 nova_lite_schedule(s);
                 int64_t waited=nova_iso_uptime_ms()-began;
                 nova_lite_telemetry(s,waited>INT32_MAX?INT32_MAX:(int)waited);
@@ -971,6 +1041,10 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
             return NOVA_MULTI_FALLBACK;
 shared42_await_more:
         nova_lite_schedule(s);
+        /* This is the essential liveness edge. RAW may have released
+         * pages while the current HTTP callback was paused and there
+         * were no full staging pages left to deliver. */
+        if(nova_lite_resume_paused(s)<0)return NOVA_MULTI_FALLBACK;
         int running=0;
         CURLMcode rc=curl_multi_perform(e->multi,&running);
         if(rc!=CURLM_OK)return NOVA_MULTI_FALLBACK;
