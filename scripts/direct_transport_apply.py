@@ -737,6 +737,9 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     move-object v1, v0
     move-object v2, p1
     const/4 v3, 0x0
+    /* NOVA_STARTUP_FOURFIX_V1: per-hop first wait 3s, one retry with 10s.
+     * A genuinely slow final 206 must never be discarded without fallback. */
+    const/4 v9, 0x0
     :loop
     const/4 v4, 0x6
     if-ge v3, v4, :fail
@@ -747,6 +750,9 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setInstanceFollowRedirects(Z)V
     const/16 v5, 0x2710
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setConnectTimeout(I)V
+    if-nez v9, :resolver_full_read_wait
+    const/16 v5, 0xbb8
+    :resolver_full_read_wait
     invoke-virtual {v4, v5}, Ljava/net/URLConnection;->setReadTimeout(I)V
     const-string v5, "GET"
     invoke-virtual {v4, v5}, Ljava/net/HttpURLConnection;->setRequestMethod(Ljava/lang/String;)V
@@ -766,8 +772,11 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     :drop_auth
     const-string v2, ""
     :response
+    :try_start_resolver_http
     invoke-virtual {v4}, Ljava/net/HttpURLConnection;->getResponseCode()I
     move-result v5
+    :try_end_resolver_http
+    .catch Ljava/net/SocketTimeoutException; {:try_start_resolver_http .. :try_end_resolver_http} :catch_resolver_stalled
     const/16 v6, 0xc8
     if-eq v5, v6, :success
     const/16 v6, 0xce
@@ -798,6 +807,7 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     :keep_auth
     invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
     move-object v1, v7
+    const/4 v9, 0x0
     add-int/lit8 v3, v3, 0x1
     goto :loop
     :redirect_fail
@@ -817,6 +827,12 @@ REDIRECT_RESOLVER = r'''.class public final Lcom/archos/mediacenter/video/player
     :fail
     const/4 v0, 0x0
     return-object v0
+    :catch_resolver_stalled
+    move-exception v6
+    invoke-virtual {v4}, Ljava/net/HttpURLConnection;->disconnect()V
+    if-nez v9, :fail
+    const/4 v9, 0x1
+    goto :loop
 .end method
 '''
 
