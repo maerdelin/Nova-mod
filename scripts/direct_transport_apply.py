@@ -1171,6 +1171,8 @@ def main():
     (smali_dir/"DirectRedirectResolver.smali").write_text(REDIRECT_RESOLVER)
     (smali_dir/"DirectRangeHttp.smali").write_text(DIRECT_RANGE_HTTP)
     (smali_dir/"WeakStartProxy.smali").write_text(WEAK_START)
+    from startup_loading_diag_patch import apply_smali_trace
+    apply_smali_trace(root)
 
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
         src=args.native_root/abi/"libnova_transport.so"
