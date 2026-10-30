@@ -564,6 +564,9 @@ static int nova_lite_launch(nova_lite_slot *p)
     }
     CURLMcode rc=curl_multi_add_handle(e->multi,c);
     if(rc!=CURLM_OK)return AVERROR(EIO);
+    LOGI("NOVA_BOOT_CURL_BEGIN tMs=%" PRId64 " epoch=%" PRIu64
+         " slot=%d at=%" PRId64 " len=%d",
+         nova_iso_uptime_ms(),s->multi_generation,p->index,p->start,p->length);
     p->state=NOVA_MULTI_SLOT_ACTIVE;
     e->running++;
     return 0;
@@ -691,6 +694,33 @@ static void nova_lite_complete(nova_session *s)
         curl_easy_getinfo(p->easy,CURLINFO_APPCONNECT_TIME_T,&tls_end_us);
         curl_easy_getinfo(p->easy,CURLINFO_STARTTRANSFER_TIME_T,&ttfb_us);
         curl_easy_getinfo(p->easy,CURLINFO_TOTAL_TIME_T,&total_us);
+        /* NOVA_BOOT_DIAG_V2: curl timings are cumulative from request start,
+         * except the derived TCP/TLS/body spans computed below. DNS and
+         * connection reuse are NOT the same thing. No URL/IP/auth is logged. */
+        curl_off_t dns_us=0,pre_us=0,redir_us=0,download_bytes=0;
+        curl_easy_getinfo(p->easy,CURLINFO_NAMELOOKUP_TIME_T,&dns_us);
+        curl_easy_getinfo(p->easy,CURLINFO_PRETRANSFER_TIME_T,&pre_us);
+        curl_easy_getinfo(p->easy,CURLINFO_REDIRECT_TIME_T,&redir_us);
+        curl_easy_getinfo(p->easy,CURLINFO_SIZE_DOWNLOAD_T,&download_bytes);
+        LOGI("NOVA_BOOT_CURL_END tMs=%" PRId64 " epoch=%" PRIu64
+             " slot=%d at=%" PRId64 " len=%d http=%ld curl=%d"
+             " new=%ld connId=%" PRId64 " redirectCount=%ld"
+             " dnsMs=%" PRId64 " tcpMs=%" PRId64 " tlsMs=%" PRId64
+             " preMs=%" PRId64 " firstByteMs=%" PRId64
+             " bodyMs=%" PRId64 " redirectMs=%" PRId64
+             " totalMs=%" PRId64 " downloadedBytes=%" PRId64,
+             nova_iso_uptime_ms(),s->multi_generation,
+             p->index,p->start,p->length,code,(int)msg->data.result,
+             new_connections,(int64_t)conn_id,redirects,
+             (int64_t)(dns_us>0?dns_us/1000:0),
+             (int64_t)(connect_us>dns_us?(connect_us-dns_us)/1000:0),
+             (int64_t)(tls_end_us>connect_us?(tls_end_us-connect_us)/1000:0),
+             (int64_t)(pre_us>0?pre_us/1000:0),
+             (int64_t)(ttfb_us>0?ttfb_us/1000:0),
+             (int64_t)(total_us>ttfb_us?(total_us-ttfb_us)/1000:0),
+             (int64_t)(redir_us>0?redir_us/1000:0),
+             (int64_t)(total_us>0?total_us/1000:0),
+             (int64_t)download_bytes);
         if(new_connections<0)new_connections=0;
         uint64_t connect_ms=connect_us>0?(uint64_t)connect_us/1000:0;
         uint64_t tls_ms=tls_end_us>connect_us?
@@ -930,6 +960,13 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
     pthread_mutex_lock(&s->multi_lock);
     target=s->adaptive_target_bps;
     pthread_mutex_unlock(&s->multi_lock);
+    LOGI("NOVA_BOOT_CURL_PROGRESS tMs=%" PRId64
+         " epoch=%" PRIu64 " running=%d"
+         " s0state=%d s0filled=%d s0delivered=%d"
+         " s1state=%d s1filled=%d s1delivered=%d",
+         now,s->multi_generation,e->running,
+         e->slots[0].state,e->slots[0].filled,e->slots[0].delivered,
+         e->slots[1].state,e->slots[1].filled,e->slots[1].delivered);
     LOGI("NOVA_LITERANGE4_NET lanes=%d deliveredBps=%" PRIu64
          " targetBps=%" PRIu64 " blocked=%u pending=%d wireBps=%" PRIu64,
          s->multi_active_lanes,delivered,target,
