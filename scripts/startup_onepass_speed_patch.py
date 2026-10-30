@@ -20,7 +20,7 @@ def apply(root):
     s = once(s,
         "    unsigned nova_boot_consumer_calls;\n",
         "    unsigned nova_boot_consumer_calls;\n"
-        "    /* NOVA_STARTUP_ONEPASS_V1: FILE probe relocation, never ISO. */\n"
+        "    /* NOVA_STARTUP_ONEPASS_V1: shared direct FILE/ISO probe seek gate. */\n"
         "    volatile int startup_probe_active;\n"
         "    unsigned startup_reloc_pending; /* under raw->mutex */\n"
         "    int (*startup_probe_hint)(uint64_t,int);\n",
@@ -38,9 +38,10 @@ def apply(root):
         "direct transport hint ABI")
     s = once(s,
         "    ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);\n",
-        "    /* Only non-ISO direct FILE sources use the startup relocation gate. */\n"
+        "    /* NOVA_STARTUP_FOURFIX_V1: ISO also uses the same AVIO source mutex.\n"
+        "     * Gate RAW producer for ISO seek, but transport abort remains FILE-only. */\n"
         "    __atomic_store_n(&raw->startup_probe_active,\n"
-        "        raw->direct_transport && raw->source && raw->source->direct,\n"
+        "        raw->direct_transport,\n"
         "        __ATOMIC_RELEASE);\n"
         "    ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);\n",
         "mark pre-probe RAW startup")
