@@ -137,6 +137,9 @@ typedef struct nova_lite_state {
     /* When a signed final URL rejects a DIFFERENT Range, avoid further probes. */
     int probe_redirect_disabled;
     int probe_piece_switchover;
+    /* NOVA_STARTUP_FOURFIX_V1: first actual post-probe 206 must be delivered
+     * before W2 competes for bandwidth with the spinner's first video data. */
+    int startup_first206_complete;
     char *ca_pem;
     size_t ca_pem_len;
     unsigned ca_count;
@@ -785,6 +788,12 @@ static void nova_lite_complete(nova_session *s)
                 }
             }
         }
+        if(valid206 && s->mode==NOVA_MODE_FILE &&
+           __atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) &&
+           !e->startup_first206_complete){
+            e->startup_first206_complete=1;
+            LOGI("NOVA_STARTUP_FIRST206_READY rangeBytes=%d",p->length);
+        }
         int reused=valid206 && new_connections==0;
         e->metric_requests++;
         e->metric_new_connections+=(uint64_t)new_connections;
@@ -1054,6 +1063,7 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
      * Never upgrade just because time has elapsed or single GET opened. */
     unsigned required_valid=s->multi_http403_failures>1?2:1;
     if(target>0 && s->multi_active_lanes<2 && !s->multi_seek_guard &&
+       (s->mode!=NOVA_MODE_FILE || e->startup_first206_complete) &&
        (!s->multi_http403_failures ||
         e->successful_ranges>=required_valid)){
         if(s->multi_http403_failures)
