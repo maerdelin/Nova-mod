@@ -127,9 +127,13 @@ def _log(reg: str, name: str) -> str:
 
 
 def _log_method_entry(body: str, stage: str) -> str:
-    body, reg = _alloc(body)
+    # Both hooks enter before any original local register is initialized.
+    # Reuse the existing low scratch v0; no extra locals and no >v15 access.
+    # Original instructions immediately overwrite v0 on their normal path.
     m = re.search(r"(?m)^    \.(?:locals|registers) \d+\n", body)
-    return body[:m.end()] + _log(reg, stage) + body[m.end():]
+    if not m:
+        raise RuntimeError("startup trace: entry registers missing")
+    return body[:m.end()] + _log("v0", stage) + body[m.end():]
 
 
 def patch_activity(text: str) -> str:
