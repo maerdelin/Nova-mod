@@ -35,7 +35,7 @@ jobs:
           ram-size: 3072M
           emulator-boot-timeout: 900
           emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash migu/ci/tv14_baseline.sh && bash migu/ci/test_original_apk.sh
+          script: bash migu/ci/tv14_baseline.sh && bash migu/ci/test_original_apk.sh && python3 migu/ci/tv_ui_first_enable.py
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
