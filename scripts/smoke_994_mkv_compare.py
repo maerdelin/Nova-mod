@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare signed #993 and candidate startup on the SAME fixture/server/emulator.
+"""Compare pre-stage signed #976 and candidate startup on the SAME fixture/server/emulator.
 
 Do not infer speed from a source marker. Both APKs actually launch and render
 their first video frame, measured by native monotonic startup timestamps.
@@ -211,7 +211,7 @@ def main():
             }
             (args.reports/"994-mkv-startup-compare.json").write_text(json.dumps(report,indent=2)+"\n")
             if report["status"]!="PASS":
-                raise RuntimeError("New signed APK did not beat #993 MKV startup under identical conditions: "+json.dumps({"baseline":old,"new":new}))
+                raise RuntimeError("New signed APK did not beat #976 MKV startup under identical conditions: "+json.dumps({"baseline":old,"new":new}))
             print("NOVA_994_MKV_BASELINE_COMPARE=PASS "+json.dumps(report),flush=True)
         finally:
             try:adb("reverse","--remove",f"tcp:{port}")

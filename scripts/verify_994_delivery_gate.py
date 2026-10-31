@@ -51,7 +51,7 @@ def check(apk: Path, report_dir: Path) -> dict:
     old = mkv.get("baseline_median_startup_ms")
     new = mkv.get("candidate_median_startup_ms")
     assert isinstance(old, (int, float)) and isinstance(new, (int, float))
-    assert old > new >= 0, "994 #2: actual MKV startup scan not faster than 993"
+    assert old > new >= 0, "994 #2: actual MKV startup scan not faster than pre-staged #976"
 
     ui = validated(report_dir / "994-startup-ui-runtime.json",
                    "percent spinner visual/runtime", digest)
