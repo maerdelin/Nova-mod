@@ -2234,6 +2234,30 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupBytes
     return count>INT64_MAX ? INT64_MAX : (jlong)count;
 }
 
+/* Guard native rebuffer reports by the actual active transport generation. */
+__attribute__((visibility("default")))
+int nova_transport_startup_ui_phase(uint64_t generation)
+{
+    nova_session *s=session_acquire(generation);
+    if(!s)return 3;
+    int phase=__atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE);
+    session_release(s);
+    return phase;
+}
+__attribute__((visibility("default")))
+void nova_transport_report_startup_ui_phase(uint64_t generation,int phase)
+{
+    if(phase!=2 && phase!=3 && phase!=4)return;
+    nova_session *s=session_acquire(generation);
+    if(!s)return;
+    int prev=__atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE);
+    if(phase>prev){
+        __atomic_store_n(&s->startup_ui_state,phase,__ATOMIC_RELEASE);
+        LOGI("NOVA_STARTUP_UI_PHASE_V1: generation=%" PRIu64
+             " old=%d new=%d",generation,prev,phase);
+    }
+    session_release(s);
+}
 /* AVOS resolves this symbol via dlsym during nova_raw_open().  Without
  * default visibility, transport_open fails before RAW128 can initialize. */
 __attribute__((visibility("default")))
