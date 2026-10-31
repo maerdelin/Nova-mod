@@ -56,6 +56,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_mkv_canonical_first.py -v
           python3 -m unittest discover -s tests -p test_startup_fourfix.py -v
           python3 -m unittest discover -s tests -p test_994_source_guards.py -v
+          python3 -m unittest discover -s tests -p test_994_percent_native.py -v
           python3 -m py_compile scripts/native_rebuffer_patch.py scripts/direct_transport_apply.py scripts/startup_loading_994_patch.py
           python3 scripts/startup_loading_994_patch.py decoded
           grep -q 'NovaStartupOverlay;->onPrepared' decoded/smali/com/archos/mediacenter/video/player/PlayerActivity.smali
