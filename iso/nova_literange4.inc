@@ -1055,6 +1055,40 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
          " targetBps=%" PRIu64 " blocked=%u pending=%d wireBps=%" PRIu64,
          s->multi_active_lanes,delivered,target,
          e->starvation_count,e->running,received);
+    /* NOVA_60FPS_W2_IO_CPU_V1: correlation ONLY.
+     * Cumulative CPU time of the already-existing CURL owner (RAW
+     * producer); exact page ownership of the same Shared42 warehouse.
+     * No quota, Range, lock order or scheduling policy is changed.
+     * One sample per existing 1.5 second LiteRange telemetry tick. */
+    struct timespec nova_60fps_io_cpu_ts;
+    int64_t nova_60fps_io_cpu_us=-1;
+    if(clock_gettime(CLOCK_THREAD_CPUTIME_ID,&nova_60fps_io_cpu_ts)==0)
+        nova_60fps_io_cpu_us =
+            (int64_t)nova_60fps_io_cpu_ts.tv_sec*1000000LL+
+            nova_60fps_io_cpu_ts.tv_nsec/1000;
+    int nova_60fps_staged_pages=nova_lite_staged_pages(e);
+    int nova_60fps_free_pages=-1;
+    int nova_60fps_raw_pages=-1;
+    int nova_60fps_future_pages=0;
+    for(int i=0;i<NOVA_LITE_SLOTS;++i)
+        if(e->slots[i].state!=NOVA_MULTI_SLOT_EMPTY &&
+           e->slots[i].start>s->multi_committed_cursor)
+            nova_60fps_future_pages+=e->slots[i].page_count;
+    if(s->warehouse){
+        pthread_mutex_lock(&s->warehouse->lock);
+        nova_60fps_free_pages=s->warehouse->free_count;
+        pthread_mutex_unlock(&s->warehouse->lock);
+        nova_60fps_raw_pages=(int)NOVA_WH_PAGES-
+                             nova_60fps_free_pages-nova_60fps_staged_pages;
+    }
+    LOGI("NOVA_60FPS_W2_IO_CPU_V1 wallMs=%" PRId64
+         " cpuUs=%" PRId64 " lanes=%d running=%d"
+         " rawPages=%d stagedPages=%d futurePages=%d freePages=%d"
+         " wireBps=%" PRIu64 " deliveredBps=%" PRIu64,
+         now,nova_60fps_io_cpu_us,s->multi_active_lanes,e->running,
+         nova_60fps_raw_pages,nova_60fps_staged_pages,
+         nova_60fps_future_pages,nova_60fps_free_pages,
+         received,delivered);
     /* W=2 only, never the obsolete 1->2->3->4 escalation.
      * Start second lane once real X is known; completed future work
      * remains a reservation until prefix is committed. */
