@@ -112,6 +112,9 @@ def main():
                 ),
                 100,"Blu-ray ISO real first frame")
         finally:
+            # The first frame may precede the 500ms UI poll and hide.
+            # Observe actual resumed playback before collecting telemetry.
+            time.sleep(0.85)
             full=logs()
             (args.reports/"994-iso-logcat.txt").write_text(full)
         live=full[full.rfind(marker):]
