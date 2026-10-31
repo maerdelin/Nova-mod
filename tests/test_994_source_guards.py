@@ -35,6 +35,10 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("mkv_tail_ready,__ATOMIC_ACQUIRE",C)
         self.assertIn("nova_mkv_seek_retry(s,target)",C)
         self.assertIn("nova_mkv_tail_join(s)",C)
+        self.assertIn("NOVA_MKV_64K_EARLY_RAW_V1",AVOS)
+        self.assertIn("#define NOVA_MKV_STARTUP_READ_BYTES   (64 * 1024)",AVOS)
+        self.assertIn("buffer, consumer_bytes, 0, raw,",AVOS)
+        self.assertIn("raw->produced_bytes < (1024 * 1024)",AVOS)
         self.assertNotIn("AVIO_SEEKABLE_NORMAL = 0",C)
 
     def test_03_iso_lba_jump_reuses_verified_first_bytes(self):

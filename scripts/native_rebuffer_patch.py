@@ -290,6 +290,10 @@ static void *_rebuffer_thread( void *data )
 
 RAW_TYPES = r'''
 #define NOVA_RAW_IO_BYTES             (128 * 1024)
+/* Keep MKV's first AVIO consumer window small enough to expose EBML
+ * headers and the first packet without waiting for a 128 KiB network read.
+ * After the first 1 MiB, use the normal 128 KiB bulk producer. */
+#define NOVA_MKV_STARTUP_READ_BYTES   (64 * 1024)
 #define NOVA_RAW_FALLBACK_LOW_BYTES   (24 * 1024 * 1024)
 #define NOVA_RAW_FALLBACK_RESUME_BYTES (64 * 1024 * 1024)
 #define NOVA_RAW_FALLBACK_CAP_BYTES   (128 * 1024 * 1024)
@@ -491,7 +495,13 @@ static void *nova_raw_thread(void *opaque)
         int64_t room = raw->capacity_bytes - raw->used_bytes;
         int64_t contiguous = raw->capacity_bytes - raw->write_off;
         int64_t ask = room < contiguous ? room : contiguous;
-        if( ask > NOVA_RAW_IO_BYTES ) ask = NOVA_RAW_IO_BYTES;
+        /* NOVA_MKV_64K_EARLY_RAW_V1: do not make first-frame decode wait
+         * for the full bulk AVIO fill on a slow WebDAV link. The same
+         * 128 MiB warehouse and canonical seek ownership are unchanged. */
+        int64_t read_limit =
+            raw->mkv_single_get && raw->produced_bytes < (1024 * 1024)
+                ? NOVA_MKV_STARTUP_READ_BYTES : NOVA_RAW_IO_BYTES;
+        if( ask > read_limit ) ask = read_limit;
         want = ask > 0 ? (int)ask : 0;
         write_off = raw->write_off;
         pthread_mutex_unlock(&raw->mutex);
@@ -802,13 +812,17 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         goto fail;
     }
 
-    unsigned char *buffer = av_malloc(NOVA_RAW_IO_BYTES);
+    /* Native 64 KiB MKV probe consumer: release the first header to
+     * FFmpeg as soon as it is ready, while keeping other formats untouched. */
+    int consumer_bytes = raw->mkv_single_get ?
+        NOVA_MKV_STARTUP_READ_BYTES : NOVA_RAW_IO_BYTES;
+    unsigned char *buffer = av_malloc(consumer_bytes);
     if( !buffer ) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
     raw->consumer = avio_alloc_context(
-        buffer, NOVA_RAW_IO_BYTES, 0, raw,
+        buffer, consumer_bytes, 0, raw,
         nova_raw_read, NULL, nova_raw_seek );
     if( !raw->consumer ) {
         av_free(buffer);

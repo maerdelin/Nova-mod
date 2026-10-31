@@ -173,11 +173,19 @@ def main():
             adb("reverse",f"tcp:{port}",f"tcp:{port}")
             measurements={"baseline":[],"candidate":[]}
             try:
-                for label,apk in (("baseline",args.baseline_apk),
-                                  ("candidate",args.apk)):
-                    install(apk)
-                    for idx in range(3):
-                        measurements[label].append(one_play(port,label,idx,args.reports))
+                # Alternate the order to reduce emulator heat/cache and
+                # host scheduler drift. Keep each run a clean signed APK
+                # install, and retain a strict median speedup requirement.
+                # Both APKs use the exact same fixture, Range server,
+                # emulator, and renderer-confirmed first-frame endpoint.
+                apks={"baseline":args.baseline_apk,"candidate":args.apk}
+                for idx in range(5):
+                    order=("baseline","candidate") if idx%2==0 else (
+                        "candidate","baseline")
+                    for label in order:
+                        install(apks[label])
+                        measurements[label].append(
+                            one_play(port,label,idx,args.reports))
             finally:
                 # Leave the exact candidate installed for later CI checks.
                 install(args.apk)
@@ -206,6 +214,8 @@ def main():
                 "media_bytes":media.stat().st_size,
                 "same_emulator":True,
                 "same_http_range_server":True,
+                "test_design":"five interleaved clean-install A/B pairs with alternating first APK",
+                "paired_runs_per_apk":5,
                 "bounded_range_fixed_delay_ms":8000,
                 "scope":"real 4-stream MKV first frame and renderer-confirmed seek; not UI track-selection testing"
             }
