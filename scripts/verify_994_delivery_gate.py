@@ -45,7 +45,7 @@ def check(apk: Path, report_dir: Path) -> dict:
     assert mkv.get("same_media_and_network_conditions") is True, (
         "994 #2: MKV baseline and candidate were not compared under the same conditions"
     )
-    assert mkv.get("full_seek_audio_subtitle_attachment_regression") is True, (
+    assert mkv.get("mkv_stream_probe_and_seek_regression") is True, (
         "994 #2: seek, audio, subtitle, attachments are not regression-tested"
     )
     old = mkv.get("baseline_median_startup_ms")
