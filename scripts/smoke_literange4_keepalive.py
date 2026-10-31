@@ -71,6 +71,13 @@ def run_case(media,keepalive):
                                 raise OSError("fixture shorter than advertised")
                             self.wfile.write(block)
                             remaining-=len(block)
+                            # Keep both A/B servers at a reproducible LAN rate.
+                            # #973 forced-close streamed all 39 MB in ~0.21s
+                            # (24 slot-0 completions), before the 1.5s W2
+                            # scheduler tick. Pace the *fixture*, never the
+                            # native downloader; assert that both real slots
+                            # complete verified HTTP 206 below.
+                            time.sleep(0.012)
                         self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     # Actual seek may cancel a request; expected in WebDAV.
@@ -102,7 +109,8 @@ def run_case(media,keepalive):
             two_lanes=bool(re.search(
                 r"NOVA_LITERANGE4_REBASE[^\n]*lanes=2\b",tail)
                 or "NOVA_LITERANGE4_PAIR_ENABLE" in tail)
-            return (len(found)>=6 and two_lanes and
+            real_slots={int(row[0]) for row in found}
+            return (len(found)>=6 and real_slots=={0,1} and two_lanes and
                     "NOVA_STARTUP_TRACE first_frame_sink" in tail)
         output=wait_for(complete,110,"real signed APK pool A/B completed transfers")
         section=output[output.rfind(marker):]
