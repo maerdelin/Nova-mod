@@ -6,6 +6,7 @@ MPEG-TS. The test observes physical LBA discovery, parallel W2, real video
 first frame, zero-reseed replay and the spinner buffering percentage events.
 """
 import argparse
+import hashlib
 import http.server
 import json
 from pathlib import Path
@@ -82,9 +83,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--iso", required=True, type=Path)
     ap.add_argument("--reports", required=True, type=Path)
+    ap.add_argument("--apk", required=True, type=Path)
     args=ap.parse_args()
     args.reports.mkdir(parents=True,exist_ok=True)
     iso=args.iso.resolve()
+    apk=args.apk.resolve()
+    if not apk.is_file() or apk.stat().st_size < 1000000:
+        raise RuntimeError("missing actual signed APK for ISO test")
+    apk_digest=hashlib.sha256(apk.read_bytes()).hexdigest()
     if not iso.exists() or iso.stat().st_size < 2 * 1024 * 1024:
         raise RuntimeError("missing genuine Blu-ray ISO fixture")
     server, requests = serve_iso(iso)
@@ -127,6 +133,10 @@ def main():
             raise RuntimeError("NOVA 994 ISO crashed during real source open")
         if found["first_frame"]<0:
             raise RuntimeError("no ISO first frame from signed APK")
+        if found["meta_done"]<0 or found["meta_done"]>found["first_frame"]:
+            raise RuntimeError("ISO metadata scan completion was not recorded before first frame")
+        if found["w2_start"]<0 or found["w2_start"]>found["first_frame"]:
+            raise RuntimeError("ISO W2 download was not launched before first frame")
         if found["pump_begin"]<0 or found["w2_start"]<0:
             raise RuntimeError("ISO early two-lane source did not start")
         if found["meta_done"]>=0 and (found["pump_begin"]>=found["meta_done"] or
@@ -142,8 +152,15 @@ def main():
             raise RuntimeError("ISO CURLM owner handoff missing")
         if "NOVA_ISO_STARTUP_REPLAY_V1: hit" not in live:
             raise RuntimeError("ISO internal FFmpeg probe rewind did not reuse verified bytes")
+        # Read actual stop reason; do not infer no-seek from a source guard.
+        iso_jump_count=len(re.findall(r"NOVA_LITERANGE4_STOP reason=iso-lba-jump\\b",live[:found["first_frame"]]))
+        if iso_jump_count != 0:
+            raise RuntimeError(f"ISO startup reset W2 via iso-lba-jump {iso_jump_count} times")
         result={
           "status":"PASS",
+          "apk_sha256":apk_digest,
+          "iso_lba_jump_count":iso_jump_count,
+          "w2_before_first_frame":True,
           "media_size":iso.stat().st_size,
           "url_type":"local WebDAV Blu-ray ISO",
           "real_first_frame":True,
