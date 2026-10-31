@@ -109,6 +109,21 @@ def main():
                 raise AssertionError("Canonical startup route was not exercised")
             if "NOVA_BOOT_RAW_SOURCE" not in tail:
                 raise AssertionError("RAW did not download during startup")
+            # Mandatory runtime acceptance: compiled string is NOT evidence.
+            # This signed APK must execute staged MKV logic in the actual player.
+            begin=re.search(r"NOVA_STAGED_DECODE_BEGIN first=65536\\b",tail)
+            if not begin:
+                raise AssertionError("MKV staged 64KB FIRST ROUND NOT EXECUTED by signed APK")
+            endst=re.search(r"NOVA_STAGED_DECODE_(?:SUCCESS|HANDOFF)\\b",tail)
+            if not endst or endst.start()<=begin.start():
+                raise AssertionError("MKV staged decode has no real SUCCESS/HANDOFF")
+            stage_events=re.findall(r"NOVA_STAGED_DECODE_RETRY threshold=(\\d+)",tail)
+            for i in range(1,len(stage_events)):
+                if int(stage_events[i])<=int(stage_events[i-1]):
+                    raise AssertionError("MKV stage thresholds not increasing")
+            # The original video renderer must STILL produce the real first frame.
+            if tail.find("NOVA_STARTUP_TRACE first_frame_sink")<=endst.start():
+                raise AssertionError("Actual first frame must follow staged packet handoff")
             probe=tail.find("NOVA_STARTUP_TRACE probe_done")
             first=tail.find("NOVA_STARTUP_TRACE first_frame_sink")
             ready=tail.find("NOVA_STARTUP_MKV_FIRST_FRAME_READY")
@@ -132,6 +147,9 @@ def main():
                     "first_frame_before_stalled_bounded_get":True,
                     "native_first_frame_signal":True,
                     "raw_source_observed":True,
+                    "staged_decode_runtime":True,
+                    "staged_decode_stage_events":stage_events,
+                    "staged_decode_outcome":"SUCCESS" if "NOVA_STAGED_DECODE_SUCCESS" in tail else "HANDOFF",
                     "request_count":len(captured),"requests":captured[:16]}
             print("NOVA_STARTUP_MKV_FIRST_FRAME_PASS "+json.dumps(report),flush=True)
     finally:
