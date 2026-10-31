@@ -300,6 +300,9 @@ typedef struct nova_session {
     uint8_t *iso_startup_replay;
     int64_t iso_startup_replay_start;
     int iso_startup_replay_size;
+    /* NOVA_STARTUP_UI_STATE_V1: 1=preparing 2=first-frame-held
+     * 3=threshold-resumed 4=terminal. Read by the player UI only. */
+    volatile int startup_ui_state;
     nova_iso_track_lang iso_tracks[NOVA_ISO_TRACK_LANG_CAP];
     unsigned iso_track_count;
 } nova_session;
@@ -2078,6 +2081,41 @@ void nova_transport_mark_first_frame(uint64_t generation)
     session_release(s);
 }
 
+/* NOVA_STARTUP_UI_STATE_V1: AVOS emits terminal buffering milestones
+ * after the real rendered frame and actual resident threshold. This remains
+ * separate from transport startup and never drives download or seek policy.
+ * The currently published generation is the only valid receiver. */
+__attribute__((visibility("default")))
+void nova_transport_report_startup_ui_state(int state)
+{
+    if(state<2 || state>4)return;
+    pthread_mutex_lock(&g_lock);
+    nova_session *s=g_session;
+    if(s && !s->stopping && (s->mode==NOVA_MODE_BLURAY_ISO ||
+                             s->file_http_mode)){
+        int prior=__atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE);
+        if(state>prior){
+            __atomic_store_n(&s->startup_ui_state,state,__ATOMIC_RELEASE);
+            LOGI("NOVA_STARTUP_UI_STATE_V1: generation=%" PRIu64
+                 " old=%d new=%d",s->generation,prior,state);
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupState(
+        JNIEnv *env,jclass cls)
+{
+    (void)env;(void)cls;
+    pthread_mutex_lock(&g_lock);
+    nova_session *s=g_session;
+    int state=s && !s->stopping
+        ? __atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE) : 0;
+    pthread_mutex_unlock(&g_lock);
+    return state;
+}
+
 /* AVOS resolves this symbol via dlsym during nova_raw_open().  Without
  * default visibility, transport_open fails before RAW128 can initialize. */
 __attribute__((visibility("default")))
@@ -2255,6 +2293,7 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
     nova_session *old = g_session;
     fresh->generation = ++g_generation;
     g_session = fresh;
+    __atomic_store_n(&fresh->startup_ui_state,1,__ATOMIC_RELEASE);
     /* Snapshot the new URI while it cannot be closed by another thread. */
     if (fresh->mode == NOVA_MODE_BLURAY_ISO) {
         snprintf(out, sizeof(out),
