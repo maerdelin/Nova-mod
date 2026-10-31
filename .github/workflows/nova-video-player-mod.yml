@@ -290,6 +290,13 @@ jobs:
             avos="native-src/native/avos/libs/$abi/libavos.so"
             symbol_dump="work/transport-native/$abi/exported-symbols.txt"
             "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$transport" > "$symbol_dump"
+            # AVOS dlsym fails before RAW init if either exported symbol is absent.
+            for required in nova_transport_set_target_bps nova_transport_mark_first_frame; do
+              if ! grep -Eq " [TW] $required$" "$symbol_dump"; then
+                echo "::error::Missing AVOS transport ABI symbol $required for $abi"
+                exit 1
+              fi
+            done
             if ! grep -aq 'NOVA_ISO_TRACK_CAPTURE_V1' "$transport" || \
                ! grep -aq 'NOVA_ISO_CODEC_CLPI_V2' "$transport" || \
                ! grep -q ' nova_transport_iso_track_language$' "$symbol_dump" || \
