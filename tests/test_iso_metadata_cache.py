@@ -70,6 +70,9 @@ typedef struct nova_session {
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
     uint64_t iso_meta_tick, iso_meta_reads, iso_meta_hits;
     uint64_t iso_meta_misses, iso_meta_fetched;
+    int iso_meta_window_bytes;
+    int64_t iso_meta_last_miss_end;
+    int iso_meta_peak_window;
 } nova_session;
 
 static int64_t avio_seek(mock_io *io, int64_t offset, int whence) {
@@ -95,7 +98,7 @@ static int read_exact(mock_io *io, uint8_t *dst, int bytes) {
         suffix = r'''
 int main(void) {
     mock_io io = {.pos=0, .size=(int64_t)48 * 1024 * 1024};
-    nova_session s = {.iso_meta_active=1, .upstream_size=io.size,
+    nova_session s = {.iso_meta_active=1, .upstream_size=io.size, .iso_meta_window_bytes=256*1024, .iso_meta_last_miss_end=-1,
                       .upstream_pos=0, .upstream=&io};
     uint8_t buf[4096];
     int64_t page = NOVA_ISO_META_PAGE_BYTES;
@@ -132,7 +135,7 @@ int main(void) {
     /* Fill all eight slots, then deliberately fail the next miss. The
      * selected LRU slot must retain its old bytes and index on failure. */
     mock_io io2 = {.pos=0, .size=(int64_t)48 * 1024 * 1024};
-    nova_session e = {.iso_meta_active=1, .upstream_size=io2.size,
+    nova_session e = {.iso_meta_active=1, .upstream_size=io2.size, .iso_meta_window_bytes=256*1024, .iso_meta_last_miss_end=-1,
                       .upstream_pos=0, .upstream=&io2};
     for (int i=0; i<8; i++)
         assert(nova_iso_meta_read(&e,buf,i*page+2048,2048)==1);
