@@ -27,6 +27,16 @@ jobs:
           find decoded -type f \( -name 'PlayerActivity*.smali' -o -name 'Player*.smali' -o -name 'NovaLoadingTrace.smali' -o -name '*player*.xml' -o -name '*loading*.xml' -o -name 'public.xml' -o -name 'strings.xml' \) -print0 | xargs -0 -r cp --parents -t forensics
           find forensics -type f | sort > forensics/file-list.txt
           test -s forensics/file-list.txt
+      - name: Package 994 source snapshot for isolated tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf /tmp/nova-994-source.tar.gz scripts iso tests .github/workflows/nova-video-player-mod.yml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nova-994-source-snapshot
+          path: /tmp/nova-994-source.tar.gz
+          retention-days: 4
       - uses: actions/upload-artifact@v4
         with:
           name: Nova-994-ui-forensics
