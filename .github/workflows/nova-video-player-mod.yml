@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
@@ -68,6 +68,8 @@ jobs:
           python3 -m unittest discover -s tests -p test_shared42_backpressure.py -v
           python3 -m unittest discover -s tests -p test_literange4_keepalive.py -v
           python3 -m unittest discover -s tests -p test_literange4_hardening.py -v
+          python3 -m unittest discover -s tests -p test_60fps_clock_evidence.py -v
+          python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
           python3 -m unittest discover -s tests -p test_redirect_timeout_classifier.py -v
           python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
@@ -143,7 +145,17 @@ jobs:
           fi
           repo init -u https://github.com/nova-video-player/aos-AVP -b nova -m "$official_manifest"
           repo sync -j 4
+          # 60fps evidence-only build: pin EXACT #967 successful AVOS source.
+          # Moving v6.6 upstream broke #968 at source patch apply time.
+          # Here the ONLY production changes are observational clock/CPU/page
+          # telemetry. Do not change audio/decoder/RAW/W2 download behavior.
+          if ! git -C native/avos cat-file -e d4abfdf075d4f7bfdee9a47cb2c02067f92f47cd^{commit}; then
+            git -C native/avos fetch --no-tags origin d4abfdf075d4f7bfdee9a47cb2c02067f92f47cd
+          fi
+          git -C native/avos checkout --detach d4abfdf075d4f7bfdee9a47cb2c02067f92f47cd
+          test "$(git -C native/avos rev-parse HEAD)" = d4abfdf075d4f7bfdee9a47cb2c02067f92f47cd
           git -C native/avos rev-parse HEAD | tee ../reports/upstream-avos-head.txt
+          echo 'NOVA_60FPS_EVIDENCE_AVOS_967_PINNED=PASS'
           cd ..
           python3 scripts/v66_subtitle_jni_patch.py --native native-src/native/avos
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
@@ -296,7 +308,10 @@ jobs:
             for symbol in NOVA_LITERANGE4_CONN NOVA_MULTI_RANGE_BACKOFF NOVA_MULTI_RANGE_HISTORY_CLEAR NOVA_MULTI_PAIR_REARM NOVA_MULTI_SINGLE_VERIFIED NOVA_LITERANGE4_SEEK_NOOP NOVA_LITERANGE4_START NOVA_LITERANGE4_NET NOVA_LITERANGE4_PIECE NOVA_MULTI_SEEK_GUARD_BEGIN NOVA_MULTI_SEEK_GUARD_END NOVA_MULTI_SCOPE_V3; do
               grep -aq "$symbol" "$transport" || { echo "::error::Dual-Range marker missing: $symbol in $abi"; exit 1; }
             done
+            grep -aq NOVA_60FPS_W2_IO_CPU_V1 "$transport" || { echo "::error::60fps IO CPU evidence missing in $abi"; exit 1; }
+            grep -aq 'threadCpuUs=' "$avos" || { echo "::error::60fps render CPU evidence missing in $abi"; exit 1; }
             grep -aq NOVA_MULTI_SEEK_SIGNAL "$avos" || { echo "::error::AVOS seek guard missing in $abi"; exit 1; }
+            echo "NOVA_60FPS_EVIDENCE_ELF_PASS $abi"
             echo "NOVA_DUAL2_SEEK_GUARD_ELF_PASS $abi"
             echo "RUN672_INDEX_SYMBOLS_PASS $abi"
           done
