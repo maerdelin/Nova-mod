@@ -217,7 +217,9 @@ def patch(root: Path):
     part=src[p:tail]
     stop_hook='    const-string v0, "UI_STOP"'
     if(part.count(stop_hook)!=1):raise RuntimeError("994 stop hook count")
-    part=part.replace(stop_hook,\n        "    iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity;->mProgressView:Landroid/view/View;\\n"\n        "    invoke-static {v0}, "+NAME+"->resetIfOwned(Landroid/view/View;)V\\n"+stop_hook,1)
+    part=part.replace(stop_hook,
+        '    iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity;->mProgressView:Landroid/view/View;' + chr(10) +
+        '    invoke-static {v0}, '+NAME+'->resetIfOwned(Landroid/view/View;)V' + chr(10) + stop_hook,1)
     src=src[:p]+part+src[tail:]
     player.write_text(src)
 
