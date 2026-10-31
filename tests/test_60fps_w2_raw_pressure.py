@@ -130,7 +130,7 @@ int main(void){
         self.assertIn("s->multi_active_lanes=2;", INC)
         self.assertIn("NOVA_LITERANGE4_PAIR_ENABLE", INC)
         self.assertIn("nova_lite_schedule(s);", INC)
-        self.assertIn("NOVA_MULTI_SEEK_GUARD", INC)
+        self.assertIn("multi_seek_guard", INC)
         self.assertIn("#define NOVA_LITE_SLOTS 2", INC)
         self.assertIn("curl_multi_perform(e->multi,&running)", INC)
 
