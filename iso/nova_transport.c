@@ -315,7 +315,7 @@ typedef struct nova_session {
     int iso_capture_movie_lba;
     int64_t iso_first_movie_lba;
     pthread_t iso_pump_thread;
-    volatile int iso_pump_running, iso_pump_stop;
+    volatile int iso_pump_running, iso_pump_stop, iso_pump_kicked;
     pthread_t mkv_tail_thread;
     volatile int mkv_tail_running, mkv_tail_ready;
     uint8_t *mkv_tail_data;
@@ -1574,6 +1574,12 @@ static void *nova_iso_pump_main(void *opaque)
         int running=0;
         nova_lite_schedule(s);
         if(curl_multi_perform(s->lite->multi,&running)!=CURLM_OK)break;
+        /* This is a REAL libcurl multi_perform after scheduling the 2 GETs,
+         * not merely registering a thread or creating an epoch. Release
+         * the title-scan thread only after CURLM has been driven once. */
+        __atomic_store_n(&s->iso_pump_kicked,1,__ATOMIC_RELEASE);
+        LOGI("NOVA_ISO_PARALLEL_V2: pump_kicked running=%d epoch=%" PRIu64,
+             running,s->multi_generation);
         nova_lite_complete(s);
         /* Both prefetch slots can be READY with no active socket. RAW
          * cannot consume their bytes until libbluray metadata finishes;
@@ -1598,11 +1604,26 @@ static int nova_iso_start_pump(nova_session *s,int64_t at)
     if(!s || s->iso_pump_running || at<0 || s->stopping)return -1;
     if(nova_multi_start(s,at,2)<0)return -1;
     s->iso_pump_stop=0;
+    __atomic_store_n(&s->iso_pump_kicked,0,__ATOMIC_RELEASE);
     if(pthread_create(&s->iso_pump_thread,NULL,nova_iso_pump_main,s)!=0){
         nova_multi_stop(s,"iso-pump-create-failed",0);
         return -1;
     }
     s->iso_pump_running=1;
+    /* The remote metadata scan is frequently < 1ms after bd_select_title.
+     * Give the actual CURLM owner at most 8ms to call multi_perform before
+     * continuing the *independent* title-info scan. We do not wait for
+     * packets, HTTP headers, or a response. Slow/unreachable W2 cannot
+     * block libbluray; the post-scan RAW source keeps the normal fallback. */
+    int64_t until=nova_iso_uptime_ms()+8;
+    while(!s->stopping &&
+          !__atomic_load_n(&s->iso_pump_kicked,__ATOMIC_ACQUIRE) &&
+          nova_iso_uptime_ms()<until){
+        struct timespec pause={.tv_sec=0,.tv_nsec=250000L};
+        nanosleep(&pause,NULL);
+    }
+    LOGI("NOVA_ISO_PARALLEL_V2: kickoff_ready=%d",
+         __atomic_load_n(&s->iso_pump_kicked,__ATOMIC_ACQUIRE));
     return 0;
 }
 
