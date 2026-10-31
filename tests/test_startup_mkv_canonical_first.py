@@ -45,6 +45,15 @@ class StartupMkvCanonicalFirst(unittest.TestCase):
         self.assertIn("dlsym(transport,\"nova_transport_mark_first_frame\")",p)
         self.assertIn("strncmp(url,\"novatransport://\",16)",p)
 
+    def test_required_abi_exports_are_explicit(self):
+        for member,return_type in (("nova_transport_set_target_bps","int"),
+                                   ("nova_transport_mark_first_frame","void")):
+            self.assertIn(
+                '__attribute__((visibility("default")))\n'+return_type+' '+member+'(',
+                self.transport,
+                'AVOS resolves this symbol via dlsym before RAW startup'
+            )
+
     def test_existing_progressive_raw_and_w2_unmodified(self):
         p=self.patch
         self.assertIn("pthread_create(&raw->thread, NULL, nova_raw_thread, raw)",p)
