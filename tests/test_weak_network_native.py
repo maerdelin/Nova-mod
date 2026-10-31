@@ -55,6 +55,7 @@ typedef struct nova_session {
     int64_t upstream_pos;
     int64_t file_cursor;
     int requires_origin_refresh;
+    volatile uint64_t startup_wire_bytes;
 } nova_session;
 static int open_count, fail_open_once, fail_open_404;
 static int seek_count, fail_seek_once, fail_seek_einval_once, fail_seek_einval_always;
