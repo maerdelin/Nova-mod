@@ -44,6 +44,10 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("if(done==bytes)return done",LITE)
         self.assertIn('nova_multi_stop(s,"iso-lba-jump",0)',LITE)
         self.assertIn("s->multi_committed_cursor!=live_target",LITE)
+        self.assertIn("#define NOVA_ISO_STARTUP_REPLAY_BYTES (24 * 1024 * 1024)",C)
+        self.assertIn("s->output_size<(uint64_t)s->iso_startup_replay_cap",C)
+        self.assertIn("s->iso_startup_replay_size<s->iso_startup_replay_cap",LITE)
+        self.assertIn("NOVA_ISO_STARTUP_REPLAY_V2: boundary_miss",LITE)
 
     def test_04_w2_pre_first_frame(self):
         self.assertIn("nova_multi_start(s,at,2)",C)
