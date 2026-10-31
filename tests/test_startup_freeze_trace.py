@@ -37,15 +37,18 @@ class StartupFreezeTraceTests(unittest.TestCase):
         self.assertNotIn("NOVA_SYNC_BOOT", trace.RENDER_CLOCK_LOG)
 
     def test_log_rate_and_calibration_snapshots_are_bounded(self):
-        self.assertIn("180000", trace.PUT_LOG)
+        self.assertIn("1200000", trace.PUT_LOG)
         self.assertIn("1000", trace.PUT_LOG)
-        self.assertIn("180000", trace.RENDER_CLOCK_LOG)
+        self.assertIn("1200000", trace.RENDER_CLOCK_LOG)
         self.assertIn("1000", trace.RENDER_CLOCK_LOG)
         self.assertIn("1000", trace.LATE_LOG)
         self.assertIn("p->nova_trace_correction_logs < 48", trace.CORRECTION_LOG)
         self.assertIn("oldOffNs=%lld", trace.PUT_LOG)
         self.assertIn("newOffNs=%lld", trace.PUT_LOG)
         self.assertIn("threshMs=", trace.PUT_LOG)
+        self.assertIn("NOVA_60FPS_CLOCK_CPU_V1", trace.RENDER_CLOCK_LOG)
+        self.assertIn("threadCpuUs=%lld", trace.RENDER_CLOCK_LOG)
+        self.assertIn("CLOCK_THREAD_CPUTIME_ID", trace.RENDER_CLOCK_LOG)
         self.assertIn("offsetNs=%lld", trace.LATE_LOG)
         self.assertIn("deadlineNs=%lld", trace.LATE_LOG)
 
