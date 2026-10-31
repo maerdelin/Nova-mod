@@ -304,6 +304,10 @@ typedef struct nova_session {
     /* NOVA_STARTUP_UI_STATE_V1: 1=preparing 2=first-frame-held
      * 3=threshold-resumed 4=terminal. Read by the player UI only. */
     volatile int startup_ui_state;
+    /* Measured post-demux packet + RAW resident bytes divided by the actual
+     * first-resume threshold; 0..100, updated by the AVOS buffer controller.
+     * Not the received network byte counter (which may already be consumed). */
+    volatile int startup_buffer_percent;
     volatile uint64_t startup_wire_bytes;
     int64_t startup_speed_sample_ms;
     uint64_t startup_speed_sample_bytes, startup_speed_bps;
@@ -2332,6 +2336,41 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupBytes
         __atomic_load_n(&s->startup_wire_bytes,__ATOMIC_RELAXED) : 0;
     pthread_mutex_unlock(&g_lock);
     return count>INT64_MAX ? INT64_MAX : (jlong)count;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupPercent(
+        JNIEnv *env,jclass cls)
+{
+    (void)env;(void)cls;
+    pthread_mutex_lock(&g_lock);
+    nova_session *s=g_session;
+    int percent=s && !s->stopping ?
+        __atomic_load_n(&s->startup_buffer_percent,__ATOMIC_ACQUIRE) : 0;
+    pthread_mutex_unlock(&g_lock);
+    return percent;
+}
+
+/* AVOS supplies the same resident and resume threshold used by its first
+ * frame hold/rebuffer decision. Do not guess a fixed 4M or use download
+ * totals. EOF/first-frame hold and overlay exit are independent milestones. */
+__attribute__((visibility("default")))
+void nova_transport_report_startup_buffer(uint64_t generation,
+        int64_t resident_bytes,int64_t resume_bytes)
+{
+    if(resume_bytes<=0)return;
+    nova_session *s=session_acquire(generation);
+    if(!s)return;
+    int percent=resident_bytes<=0?0:
+        resident_bytes>=resume_bytes?100:
+        (int)((resident_bytes*100)/resume_bytes);
+    if(percent<0)percent=0;
+    if(percent>100)percent=100;
+    __atomic_store_n(&s->startup_buffer_percent,percent,__ATOMIC_RELEASE);
+    LOGI("NOVA_STARTUP_BUFFER_PERCENT_V1: generation=%" PRIu64
+         " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
+         generation,resident_bytes,resume_bytes,percent);
+    session_release(s);
 }
 
 /* Guard native rebuffer reports by the actual active transport generation. */
