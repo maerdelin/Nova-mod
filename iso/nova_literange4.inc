@@ -430,6 +430,9 @@ static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
     }
     p->filled+=(int)bytes;
     p->owner->received_sample_bytes+=(uint64_t)bytes;
+    /* Actual libcurl response-body bytes, not guessed bitrate/speed. */
+    __atomic_add_fetch(&p->owner->session->startup_wire_bytes,
+                       (uint64_t)bytes,__ATOMIC_RELAXED);
     return bytes;
 }
 
