@@ -153,7 +153,7 @@ def main():
         if "NOVA_ISO_STARTUP_REPLAY_V1: hit" not in live:
             raise RuntimeError("ISO internal FFmpeg probe rewind did not reuse verified bytes")
         # Read actual stop reason; do not infer no-seek from a source guard.
-        iso_jump_count=len(re.findall(r"NOVA_LITERANGE4_STOP reason=iso-lba-jump\\b",live[:found["first_frame"]]))
+        iso_jump_count=len(re.findall(r"NOVA_LITERANGE4_STOP reason=iso-lba-jump\b",live[:found["first_frame"]]))
         if iso_jump_count != 0:
             raise RuntimeError(f"ISO startup reset W2 via iso-lba-jump {iso_jump_count} times")
         result={
