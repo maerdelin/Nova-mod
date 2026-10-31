@@ -114,6 +114,8 @@ def main():
         markers={
             "title_scan": "ISO_OPEN_STAGE title_select_info_ms",
             "pump_begin": "NOVA_ISO_PARALLEL_V1: pump_begin",
+            "pump_kicked": "NOVA_ISO_PARALLEL_V2: pump_kicked",
+            "kickoff_ready": "NOVA_ISO_PARALLEL_V2: kickoff_ready=1",
             "owner_handoff": "NOVA_ISO_PARALLEL_V1: owner_handoff",
             "w2_start": "NOVA_LITERANGE4_START",
             "meta_done": "NOVA_ISO_META_STAIR_V1: done",
@@ -127,8 +129,12 @@ def main():
             raise RuntimeError("no ISO first frame from signed APK")
         if found["pump_begin"]<0 or found["w2_start"]<0:
             raise RuntimeError("ISO early two-lane source did not start")
-        if found["meta_done"]>=0 and found["pump_begin"]>=found["meta_done"]:
-            raise RuntimeError("ISO W2 began after metadata finished; not parallel")
+        if found["meta_done"]>=0 and (found["pump_begin"]>=found["meta_done"] or
+            found["pump_kicked"]>=found["meta_done"] or
+            found["kickoff_ready"]>=found["meta_done"]):
+            raise RuntimeError("ISO W2 CURLM was not performed before metadata scan finished")
+        if found["pump_kicked"]<0 or found["kickoff_ready"]<0:
+            raise RuntimeError("ISO dual-lane GETs were never driven before metadata scan")
         lanes=re.findall(r"NOVA_LITERANGE4_START[^\n]*lanes=(\d+)",live)
         if not lanes or "2" not in lanes:
             raise RuntimeError("ISO W2 not confirmed two lanes")
@@ -142,6 +148,7 @@ def main():
           "url_type":"local WebDAV Blu-ray ISO",
           "real_first_frame":True,
           "w2_during_metadata":True,
+          "curl_multi_perform_before_meta_end": True,
           "two_lanes":True,
           "startup_prefix_replay":True,
           "owner_handoff":True,
