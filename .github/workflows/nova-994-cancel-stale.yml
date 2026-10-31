@@ -1,0 +1,22 @@
+name: NOVA 994 cancel superseded builds
+on:
+  push:
+    branches:
+      - build/994-all-five-validation-20261031
+    paths:
+      - .github/workflows/nova-994-cancel-stale.yml
+permissions:
+  contents: read
+# Match the main APK build group's exact key, so this one-shot guard
+# supersedes #1006/#1007 without generating another APK build number.
+concurrency:
+  group: nova-video-player-mod-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cancel-superseded:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Stop superseded 994 builds (no APK produced)
+        run: |
+          echo 'NOVA_994_CANCEL_SUPERSEDED_BUILDS=PASS'
+          echo 'Only the intentionally dispatched final build may release.'
