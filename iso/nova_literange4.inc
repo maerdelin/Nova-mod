@@ -1255,28 +1255,66 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
     if(!s || !dst || bytes<=0 || target<0 ||
        s->upstream_size<=0 || target>s->upstream_size ||
        (int64_t)bytes>s->upstream_size-target)return -1;
-    if(s->multi_active && s->multi_committed_cursor!=target)
+    /* NOVA_ISO_STARTUP_REPLAY_V1: source byte zero and the physical ISO
+     * movie LBA are different coordinate systems. FFmpeg's startup seek(0)
+     * rewinds libbluray to the SAME verified physical offset. Keep W2 alive
+     * and replay the first contiguous verified movie bytes. Never replay
+     * outside this exact window; genuine seeks retain the old reseed path. */
+    int done=0;
+    if(s->mode==NOVA_MODE_BLURAY_ISO && s->iso_startup_replay &&
+       s->iso_startup_replay_size>0 &&
+       target>=s->iso_startup_replay_start &&
+       target-s->iso_startup_replay_start<s->iso_startup_replay_size){
+        int avail=s->iso_startup_replay_size-
+            (int)(target-s->iso_startup_replay_start);
+        done=bytes<avail?bytes:avail;
+        memcpy(dst,s->iso_startup_replay+
+               (size_t)(target-s->iso_startup_replay_start),(size_t)done);
+        LOGI("NOVA_ISO_STARTUP_REPLAY_V1: hit at=%" PRId64
+             " bytes=%d retained=%d epoch=%" PRIu64,
+             target,done,s->iso_startup_replay_size,s->multi_generation);
+        if(done==bytes)return done;
+    }
+    const int64_t live_target=target+done;
+    if(s->multi_active && s->multi_committed_cursor!=live_target)
         nova_multi_stop(s,"iso-lba-jump",0);
     if(!s->multi_active && !s->multi_disabled){
-        /* NOVA_ISO_EARLY_W2_V1: after libbluray identifies the
-         * correct title, start two movie-data Range lanes on first read.
-         * Do not launch speculative movie reads during UDF title scan. */
-        LOGI("NOVA_ISO_EARLY_W2_V1: first_movie_read start=%" PRId64 " lanes=2",target);
-        if(nova_multi_start(s,target,2)<0)s->multi_disabled=1;
+        /* NOVA_ISO_EARLY_W2_V1: use the main-title's verified physical
+         * media offset. No guessing of title or CLPI extents while scanning. */
+        LOGI("NOVA_ISO_EARLY_W2_V1: first_movie_read start=%" PRId64
+             " lanes=2",live_target);
+        if(nova_multi_start(s,live_target,2)<0)s->multi_disabled=1;
     }
     if(s->multi_active){
-        int done=0;
         while(done<bytes && !s->stopping){
+            int64_t at=s->multi_committed_cursor;
             int got=nova_multi_read(s,dst+done,bytes-done);
             if(got<=0)break;
+            if(s->mode==NOVA_MODE_BLURAY_ISO && s->iso_startup_replay &&
+               s->iso_startup_replay_size<NOVA_ISO_STARTUP_REPLAY_BYTES){
+                if(s->iso_startup_replay_start<0)
+                    s->iso_startup_replay_start=at;
+                if(at==s->iso_startup_replay_start+
+                       s->iso_startup_replay_size){
+                    int room=NOVA_ISO_STARTUP_REPLAY_BYTES-
+                             s->iso_startup_replay_size;
+                    int keep=got<room?got:room;
+                    memcpy(s->iso_startup_replay+s->iso_startup_replay_size,
+                           dst+done,(size_t)keep);
+                    s->iso_startup_replay_size+=keep;
+                }
+            }
             done+=got;
         }
         if(done==bytes)return done;
         nova_multi_stop(s,"iso-range-fallback",1);
-        int rest=nova_upstream_read_exact_retry(s,dst+done,target+done,bytes-done);
+        int rest=nova_upstream_read_exact_retry(s,dst+done,
+                                                target+done,bytes-done);
         return rest==bytes-done?bytes:-1;
     }
-    return nova_upstream_read_exact_retry(s,dst,target,bytes);
+    int rest=nova_upstream_read_exact_retry(s,dst+done,
+                                             target+done,bytes-done);
+    return rest==bytes-done?bytes:-1;
 }
 
 static void nova_multi_destroy(nova_session *s)
