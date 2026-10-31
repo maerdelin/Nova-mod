@@ -106,10 +106,27 @@ static void nova_startup_overlay_milestone(const char *url,int state)
     if(report)report(gen,state);
     dlclose(h);
 }
+/* Report actual effective resident bytes and first-resume threshold.
+ * The Java overlay samples the resulting percentage every 500 ms;
+ * AVOS publishes at 250 ms to avoid a stale sample on the UI tick. */
+static void nova_startup_overlay_buffer_percent(
+        const char *url,int64_t resident,int64_t resume)
+{
+    uint64_t gen=0;
+    if(!nova_startup_overlay_generation(url,&gen) || resume<=0)return;
+    void *h=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!h)return;
+    void (*report)(uint64_t,int64_t,int64_t)=
+        (void (*)(uint64_t,int64_t,int64_t))
+        dlsym(h,"nova_transport_report_startup_buffer");
+    if(report)report(gen,resident,resume);
+    dlclose(h);
+}
 static void *_rebuffer_thread( void *data )
 {
     STREAM *s = (STREAM *)data;
     int last_wait_log = 0;
+    int last_percent_report_ms = -1000;
 
     DBGS serprintf("PID[%5d] raw_rebuffer_thread::Starting\r\n", getpid());
 
@@ -135,6 +152,19 @@ static void *_rebuffer_thread( void *data )
                         &s->raw_prefetch_eof, __ATOMIC_ACQUIRE );
                     int active = __atomic_load_n(
                         &s->rebuffering, __ATOMIC_ACQUIRE );
+
+                    /* Track already resident and usable bytes, not
+                     * cumulative network traffic. This also works before
+                     * the first decoded frame. AVOS is authoritative for
+                     * both numerator and first-resume denominator. */
+                    int now_percent_ms=atime();
+                    if(now_percent_ms-last_percent_report_ms>=250){
+                        last_percent_report_ms=now_percent_ms;
+                        if(nova_startup_ui_phase(s->src.url)<3)
+                            nova_startup_overlay_buffer_percent(
+                                s->src.url,(int64_t)resident,
+                                (int64_t)s->rebuffer_resume_bytes);
+                    }
 
                     /* Before the first resume, retain the already-submitted
                      * first image until full resume reserve, not just 1.5X
