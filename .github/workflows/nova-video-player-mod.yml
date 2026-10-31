@@ -93,6 +93,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_mkv_canonical_first.py -v
           python3 -m unittest discover -s tests -p test_startup_fourfix.py -v
           python3 -m unittest discover -s tests -p test_994_source_guards.py -v
+          python3 -m unittest discover -s tests -p test_994_percent_native.py -v
           python3 -m py_compile scripts/startup_loading_994_patch.py
           python3 -m py_compile scripts/mkv_bbc_cue_seek_patch.py scripts/iso_track_metadata_patch.py scripts/smoke_noniso_single_get_android.py
           python3 -m py_compile scripts/torrent_crash_guard_patch.py
