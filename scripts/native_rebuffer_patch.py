@@ -783,6 +783,12 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     s->rebuffer_capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;
     __atomic_store_n(&s->raw_prefetch_enabled, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
+    /* NOVA_STARTUP_BUFFER_PREARM_V1: establish raw and packet reserve
+     * before any decoder has produced a first video frame. Freezing
+     * begins ONLY after verified first-render submission. */
+    serprintf("NOVA_STARTUP_BUFFER_PREARM_V1: firstFrame=0 low=%d resume=%d capacity=%d\n",
+              s->rebuffer_low_bytes,s->rebuffer_resume_bytes,
+              s->rebuffer_capacity_bytes);
 
     ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);
     if( ret ) {
