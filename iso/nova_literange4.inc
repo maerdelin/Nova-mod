@@ -1279,8 +1279,13 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
         if(done==bytes)return done;
     }
     const int64_t live_target=target+done;
-    if(s->multi_active && s->multi_committed_cursor!=live_target)
+    if(s->multi_active && s->multi_committed_cursor!=live_target){
+        LOGI("NOVA_ISO_STARTUP_REPLAY_V2: boundary_miss target=%" PRId64
+             " committed=%" PRId64 " retained=%d cap=%d",
+             live_target,s->multi_committed_cursor,
+             s->iso_startup_replay_size,s->iso_startup_replay_cap);
         nova_multi_stop(s,"iso-lba-jump",0);
+    }
     if(!s->multi_active && !s->multi_disabled){
         /* NOVA_ISO_EARLY_W2_V1: use the main-title's verified physical
          * media offset. No guessing of title or CLPI extents while scanning. */
@@ -1294,12 +1299,12 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
             int got=nova_multi_read(s,dst+done,bytes-done);
             if(got<=0)break;
             if(s->mode==NOVA_MODE_BLURAY_ISO && s->iso_startup_replay &&
-               s->iso_startup_replay_size<NOVA_ISO_STARTUP_REPLAY_BYTES){
+               s->iso_startup_replay_size<s->iso_startup_replay_cap){
                 if(s->iso_startup_replay_start<0)
                     s->iso_startup_replay_start=at;
                 if(at==s->iso_startup_replay_start+
                        s->iso_startup_replay_size){
-                    int room=NOVA_ISO_STARTUP_REPLAY_BYTES-
+                    int room=s->iso_startup_replay_cap-
                              s->iso_startup_replay_size;
                     int keep=got<room?got:room;
                     memcpy(s->iso_startup_replay+s->iso_startup_replay_size,
