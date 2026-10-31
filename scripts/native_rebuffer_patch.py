@@ -1406,9 +1406,9 @@ static int ff_force_seek'''
     path.write_text(text)
 
 
-/* Signal the actual first video frame without coupling AVOS to the
- * transport ABI or touching ISO/other protocols. This runs just once per
- * STREAM (the guarded first_frame_sink event), not in the render loop. */
+# Signal the actual first video frame without coupling AVOS to the
+# transport ABI or touching ISO/other protocols. This runs just once per
+# STREAM (the guarded first_frame_sink event), not in the render loop.
 STARTUP_MKV_FRAME_NOTIFY = r'''
 #include <stdint.h>
 #include <stdlib.h>
