@@ -75,6 +75,7 @@ typedef struct nova_session {
     char *upstream_url;
     char *upstream_headers;
     void *warehouse;
+    uint8_t *iso_startup_replay;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
 } nova_session;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -112,6 +113,8 @@ static nova_session *make_session(uint64_t generation) {
     s->iso_meta_active = 1;
     s->iso_meta_pages[0].data = malloc(32);
     assert(s->iso_meta_pages[0].data);
+    s->iso_startup_replay = malloc(128);
+    assert(s->iso_startup_replay);
     pthread_mutex_init(&s->io_lock, NULL);
     pthread_cond_init(&s->idle, NULL);
     return s;
