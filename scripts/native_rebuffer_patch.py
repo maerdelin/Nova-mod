@@ -164,8 +164,9 @@ static void *_rebuffer_thread( void *data )
                             !s->paused && !s->stream_end &&
                             s->video_error == VE_NO_ERROR &&
                             !parsed_eof && !source_eof &&
-                            resident < s->rebuffer_resume_bytes &&
-                            nova_startup_ui_phase(s->src.url)<3 ) {
+                            resident < (nova_startup_ui_phase(s->src.url)<3 ?
+                                s->rebuffer_resume_bytes :
+                                s->rebuffer_low_bytes) ) {
                             __atomic_store_n(
                                 &s->rebuffering, 1, __ATOMIC_RELEASE );
                             __atomic_store_n(
