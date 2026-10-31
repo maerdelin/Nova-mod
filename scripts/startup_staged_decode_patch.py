@@ -234,8 +234,8 @@ def apply(root: Path):
         '\tff_p->flags = flags;\n'
         '\t/* MKV marker lives in src.url, NOT src_query (only ?mpegts& copied). */\n'
         '\tint nova_staged_mkv = !(flags & STREAM_PARSER_THUMB) &&\n'
-        '\t\ts->src.url && !strncmp(s->src.url,"novatransport://",16) &&
-		strstr(s->src.url,"&nova_mkv=1")!=NULL;\n','scope')
+        '\t\ts->src.url && !strncmp(s->src.url,"novatransport://",16) &&\n'
+        '\t\tstrstr(s->src.url,"&nova_mkv=1")!=NULL;\n','scope')
     src=once(src,'av_dict_set(&ff_p->fmt_opts, "probesize", "10000000", 0);',
         'av_dict_set(&ff_p->fmt_opts, "probesize",\n'
         '\t\t\tnova_staged_mkv ? "65536" : "10000000", 0);',
