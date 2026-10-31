@@ -1611,11 +1611,16 @@ static int nova_iso_start_pump(nova_session *s,int64_t at)
     }
     s->iso_pump_running=1;
     /* The remote metadata scan is frequently < 1ms after bd_select_title.
-     * Give the actual CURLM owner at most 8ms to call multi_perform before
+     * The native emulator demonstrated 12ms to reach multi_perform and the
+     * previous 8ms guard returned prematurely (kickoff_ready=0). Allow up
+     * to 80ms for CPU scheduling and curl setup, but never wait for network
+     * bytes or headers. This prevents a false 'parallel' handoff where
+     * metadata ends before CURLM has actually been driven. */
+    /* Give the actual CURLM owner a bounded window to start before
      * continuing the *independent* title-info scan. We do not wait for
      * packets, HTTP headers, or a response. Slow/unreachable W2 cannot
      * block libbluray; the post-scan RAW source keeps the normal fallback. */
-    int64_t until=nova_iso_uptime_ms()+8;
+    int64_t until=nova_iso_uptime_ms()+80;
     while(!s->stopping &&
           !__atomic_load_n(&s->iso_pump_kicked,__ATOMIC_ACQUIRE) &&
           nova_iso_uptime_ms()<until){
