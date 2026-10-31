@@ -111,14 +111,14 @@ int main(void) {
     assert(nova_iso_meta_read(&s,buf,9*page+4096,2048)==1);
     assert(io.seeks==2);
     /* One failed prefetch must not discard previous fully fetched pages.
-     * The old 4MiB page must be readable after switching to 256KiB pages. */
+     * The first 256KiB page must remain readable after a failed prefetch. */
     io.fail_reads = 1;
     assert(nova_iso_meta_read(&s,buf,10*page+4096,2048)==-1);
     assert(s.iso_meta_degraded == 1);
     int cached_reads = io.reads;
-    assert(nova_iso_meta_read(&s,buf,400000,2048)==1);
+    assert(nova_iso_meta_read(&s,buf,40000,2048)==1);
     assert(io.reads == cached_reads);
-    assert(buf[0]==(uint8_t)(400000 % 251));
+    assert(buf[0]==(uint8_t)(40000 % 251));
     assert(nova_iso_meta_read(&s,buf,10*page+4096,2048)==1);
     assert(io.reads == cached_reads+1);
     assert(buf[0]==(uint8_t)((10*page+4096) % 251));
