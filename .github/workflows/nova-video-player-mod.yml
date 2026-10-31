@@ -365,7 +365,8 @@ jobs:
             --work work
           test -s work/direct-final/smali_classes*/com/archos/mediacenter/video/player/NovaStartupOverlay.smali
           grep -R -Fq 'NovaStartupOverlay;->onPrepared' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerActivity.smali
-          grep -Fq 'android:tag="nova_speed"' work/direct-final/res/layout/player.xml
+          grep -Fq 'android:tag="nova_buffer_percent"' work/direct-final/res/layout/player.xml
+          grep -R -Fq 'nativeStartupPercent()I' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
           grep -R -Fq 'NOVA_TORRENT_STDOUT_CRASH_GUARD_V1' work/direct-final/smali*/com/archos/mediacenter/video/browser/TorrentObserverService.smali
           python3 scripts/direct_transport_audit.py --source
           test -s work/direct-final/smali_classes*/com/archos/mediacenter/video/player/NovaLoadingTrace.smali
