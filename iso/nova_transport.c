@@ -1408,7 +1408,12 @@ static void *nova_mkv_tail_worker(void *opaque)
 
 static int nova_mkv_tail_start(nova_session *s)
 {
-    if(!s || !s->file_http_mode || s->upstream_size<1024*1024 ||
+    /* NOVA_MKV_SMALL_FIRSTFRAME_PRIORITY_V1: on compact MKV media, the
+     * independent 64 KiB tail Range contends with the canonical first-frame
+     * GET, although the EBML tracks/cues are cheap to seek on demand. Only
+     * warm the tail of larger media where early cues are useful. */
+    if(!s || !s->file_http_mode ||
+       s->upstream_size < (int64_t)16*1024*1024 ||
        s->mkv_tail_running || !s->origin_url)return -1;
     s->mkv_tail_size=NOVA_MKV_TAIL_WARM_BYTES;
     s->mkv_tail_data=malloc(NOVA_MKV_TAIL_WARM_BYTES);
