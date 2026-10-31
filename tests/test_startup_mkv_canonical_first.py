@@ -18,7 +18,7 @@ class StartupMkvCanonicalFirst(unittest.TestCase):
 
     def test_mkv_only_until_first_render_and_bounded_failsafe(self):
         t=self.transport
-        read=t.split("int nova_transport_read(uint64_t generation,",1)[1]
+        read=t.split("int nova_transport_read(uint64_t generation, uint8_t *dst, int size)\n{",1)[1]
         read=read.split("__attribute__((visibility(\"default\")))",1)[0]
         self.assertIn("startup_mkv_canonical = s->file_http_mode &&",read)
         self.assertIn("!__atomic_load_n(&s->startup_first_frame_ready",read)
