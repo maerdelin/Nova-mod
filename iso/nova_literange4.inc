@@ -24,6 +24,12 @@
 #define NOVA_LITE_HEAD_BYTES NOVA_WH_HEAD_BYTES
 #define NOVA_LITE_FUTURE_BYTES NOVA_WH_FUTURE_BYTES
 #define NOVA_LITE_SLOTS 2
+/* NOVA_60FPS_W1_AB: exact #967 dual-source control build.
+ * Keep two-slot CURLM/Shared42/decoder code intact, but disable only
+ * second-Range activation. Volatile makes this a runtime branch so
+ * compiler keeps and tests the complete W2 code and logging in the ELF.
+ * This is NOT a permanent fix: it isolates W2 causal contribution. */
+static volatile int nova_60fps_w1_control = 1;
 #define NOVA_LITE_SEGMENT_SECONDS 4
 #define NOVA_LITE_DATA_WAREHOUSE_BYTES (128 * 1024 * 1024)
 #define NOVA_LITE_RAW_RING_BYTES (64 * 1024 * 1024)
@@ -973,7 +979,11 @@ static int nova_multi_start(nova_session *s,int64_t start,int lanes)
     lanes=lanes>2?2:lanes;
     if(s->multi_http403_failures)lanes=1; /* safe W1 after backoff/seek */
     else if(s->adaptive_target_bps>0)lanes=2;
+    if(nova_60fps_w1_control)lanes=1;
     s->multi_active_lanes=lanes;
+    if(nova_60fps_w1_control)
+        LOGI("NOVA_60FPS_W1_AB: second HTTP Range disabled; shared42=on raw86=on source=967");
+
     s->adaptive_lanes=lanes;
     s->multi_committed_cursor=start;
     s->multi_next_offset=start;
@@ -1063,6 +1073,7 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
      * Never upgrade just because time has elapsed or single GET opened. */
     unsigned required_valid=s->multi_http403_failures>1?2:1;
     if(target>0 && s->multi_active_lanes<2 && !s->multi_seek_guard &&
+       !nova_60fps_w1_control &&
        /* NOVA_STARTUP_DEEP_V1: 512 KiB actually consumed is enough to
         * establish first-range progress; do not wait for the entire
         * 4 MiB 206 before preparing the second Range. Original
