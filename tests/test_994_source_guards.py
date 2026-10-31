@@ -8,6 +8,7 @@ LITE = (ROOT / "iso/nova_literange4.inc").read_text()
 AVOS = (ROOT / "scripts/native_rebuffer_patch.py").read_text()
 UI = (ROOT / "scripts/startup_loading_994_patch.py").read_text()
 APPLY = (ROOT / "scripts/direct_transport_apply.py").read_text()
+SHARED42 = (ROOT / "scripts/shared42_native_patch.py").read_text()
 
 class FiveGoalGuards(unittest.TestCase):
     def test_01_iso_metadata_and_w2_own_separate_threads(self):
@@ -39,6 +40,8 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("#define NOVA_MKV_STARTUP_READ_BYTES   (64 * 1024)",AVOS)
         self.assertIn("buffer, consumer_bytes, 0, raw,",AVOS)
         self.assertIn("raw->produced_bytes < (1024 * 1024)",AVOS)
+        self.assertIn('if(raw->shared_pages) read_limit=64 * 1024;',SHARED42)
+        self.assertIn('if( ask > read_limit ) ask = read_limit;',SHARED42)
         self.assertNotIn("AVIO_SEEKABLE_NORMAL = 0",C)
 
     def test_03_iso_lba_jump_reuses_verified_first_bytes(self):

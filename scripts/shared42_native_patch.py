@@ -108,8 +108,13 @@ def patch(text):
               "        int64_t ask = room < contiguous ? room : contiguous;",
               "        int64_t ask = raw->shared_pages ? room : (room < contiguous ? room : contiguous);",
               "shared pages ignore byte-ring wrap")
-    text=once(text,"        if( ask > NOVA_RAW_IO_BYTES ) ask = NOVA_RAW_IO_BYTES;",
-              "        if( ask > (raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES) )\n            ask = raw->shared_pages ? 64 * 1024 : NOVA_RAW_IO_BYTES;","producer ask")
+    # Native RAW now computes an MKV startup-specific read_limit (64 KiB
+    # during its first MiB). Shared pages are ALWAYS capped at 64 KiB,
+    # without weakening the MKV early-read policy on non-shared streams.
+    text=once(text,"        if( ask > read_limit ) ask = read_limit;",
+              "        if(raw->shared_pages) read_limit=64 * 1024;\n"
+              "        if( ask > read_limit ) ask = read_limit;",
+              "producer ask shared-page compatibility")
     old="""        int got = avio_read(raw->source, raw->ring + write_off, want);
         pthread_mutex_unlock(&raw->source_mutex);
 
