@@ -1464,6 +1464,57 @@ void nova_transport_warehouse_release(void *data)
     nova_shared_warehouse_unref(nova_shared_warehouse_from_data(data));
 }
 
+/* NOVA_ISO_PARALLEL_V1: temporary exclusive CURLM owner. The title scan
+ * uses its separate metadata AVIO; W2 uses only selected-title movie bytes.
+ * Pump exits before RAW takes over the two CURL connections. */
+static void *nova_iso_pump_main(void *opaque)
+{
+    nova_session *s=(nova_session *)opaque;
+    LOGI("NOVA_ISO_PARALLEL_V1: pump_begin at=%" PRId64,
+         s->multi_committed_cursor);
+    while(!s->stopping && !__atomic_load_n(&s->iso_pump_stop,__ATOMIC_ACQUIRE)
+          && s->multi_active && s->lite){
+        int running=0;
+        nova_lite_schedule(s);
+        if(curl_multi_perform(s->lite->multi,&running)!=CURLM_OK)break;
+        nova_lite_complete(s);
+        /* Limit startup staging to a bounded region; do not exhaust RAW's
+         * physical warehouse or overwrite the initial movie bytes. */
+        int filled=0;
+        for(int i=0;i<NOVA_LITE_SLOTS;i++)
+            filled+=s->lite->slots[i].filled;
+        if(filled>=NOVA_LITE_HEAD_BYTES)break;
+        int fdcount=0;
+        if(curl_multi_poll(s->lite->multi,NULL,0,40,&fdcount)!=CURLM_OK)break;
+    }
+    LOGI("NOVA_ISO_PARALLEL_V1: pump_done epoch=%" PRIu64,
+         s->multi_generation);
+    return NULL;
+}
+
+static int nova_iso_start_pump(nova_session *s,int64_t at)
+{
+    if(!s || s->iso_pump_running || at<0 || s->stopping)return -1;
+    if(nova_multi_start(s,at,2)<0)return -1;
+    s->iso_pump_stop=0;
+    if(pthread_create(&s->iso_pump_thread,NULL,nova_iso_pump_main,s)!=0){
+        nova_multi_stop(s,"iso-pump-create-failed",0);
+        return -1;
+    }
+    s->iso_pump_running=1;
+    return 0;
+}
+
+static void nova_iso_stop_pump(nova_session *s)
+{
+    if(!s || !s->iso_pump_running)return;
+    __atomic_store_n(&s->iso_pump_stop,1,__ATOMIC_RELEASE);
+    pthread_join(s->iso_pump_thread,NULL);
+    s->iso_pump_running=0;
+    LOGI("NOVA_ISO_PARALLEL_V1: owner_handoff generation=%" PRIu64,
+         s->multi_generation);
+}
+
 static void session_free(nova_session *s)
 {
     if (!s)
