@@ -2028,6 +2028,9 @@ void nova_transport_mark_first_frame(uint64_t generation)
     session_release(s);
 }
 
+/* AVOS resolves this symbol via dlsym during nova_raw_open().  Without
+ * default visibility, transport_open fails before RAW128 can initialize. */
+__attribute__((visibility("default")))
 int nova_transport_set_target_bps(uint64_t generation, uint64_t target_bps)
 {
     nova_session *s = session_acquire(generation);
