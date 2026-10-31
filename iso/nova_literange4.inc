@@ -317,7 +317,7 @@ static int nova_lite_can_stage(nova_lite_slot *p,int extra)
      * is the number of RAW-owned pages (including a partially used head).
      * Do not stage up to 36 MiB of speculative data when RAW is full. */
     int raw_pages=(int)NOVA_WH_PAGES-free_pages-staged_pages;
-    if(future && raw_pages>=NOVA_W2_RAW_HIGH_PAGES){
+    if(future && raw_pages>=(int)NOVA_W2_RAW_HIGH_PAGES){
         if(limit>(int)NOVA_W2_FUTURE_SOFT_PAGES)
             limit=(int)NOVA_W2_FUTURE_SOFT_PAGES;
         if(p->page_count+extra>limit){
