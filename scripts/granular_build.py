@@ -146,6 +146,7 @@ def main():
     webdav_resume_local_only_patch.apply(candidate, args.reports / 'webdav-resume-local-only.json')
     v66_subtitle_loader_patch.apply(candidate, args.reports / 'v66-subtitle-loader.json')
     overlay_native(candidate, args.native_lib_root, args.reports)
+    g.write_json(args.reports / 'tv-list-candidate.json', g.audit_tv_list_view(candidate))
     if generated and selected['downloaded_sha256'] == json.loads((ROOT / 'baseline/manifest.json').read_text())['upstream_sha256']:
         g.verify(args.work / 'reference-mod', candidate, args.reports / 'candidate-baseline.json')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -153,6 +154,7 @@ def main():
     decoded = args.work / 'roundtrip'
     decode(args.apktool, args.output, decoded)
     g.verify(candidate, decoded, args.reports / 'roundtrip.json')
+    g.write_json(args.reports / 'tv-list-roundtrip.json', g.audit_tv_list_view(decoded))
     preserve_payload(args.apk, args.output, args.reports)
     shutil.copyfile(SPEC, args.reports / SPEC.name)
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,

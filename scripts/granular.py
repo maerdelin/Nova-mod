@@ -385,6 +385,48 @@ def extract(old: Path, new: Path, output: Path):
     write_json(output,patch);print(json.dumps(patch['stats'],indent=2))
     return patch
 
+# The original UI patch was extracted against pre-v6.6 Leanback R8 class names.
+# In 6.6.2 ViewHolder.view lives in px0, not qx0. Missing this remap caused
+# the TV WebDAV list-mode Java NoSuchFieldError at 2026-10-31 11:40:53.209.
+TV_LIST_CLASS = 'Lcom/archos/mediacenter/video/leanback/presenter/VideoListPresenter;'
+TV_LIST_METHOD = ('onBindListViewHolder('
+    'Lcom/archos/mediacenter/video/leanback/presenter/ListPresenter$ListViewHolder;'
+    'Ljava/lang/Object;)V')
+TV_VIEW_OLD = 'Lqx0;->view:Landroid/view/View;'
+TV_VIEW_NEW = 'Lpx0;->view:Landroid/view/View;'
+
+def port_v66_tv_list_view(rule, changes):
+    """Map precisely the one inserted field access; reject future ambiguity."""
+    if (rule['class'], rule['method']) != (TV_LIST_CLASS, TV_LIST_METHOD):
+        return changes
+    import copy
+    fixed = copy.deepcopy(changes)
+    n = sum(s.count(TV_VIEW_OLD) for h in fixed for s in h['after'])
+    if n != 1:
+        raise Conflict('TV list holder legacy field count changed: '+str(n))
+    for h in fixed:
+        for part in ('before','after','left','right','after_left','after_right'):
+            h[part] = [s.replace(TV_VIEW_OLD, TV_VIEW_NEW) for s in h[part]]
+    return fixed
+
+def audit_tv_list_view(root: Path):
+    """Check actual decoded candidate / signed APK roundtrip, not a test stub."""
+    index = class_index(root)
+    if TV_LIST_CLASS not in index:
+        raise Conflict('Missing TV VideoListPresenter class')
+    methods, _ = split_methods(index[TV_LIST_CLASS].read_text(encoding='utf-8'))
+    if TV_LIST_METHOD not in methods:
+        raise Conflict('Missing TV onBindListViewHolder method')
+    body = methods[TV_LIST_METHOD][0]
+    good = 'iget-object v3, p1, ' + TV_VIEW_NEW
+    if body.count(good) != 1 or TV_VIEW_OLD in body:
+        raise Conflict('TV list ViewHolder field is stale/ambiguous in final smali')
+    if 'Lpx0;' not in index or not member_available('Lpx0;', 'view:Landroid/view/View;', index, {}):
+        raise Conflict('TV list v6.6.2 target px0.view is missing')
+    return {'status':'PASS', 'scope':'decoded TV video list binding',
+            'required_instruction': good, 'old_field_refs':0,
+            'target_field_exists':True}
+
 def apply(root: Path, patch: dict, report: Path | None=None):
     if patch.get('format')!=FORMAT or patch.get('whole_file_replacements') is not False:
         raise Conflict('Not a supported granular-only patch')
@@ -437,7 +479,7 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if register_line(original) not in (rule['registers_before'],rule['registers_after']):
                 raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
             projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
-            changes=rule['hunks']
+            changes=port_v66_tv_list_view(rule, rule['hunks'])
             # v6.6 R8 changed this callback argument's obfuscated interface name
             # from Lhs1; to Ljs1;. The entire old onMenuItemSelected body is
             # removed by the existing patch. Require the new descriptor in the
@@ -487,6 +529,9 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             restored=[label_replace(line,inverse) for line in edited]
             check_labels(restored)
             replacement=materialize(restored,symbols)
+            if rule['class'] == TV_LIST_CLASS and rule['method'] == TV_LIST_METHOD:
+                if replacement.count('iget-object v3, p1, ' + TV_VIEW_NEW) != 1 or TV_VIEW_OLD in replacement:
+                    raise Conflict('TV list ViewHolder field migration lost in materialize')
             pending[path]=text[:match.start()]+replacement+text[match.end():]
             statuses.append({'class':rule['class'],'method':rule['method'],'status':status,'hunks':len(rule['hunks'])})
         except (Conflict, ValueError, KeyError) as error:
