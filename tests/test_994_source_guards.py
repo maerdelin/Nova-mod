@@ -19,7 +19,7 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("pthread_join(s->iso_pump_thread",C)
         self.assertIn("NOVA_ISO_PARALLEL_V2: pump_kicked", C)
         self.assertIn("NOVA_ISO_PARALLEL_V2: kickoff_ready=%d", C)
-        self.assertIn("nova_iso_uptime_ms()+8", C)
+        self.assertIn("nova_iso_uptime_ms()+80", C)
         self.assertIn("!__atomic_load_n(&s->iso_pump_kicked", C)
         self.assertIn("nova_iso_stop_pump(s);\n        /* ISO scan finished",C)
         self.assertIn("NOVA_STARTUP_BUFFER_PREARM_V1",AVOS)
