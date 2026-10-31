@@ -22,9 +22,9 @@ adb shell am start -a android.settings.ACCESSIBILITY_SETTINGS 2>&1 | tee "$OUT/0
 sleep 5
 adb shell dumpsys activity activities > "$OUT/02_activities.txt"
 adb shell dumpsys accessibility > "$OUT/02_accessibility.txt"
-adb shell uiautomator dump /sdcard/migu_ui.xml > "$OUT/02_dump_status.txt" 2>&1 || true
-adb pull /sdcard/migu_ui.xml "$OUT/02_settings_ui.xml" >/dev/null 2>&1 || true
-adb exec-out screencap -p > "$OUT/02_settings_ui.png" || true
+timeout 35s adb shell uiautomator dump /sdcard/migu_ui.xml > "$OUT/02_dump_status.txt" 2>&1 || true
+timeout 15s adb pull /sdcard/migu_ui.xml "$OUT/02_settings_ui.xml" >/dev/null 2>&1 || true
+timeout 15s adb exec-out screencap -p > "$OUT/02_settings_ui.png" || true
 adb logcat -d -v threadtime > "$OUT/02_logcat.txt"
 if test -s "$OUT/02_settings_ui.xml"; then
   echo '=== TV SETTINGS UI ELEMENTS ==='
