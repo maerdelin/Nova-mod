@@ -98,6 +98,9 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     if-eqz v1, :clear
     const/16 v0, 0x8
     invoke-virtual {v1, v0}, Landroid/view/View;->setVisibility(I)V
+    const-string v0, "NOVA_994_UI_HIDE"
+    const-string v1, "after-native-resume"
+    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     :clear
     const/4 v0, 0x0
     sput-object v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->sCurrent:Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
@@ -129,6 +132,8 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     invoke-virtual {v4}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     move-result-object v3
     invoke-virtual {v2, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+    const-string v0, "NOVA_994_UI_TICK"
+    invoke-static {v0, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
     :reschedule
     iget-object v0, p0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mView:Landroid/view/View;
     if-eqz v0, :done
