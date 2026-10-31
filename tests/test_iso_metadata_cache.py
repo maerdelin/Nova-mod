@@ -41,6 +41,7 @@ class IsoScanOnlyCacheTests(unittest.TestCase):
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define LOGI(...) ((void)0)
 #define UDF_BLOCK 2048
 #define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
