@@ -1491,40 +1491,6 @@ static void nova_startup_overlay_milestone(const char *url,int state);
 static int nova_startup_ui_phase(const char *url);
 '''
 STARTUP_MKV_FRAME_IMPL = r'''
-static int nova_startup_extract_generation(const char *url,uint64_t *generation)
-{
-    if(!url || strncmp(url,"novatransport://",16)!=0)return 0;
-    char *end=NULL;
-    unsigned long long gen=strtoull(url+16,&end,10);
-    if(!gen || !end || end==url+16 || *end!='/')return 0;
-    *generation=(uint64_t)gen;
-    return 1;
-}
-
-static int nova_startup_ui_phase(const char *url)
-{
-    uint64_t generation=0;
-    if(!nova_startup_extract_generation(url,&generation))return 3;
-    void *transport=dlopen("libnova_transport.so",RTLD_NOW);
-    if(!transport)return 3;
-    int (*state)(uint64_t)=(int (*)(uint64_t))
-        dlsym(transport,"nova_transport_startup_ui_phase");
-    int phase=state?state(generation):3;
-    dlclose(transport);
-    return phase;
-}
-
-static void nova_startup_overlay_milestone(const char *url,int phase)
-{
-    uint64_t generation=0;
-    if(!nova_startup_extract_generation(url,&generation))return;
-    void *transport=dlopen("libnova_transport.so",RTLD_NOW);
-    if(!transport)return;
-    void (*report)(uint64_t,int)=(void (*)(uint64_t,int))
-        dlsym(transport,"nova_transport_report_startup_ui_phase");
-    if(report)report(generation,phase);
-    dlclose(transport);
-}
 static void nova_startup_mkv_first_frame(const char *url)
 {
     if(!url || strncmp(url,"novatransport://",16)!=0) return;
