@@ -1571,6 +1571,10 @@ static void *nova_iso_pump_main(void *opaque)
         nova_lite_schedule(s);
         if(curl_multi_perform(s->lite->multi,&running)!=CURLM_OK)break;
         nova_lite_complete(s);
+        /* Both prefetch slots can be READY with no active socket. RAW
+         * cannot consume their bytes until libbluray metadata finishes;
+         * never spin on curl_multi_poll with running=0. */
+        if(running==0)break;
         /* Limit startup staging to a bounded region; do not exhaust RAW's
          * physical warehouse or overwrite the initial movie bytes. */
         int filled=0;
