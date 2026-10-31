@@ -86,5 +86,25 @@ for i in range(4):
   time.sleep(2)
 state('final_immediate');time.sleep(12);state('final_12s')
 enabled=(OUT/'final_12s_enabled.txt').read_text()
-if COMP.lower() in enabled.lower():print('PASS_SERVICE_ENABLED_FIRST_BOOT',flush=True)
-else:print('FAIL_FIRST_ENABLE_NOT_RETAINED',flush=True);sys.exit(37)
+if COMP.lower() in enabled.lower():
+ print('PASS_SERVICE_ENABLED_FIRST_BOOT',flush=True)
+else:
+ print('FAIL_FIRST_ENABLE_NOT_RETAINED',flush=True);sys.exit(37)
+print('CHECK_RUNNING_SERVICE_BEFORE_REBOOT',flush=True)
+state('before_reboot')
+print('REBOOT_TV_NOW',flush=True)
+cmd('reboot',timeout=20)
+cmd('wait-for-device',timeout=120)
+for i in range(120):
+ try:
+  if shell('getprop','sys.boot_completed').strip()=='1':break
+ except Exception: pass
+ time.sleep(2)
+else:
+ print('FAIL_REBOOT_TIMEOUT',flush=True);sys.exit(38)
+time.sleep(8)
+state('after_reboot')
+if COMP.lower() in (OUT/'after_reboot_enabled.txt').read_text().lower():
+ print('PASS_ENABLED_SURVIVES_SOFTWARE_REBOOT',flush=True)
+else:
+ print('FAIL_SERVICE_LOST_AFTER_REBOOT',flush=True);sys.exit(39)
