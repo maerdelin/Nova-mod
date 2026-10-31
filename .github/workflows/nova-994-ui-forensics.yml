@@ -56,13 +56,20 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_mkv_canonical_first.py -v
           python3 -m unittest discover -s tests -p test_startup_fourfix.py -v
           python3 -m unittest discover -s tests -p test_994_source_guards.py -v
-          python3 -m unittest discover -s tests -p test_994_source_guards.py -v
           python3 -m py_compile scripts/native_rebuffer_patch.py scripts/direct_transport_apply.py scripts/startup_loading_994_patch.py
           python3 scripts/startup_loading_994_patch.py decoded
           grep -q 'NovaStartupOverlay;->onPrepared' decoded/smali/com/archos/mediacenter/video/player/PlayerActivity.smali
           grep -q 'nativeStartupPercent()I' decoded/smali_classes*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
           grep -q 'nova_buffer_percent' decoded/res/layout/player.xml
-          echo 'NOVA_994_UI_PATCH_SMOKE=PASS'
+          # Also assemble the modified dex/XML; grep-only checks cannot catch
+          # invalid local registers, duplicate labels, or malformed resources.
+          if ! java -Xmx4g -jar tools/apktool.jar b decoded -o /tmp/nova-994-ui-smoke-UNSIGNED.apk > forensics/apktool-build.log 2>&1; then
+            tail -n 90 forensics/apktool-build.log
+            exit 1
+          fi
+          test -s /tmp/nova-994-ui-smoke-UNSIGNED.apk
+          unzip -tq /tmp/nova-994-ui-smoke-UNSIGNED.apk > forensics/apk-zip-integrity.txt
+          echo 'NOVA_994_UI_PATCH_SMOKE=PASS ASM=PASS'
           find forensics -type f | sort > forensics/file-list.txt
           test -s forensics/file-list.txt
       - name: Package 994 source snapshot for isolated tests
