@@ -1206,6 +1206,8 @@ def main():
     (smali_dir/"WeakStartProxy.smali").write_text(WEAK_START)
     from startup_loading_diag_patch import apply_smali_trace
     apply_smali_trace(root)
+    from startup_loading_994_patch import patch as apply_994_startup_ui
+    apply_994_startup_ui(root)
 
     # Guard malformed torrent stdout without changing listing or playback.
     from torrent_crash_guard_patch import patch_torrent_observer
