@@ -303,6 +303,7 @@ typedef struct nova_session {
     /* NOVA_STARTUP_UI_STATE_V1: 1=preparing 2=first-frame-held
      * 3=threshold-resumed 4=terminal. Read by the player UI only. */
     volatile int startup_ui_state;
+    volatile uint64_t startup_wire_bytes;
     nova_iso_track_lang iso_tracks[NOVA_ISO_TRACK_LANG_CAP];
     unsigned iso_track_count;
 } nova_session;
@@ -491,6 +492,7 @@ static int nova_upstream_read_exact_retry(nova_session *s, uint8_t *dst,
         if (got > 0) {
             done += got;
             s->upstream_pos += got;
+            __atomic_add_fetch(&s->startup_wire_bytes,(uint64_t)got,__ATOMIC_RELAXED);
             failures = 0;
             continue;
         }
@@ -687,6 +689,7 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
                 return -1;
             }
             s->upstream_pos += got;
+            __atomic_add_fetch(&s->startup_wire_bytes,(uint64_t)got,__ATOMIC_RELAXED);
             if (got < request)
                 s->iso_meta_degraded = 1;
             free(entry->data);
@@ -1363,6 +1366,7 @@ static int nova_mkv_single_get_read(nova_session *s, uint8_t *dst, int bytes)
         if(got>0){
             s->file_cursor=at+got;
             s->upstream_pos=at+got;
+            __atomic_add_fetch(&s->startup_wire_bytes,(uint64_t)got,__ATOMIC_RELAXED);
             return got;
         }
         LOGI("NOVA_MKV_SINGLE_READ_FAIL_V2: phase=read at=%" PRId64
@@ -2114,6 +2118,19 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupState
         ? __atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE) : 0;
     pthread_mutex_unlock(&g_lock);
     return state;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupBytes(
+        JNIEnv *env,jclass cls)
+{
+    (void)env;(void)cls;
+    pthread_mutex_lock(&g_lock);
+    nova_session *s=g_session;
+    uint64_t count=s && !s->stopping ?
+        __atomic_load_n(&s->startup_wire_bytes,__ATOMIC_RELAXED) : 0;
+    pthread_mutex_unlock(&g_lock);
+    return count>INT64_MAX ? INT64_MAX : (jlong)count;
 }
 
 /* AVOS resolves this symbol via dlsym during nova_raw_open().  Without
