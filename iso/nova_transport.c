@@ -27,7 +27,7 @@
  * This is used ONLY before playback. The working RAW128 pipeline is untouched. */
 #define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024) /* adaptive ceiling */
 #define NOVA_ISO_META_START_BYTES (256 * 1024) /* first metadata miss */
-#define NOVA_ISO_STARTUP_REPLAY_BYTES (4 * 1024 * 1024) /* bounded first-probe rewind */
+#define NOVA_ISO_STARTUP_REPLAY_BYTES (24 * 1024 * 1024) /* cap startup demux probe rewind; never cache full ISO */
 #define NOVA_MKV_TAIL_WARM_BYTES (64 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
 #define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
@@ -301,6 +301,7 @@ typedef struct nova_session {
     uint8_t *iso_startup_replay;
     int64_t iso_startup_replay_start;
     int iso_startup_replay_size;
+    int iso_startup_replay_cap;
     /* NOVA_STARTUP_UI_STATE_V1: 1=preparing 2=first-frame-held
      * 3=threshold-resumed 4=terminal. Read by the player UI only. */
     volatile int startup_ui_state;
@@ -1776,13 +1777,23 @@ static nova_session *session_create(JNIEnv *env,const char *url,
              s->iso_meta_window_bytes,s->iso_meta_peak_window);
         nova_iso_stop_pump(s);
         /* ISO scan finished: remove metadata cache BEFORE RAW128 playback.
-         * Cache only the first 4 MiB of real, already-verified movie bytes
-         * to survive the internal FFmpeg start-of-stream probe rewind. */
+         * FFmpeg's probe can consume the entire short title before seeking
+         * back to zero. A fixed 4 MiB prefix then exhausts during the
+         * rewind and discards W2 even though the data is verified.
+         * Retain up to one title size, capped at 24 MiB. This is not a
+         * general seek cache: genuine LBA jumps beyond the verified prefix
+         * still safely reseed. Never allocate proportional to a large ISO. */
         nova_iso_meta_release(s);
         s->iso_startup_replay_start=-1;
-        s->iso_startup_replay=malloc(NOVA_ISO_STARTUP_REPLAY_BYTES);
-        LOGI("NOVA_ISO_STARTUP_REPLAY_V1: ready=%d cap=%d",
-             s->iso_startup_replay!=NULL,NOVA_ISO_STARTUP_REPLAY_BYTES);
+        s->iso_startup_replay_cap=NOVA_ISO_STARTUP_REPLAY_BYTES;
+        if(s->output_size>0 &&
+           s->output_size<(uint64_t)s->iso_startup_replay_cap)
+            s->iso_startup_replay_cap=(int)s->output_size;
+        s->iso_startup_replay=malloc((size_t)s->iso_startup_replay_cap);
+        if(!s->iso_startup_replay)s->iso_startup_replay_cap=0;
+        LOGI("NOVA_ISO_STARTUP_REPLAY_V2: ready=%d cap=%d title=%" PRIu64,
+             s->iso_startup_replay!=NULL,s->iso_startup_replay_cap,
+             s->output_size);
     } else {
         if (s->upstream_size <= 0) {
             LOGE("UPSTREAM_SIZE_INVALID size=%" PRId64, s->upstream_size);
