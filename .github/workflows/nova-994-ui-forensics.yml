@@ -28,8 +28,34 @@ jobs:
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
+          python3 -m unittest discover -s tests -p test_torrent_crash_guard_patch.py -v
           python3 -m unittest discover -s tests -p test_literange4.py -v
+          python3 -m unittest discover -s tests -p test_shared42_page_view_native.py -v
+          python3 -m unittest discover -s tests -p test_shared42_backpressure.py -v
+          python3 -m unittest discover -s tests -p test_literange4_keepalive.py -v
+          python3 -m unittest discover -s tests -p test_literange4_hardening.py -v
+          python3 -m unittest discover -s tests -p test_60fps_clock_evidence.py -v
           python3 -m unittest discover -s tests -p test_startup_freeze_trace.py -v
+          python3 -m unittest discover -s tests -p test_redirect_timeout_classifier.py -v
+          python3 -m unittest discover -s tests -p test_mp4_seek_verification.py -v
+          python3 -m unittest discover -s tests -p test_iso_index_seek_v2.py -v
+          python3 -m unittest discover -s tests -p test_iso_track_language_metadata.py -v
+          python3 -m unittest discover -s tests -p test_tv_track_width_patch.py -v
+          python3 -m unittest discover -s tests -p test_tv_first_focus_layout.py -v
+          python3 -m unittest discover -s tests -p test_tv_small_card_spacing_patch.py -v
+          python3 -m unittest discover -s tests -p test_tv_list_view_field.py -v
+          python3 -m unittest discover -s tests -p test_webdav_resume_local_only_patch.py -v
+          python3 -m unittest discover -s tests -p test_weak_start_proxy.py -v
+          python3 -m unittest discover -s tests -p test_noniso_startup_zero_seek.py -v
+          python3 -m unittest discover -s tests -p test_main_startup_seek_only.py -v
+          python3 -m unittest discover -s tests -p test_weak_network_native.py -v
+          python3 -m unittest discover -s tests -p test_noniso_seek_avio.py -v
+          python3 -m unittest discover -s tests -p test_redirect_freshness.py -v
+          python3 -m unittest discover -s tests -p test_mkv_bbc_seek_regression.py -v
+          python3 -m unittest discover -s tests -p test_startup_onepass_speed.py -v
+          python3 -m unittest discover -s tests -p test_startup_mkv_canonical_first.py -v
+          python3 -m unittest discover -s tests -p test_startup_fourfix.py -v
+          python3 -m unittest discover -s tests -p test_994_source_guards.py -v
           python3 -m unittest discover -s tests -p test_994_source_guards.py -v
           python3 -m py_compile scripts/native_rebuffer_patch.py scripts/direct_transport_apply.py scripts/startup_loading_994_patch.py
           python3 scripts/startup_loading_994_patch.py decoded
