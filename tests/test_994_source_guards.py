@@ -11,7 +11,8 @@ APPLY = (ROOT / "scripts/direct_transport_apply.py").read_text()
 
 class FiveGoalGuards(unittest.TestCase):
     def test_01_iso_metadata_and_w2_own_separate_threads(self):
-        fn=C[C.index("static int select_main_title("):C.index("/* NOVA_FILE_ORIGIN_FRESH_V1")]
+        start=C.index("static int select_main_title(")
+        fn=C[start:C.index("/* NOVA_FILE_ORIGIN_FRESH_V1",start)]
         self.assertLess(fn.index("bd_select_title("),fn.index("nova_iso_start_pump("))
         self.assertLess(fn.index("nova_iso_start_pump("),fn.index("bd_get_title_info(s->bd, (uint32_t)main_title, 0);"))
         self.assertIn("pthread_create(&s->iso_pump_thread",C)
