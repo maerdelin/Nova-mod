@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
@@ -92,6 +92,8 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_onepass_speed.py -v
           python3 -m unittest discover -s tests -p test_startup_mkv_canonical_first.py -v
           python3 -m unittest discover -s tests -p test_startup_fourfix.py -v
+          python3 -m unittest discover -s tests -p test_994_source_guards.py -v
+          python3 -m py_compile scripts/startup_loading_994_patch.py
           python3 -m py_compile scripts/mkv_bbc_cue_seek_patch.py scripts/iso_track_metadata_patch.py scripts/smoke_noniso_single_get_android.py
           python3 -m py_compile scripts/torrent_crash_guard_patch.py
           python3 -m py_compile scripts/startup_loading_diag_patch.py scripts/startup_onepass_speed_patch.py
@@ -290,6 +292,14 @@ jobs:
             grep -aq 'NOVA_STARTUP_FIRST206_READY' "work/transport-native/$abi/libnova_transport.so" || exit 1
             grep -aq 'NOVA_NONISO_AVIO_UNLATCH_V1' "native-src/native/avos/libs/$abi/libavos.so" || exit 1
           done
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            transport="work/transport-native/$abi/libnova_transport.so"
+            avos="native-src/native/avos/libs/$abi/libavos.so"
+            for marker in NOVA_ISO_PARALLEL_V1 NOVA_ISO_STARTUP_REPLAY_V1 NOVA_MKV_TAIL_WARM_V1 NOVA_STARTUP_UI_PHASE_V1; do
+              grep -aq "$marker" "$transport" || { echo "::error::994 native missing: $marker ($abi)"; exit 1; }
+            done
+            grep -aq NOVA_STARTUP_BUFFER_PREARM_V1 "$avos" || { echo "::error::994 buffering arm missing $abi"; exit 1; }
+          done
           grep -Fq 'NOVA_ISO_META_STAIR_V1' iso/nova_transport.c
           grep -Fq 'NOVA_ISO_EARLY_W2_V1' iso/nova_literange4.inc
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
@@ -353,6 +363,9 @@ jobs:
             --apktool tools/apktool.jar \
             --native-root work/transport-native \
             --work work
+          test -s work/direct-final/smali_classes*/com/archos/mediacenter/video/player/NovaStartupOverlay.smali
+          grep -R -Fq 'NovaStartupOverlay;->onPrepared' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerActivity.smali
+          grep -Fq 'android:tag="nova_speed"' work/direct-final/res/layout/player.xml
           grep -R -Fq 'NOVA_TORRENT_STDOUT_CRASH_GUARD_V1' work/direct-final/smali*/com/archos/mediacenter/video/browser/TorrentObserverService.smali
           python3 scripts/direct_transport_audit.py --source
           test -s work/direct-final/smali_classes*/com/archos/mediacenter/video/player/NovaLoadingTrace.smali
