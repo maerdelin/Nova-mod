@@ -2,9 +2,8 @@
 """Run startup-freeze root-cause tracing on top of existing AVOS AV diagnostics.
 
 Observation ONLY: no changed codec control flow, stream timing, rendering
-thresholds, RAW128 buffer, seek, retry, or audio pipeline. Targets the first
-three minutes of playback and the first late-frame transition, not generic
-high-volume debug output. Fails closed if pinned AVOS source anchors drift.
+thresholds, RAW128 buffer, seek, retry, or audio pipeline. Targets up to 20 minutes of playback for repeated
+60fps late-frame drift; samples audio publisher and renderer once per second. Fails closed if pinned AVOS source anchors drift.
 """
 import argparse
 import json
@@ -53,7 +52,7 @@ PUT_LOG = r'''
     /* First 180 seconds, 1 Hz plus actual clock reanchors. Pinpoint the
      * first audio clock publication that moves the render wall anchor. */
     if (s && p->nova_trace_start_ms > 0 &&
-        now_ms - p->nova_trace_start_ms <= 180000 &&
+        now_ms - p->nova_trace_start_ms <= 1200000 &&
         (p->nova_trace_last_put_ms == 0 ||
          now_ms - p->nova_trace_last_put_ms >= 1000 ||
          (nova_trace_old_offset != p->render_offset_ns &&
@@ -94,11 +93,20 @@ RENDER_CLOCK_LOG = r'''
              * AudioTrack, shifting anchors, or waiting on another mutex. */
             INT64 nova_trace_now_ms = now_ns / NSEC_PER_MSEC;
             if (s && p->nova_trace_start_ms > 0 &&
-                (int)atime64() - p->nova_trace_start_ms <= 180000 &&
+                (int)atime64() - p->nova_trace_start_ms <= 1200000 &&
                 (p->nova_trace_last_renderer_ms == 0 ||
                  (int)atime64() - p->nova_trace_last_renderer_ms >= 1000)) {
                 p->nova_trace_last_renderer_ms = atime64();
-                serprintf("NOVA_SYNC_RENDER_CLOCK: wallMs=%lld epoch=%d frameMs=%d audioMs=%d videoMs=%d putMs=%d putRefMs=%lld nowMonoMs=%lld offsetNs=%lld targetNs=%lld offsetFromAudio=%d pending=%d seekPending=%d slew=%d pcmSlew=%d pcmSeekSlew=%d mode2Active=%d passthrough=%d lastDelayMs=%d lastDelayValid=%d startupCorrectionPending=%d renderSeq=%llu lateStreak=%d\n",
+                /* NOVA_60FPS_CLOCK_CPU_V1: cumulative CPU time of ONLY
+                 * this renderer thread; no scheduling behavior change. */
+                struct timespec nova_60fps_renderer_cpu_ts;
+                INT64 nova_60fps_renderer_cpu_us = -1;
+                if(clock_gettime(CLOCK_THREAD_CPUTIME_ID,
+                                 &nova_60fps_renderer_cpu_ts)==0)
+                    nova_60fps_renderer_cpu_us =
+                        (INT64)nova_60fps_renderer_cpu_ts.tv_sec*1000000LL+
+                        nova_60fps_renderer_cpu_ts.tv_nsec/1000;
+                serprintf("NOVA_SYNC_RENDER_CLOCK: wallMs=%lld epoch=%d frameMs=%d audioMs=%d videoMs=%d putMs=%d putRefMs=%lld nowMonoMs=%lld offsetNs=%lld targetNs=%lld offsetFromAudio=%d pending=%d seekPending=%d slew=%d pcmSlew=%d pcmSeekSlew=%d mode2Active=%d passthrough=%d lastDelayMs=%d lastDelayValid=%d startupCorrectionPending=%d renderSeq=%llu lateStreak=%d threadCpuUs=%lld\n",
                     (long long)p->nova_trace_last_renderer_ms, s->seek_epoch, f->time,
                     s->audio_time, s->video_time, p->venc_put_time,
                     (long long)p->venc_ref_time, (long long)nova_trace_now_ms,
@@ -111,7 +119,8 @@ RENDER_CLOCK_LOG = r'''
                     s->last_good_delay_ms, s->last_good_delay_valid,
                     s->pcm_startup_correction_pending,
                     (unsigned long long)p->render_submit_seq,
-                    p->nova_trace_consecutive_late);
+                    p->nova_trace_consecutive_late,
+                    (long long)nova_60fps_renderer_cpu_us);
             }
 '''
 
@@ -290,7 +299,7 @@ def main():
     result = {
         "version": "NOVA_SYNC_TRACE_V2",
         "mode": "observational only",
-        "startup_trace_ms": 180000,
+        "startup_trace_ms": 1200000,
         "put_interval_ms": 1000,
         "render_interval_ms": 1000,
         "late_episode_interval_ms": 1000,
