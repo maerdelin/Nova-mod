@@ -146,9 +146,14 @@ static void *_rebuffer_thread( void *data )
                         __atomic_load_n(&s->rebuffer_frame_seen,
                                         __ATOMIC_ACQUIRE);
                     if(nova_first_render && !s->seek &&
-                       !s->stream_end && !s->video_error)
+                       s->video_error == VE_NO_ERROR)
+                        /* EOF is a complete buffer, even when the entire
+                         * short media is smaller than the 3X byte target. */
                         nova_startup_overlay_milestone(s->src.url,
-                            resident>=s->rebuffer_resume_bytes ? 3 : 2);
+                            (resident>=s->rebuffer_resume_bytes ||
+                             source_eof || parsed_eof || s->stream_end) ? 3 : 2);
+                    else if(s->video_error != VE_NO_ERROR)
+                        nova_startup_overlay_milestone(s->src.url,4);
                     if( !active ) {
                         int play_requested = __atomic_load_n(
                             &s->rebuffer_play_requested, __ATOMIC_ACQUIRE );
