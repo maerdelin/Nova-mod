@@ -24,6 +24,16 @@
 #define NOVA_LITE_HEAD_BYTES NOVA_WH_HEAD_BYTES
 #define NOVA_LITE_FUTURE_BYTES NOVA_WH_FUTURE_BYTES
 #define NOVA_LITE_SLOTS 2
+/* NOVA_W2_RAW_PRESSURE_GUARD_V1:
+ * The old W2 speculative lane can stage 36 MiB even while the shared
+ * warehouse's 86 MiB RAW queue is already almost full. For high-bitrate
+ * 60 fps playback this consumes CPU and memory bandwidth without adding
+ * playback headroom. Leave two sockets and ordered delivery unchanged,
+ * but cap speculative staging at 8 MiB once RAW owns >=80% of its pages.
+ * The head lane's guaranteed 6 MiB quota is NEVER reduced.
+ */
+#define NOVA_W2_RAW_HIGH_PAGES ((NOVA_WH_RAW_PAGES * 4) / 5)
+#define NOVA_W2_FUTURE_SOFT_PAGES (8u * 1024u * 1024u / NOVA_WH_PAGE_BYTES)
 #define NOVA_LITE_SEGMENT_SECONDS 4
 #define NOVA_LITE_DATA_WAREHOUSE_BYTES (128 * 1024 * 1024)
 #define NOVA_LITE_RAW_RING_BYTES (64 * 1024 * 1024)
@@ -124,6 +134,7 @@ typedef struct nova_lite_state {
     int64_t piece_origin;
     uint64_t piece_bytes;
     int64_t last_gate_log_ms;
+    int64_t last_raw_pressure_log_ms;
     int64_t last_raise_ms;
     int64_t last_sample_ms;
     uint64_t committed_sample_bytes;
@@ -296,11 +307,33 @@ static int nova_lite_can_stage(nova_lite_slot *p,int extra)
     if(!w || extra<0)return 0;
     int future=p->start>e->session->multi_committed_cursor;
     int limit=future?(int)NOVA_WH_FUTURE_PAGES:(int)NOVA_WH_HEAD_PAGES;
-    if(p->page_count+extra>limit ||
-       nova_lite_staged_pages(e)+extra>(int)NOVA_WH_STAGE_PAGES)return 0;
+    int staged_pages=nova_lite_staged_pages(e);
     pthread_mutex_lock(&w->lock);
     int free_pages=w->free_count;
     pthread_mutex_unlock(&w->lock);
+    /* Shared42 puts both RAW-owned and CURL staging pages in the same
+     * 128 MiB warehouse. Since staged_pages is exact on the sole CURLM
+     * owner and free_pages is protected by the warehouse mutex, the rest
+     * is the number of RAW-owned pages (including a partially used head).
+     * Do not stage up to 36 MiB of speculative data when RAW is full. */
+    int raw_pages=(int)NOVA_WH_PAGES-free_pages-staged_pages;
+    if(future && raw_pages>=NOVA_W2_RAW_HIGH_PAGES){
+        if(limit>(int)NOVA_W2_FUTURE_SOFT_PAGES)
+            limit=(int)NOVA_W2_FUTURE_SOFT_PAGES;
+        if(p->page_count+extra>limit){
+            int64_t now=nova_iso_uptime_ms();
+            if(now-e->last_raw_pressure_log_ms>=1500){
+                e->last_raw_pressure_log_ms=now;
+                LOGI("NOVA_W2_RAW_PRESSURE_GUARD_V1 rawPages=%d"
+                     " futurePages=%d softCapPages=%d stagedPages=%d"
+                     " freePages=%d",raw_pages,p->page_count,
+                     limit,staged_pages,free_pages);
+            }
+            return 0;
+        }
+    }
+    if(p->page_count+extra>limit ||
+       staged_pages+extra>(int)NOVA_WH_STAGE_PAGES)return 0;
     return free_pages>=extra;
 }
 /* NOVA_SHARED42_BACKPRESSURE_V2: exact replay requirements.
