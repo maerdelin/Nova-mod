@@ -1406,6 +1406,32 @@ static int ff_force_seek'''
     path.write_text(text)
 
 
+/* Signal the actual first video frame without coupling AVOS to the
+ * transport ABI or touching ISO/other protocols. This runs just once per
+ * STREAM (the guarded first_frame_sink event), not in the render loop. */
+STARTUP_MKV_FRAME_NOTIFY = r'''
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
+static void nova_startup_mkv_first_frame(const char *url);
+'''
+STARTUP_MKV_FRAME_IMPL = r'''
+static void nova_startup_mkv_first_frame(const char *url)
+{
+    if(!url || strncmp(url,"novatransport://",16)!=0) return;
+    char *end=NULL;
+    unsigned long long gen=strtoull(url+16,&end,10);
+    if(!gen || !end || end==url+16 || *end!='/')return;
+    void *transport=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!transport)return;
+    void (*ready)(uint64_t)=(void (*)(uint64_t))
+        dlsym(transport,"nova_transport_mark_first_frame");
+    if(ready)ready((uint64_t)gen);
+    dlclose(transport);
+}
+'''
+
 def patch_startup_trace(root: Path) -> None:
     """Observational startup milestones only; no buffering or scheduling changes."""
     avos = root / "Source" / "avos_mp_video.c"
@@ -1506,12 +1532,19 @@ def patch_startup_trace(root: Path) -> None:
     text = replace_once(
         text,
         "\t\t\t_check_sink_delay( s );\n\n\t\t\ts->current_frame     = frame;",
-        '\t\t\tif( !__atomic_exchange_n( &s->startup_first_sink_logged, 1, __ATOMIC_ACQ_REL ) )\n'
+        '\t\t\tif( !__atomic_exchange_n( &s->startup_first_sink_logged, 1, __ATOMIC_ACQ_REL ) ) {\n'
         '\t\t\t\tserprintf("NOVA_STARTUP_TRACE first_frame_sink t=%d pts=%d\\n", atime(), frame->time);\n'
+        '\t\t\t\tnova_startup_mkv_first_frame(s->src.url);\n'
+        '\t\t\t}\n'
         "\t\t\t_check_sink_delay( s );\n\n\t\t\ts->current_frame     = frame;",
         "trace first sink frame",
     )
-    video.write_text(text)
+    # The first-frame marker must remain purely observational for non-MKV
+    # sources. The helper resolves the active generation only for direct
+    # WebDAV and is called once (never on every render event).
+    if "nova_startup_mkv_first_frame(" not in text:
+        raise RuntimeError("startup MKV ready callback missing from first sink")
+    video.write_text(STARTUP_MKV_FRAME_NOTIFY + text + STARTUP_MKV_FRAME_IMPL)
 
 
 def apply(

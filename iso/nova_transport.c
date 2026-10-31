@@ -229,6 +229,14 @@ typedef struct nova_session {
     /* NOVA_STARTUP_ONEPASS_V1: observational scoped pre-probe cancellation. */
     volatile int startup_probe_complete;
     volatile int startup_read_preempt;
+    /* NOVA_STARTUP_MKV_CANONICAL_FIRST_V1: do not discard the already
+     * established, validated Java 206 body to speculate a second 4 MiB
+     * CURL Range while first-frame metadata is still being parsed.  A
+     * first-frame callback unlocks W2; 32 MiB post-probe is a fail-safe
+     * if a device never forwards that callback. ISO/MP4/TS are unchanged. */
+    volatile int startup_first_frame_ready;
+    uint64_t startup_canonical_bytes;
+    int startup_canonical_logged;
     int multi_http_ready;
     jobject file_conn;
     jobject file_stream;
@@ -1673,10 +1681,34 @@ int nova_transport_read(uint64_t generation, uint8_t *dst, int size)
         if (ret == 0)
             ret = AVERROR_EOF;
     } else if (s->multi_http_ready) {
-        if (s->multi_seek_guard) {
+        /* Start RAW immediately on the validated MKV Java stream.  The
+         * existing RAW producer runs concurrently with FFmpeg probing and
+         * fills until its shared 86 MiB quota. It must not launch a new
+         * bounded CURL request (nor close the live input stream) before
+         * the first frame: the real 2026-10-30 trace wasted 10 s with
+         * http=302 curl=28 downloadedBytes=0 after 619 useful bytes.
+         * Do NOT introduce a fixed start delay or prefill threshold. */
+        int startup_mkv_canonical = s->file_http_mode &&
+            !__atomic_load_n(&s->startup_first_frame_ready,__ATOMIC_ACQUIRE) &&
+            (!__atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) ||
+             s->startup_canonical_bytes < 32ULL*1024ULL*1024ULL);
+        if(startup_mkv_canonical && s->multi_active)
+            nova_multi_stop(s,"startup-canonical-first",0);
+        if (s->multi_seek_guard || startup_mkv_canonical) {
+            if(startup_mkv_canonical && !s->startup_canonical_logged){
+                s->startup_canonical_logged=1;
+                LOGI("NOVA_STARTUP_MKV_CANONICAL_FIRST_V1 cursor=%" PRId64
+                     " probeComplete=%d rawBackground=1",
+                     s->file_cursor,
+                     __atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE));
+            }
             ret = s->file_http_mode
                 ? nova_mkv_single_get_read(s, dst, size)
                 : nova_upstream_read_some_retry(s, dst, size);
+            if(startup_mkv_canonical && ret>0 &&
+               __atomic_load_n(&s->startup_probe_complete,__ATOMIC_ACQUIRE) &&
+               s->startup_canonical_bytes<32ULL*1024ULL*1024ULL)
+                s->startup_canonical_bytes+=(uint64_t)ret;
         } else if (s->multi_active) {
             ret = nova_multi_read(s, dst, size);
             if (ret == NOVA_MULTI_FALLBACK && !s->stopping) {
@@ -1981,6 +2013,21 @@ int nova_transport_startup_probe_hint(uint64_t generation, int active)
 }
 
 __attribute__((visibility("default")))
+/* A render-owned event, not format probe or prepared(), unlocks W2.
+ * The session generation prevents callbacks from an old player instance
+ * from affecting a newer WebDAV open. This is one atomic write only. */
+__attribute__((visibility("default")))
+void nova_transport_mark_first_frame(uint64_t generation)
+{
+    nova_session *s=session_acquire(generation);
+    if(!s)return;
+    if(s->mode==NOVA_MODE_FILE && s->file_http_mode &&
+       !__atomic_exchange_n(&s->startup_first_frame_ready,1,__ATOMIC_ACQ_REL))
+        LOGI("NOVA_STARTUP_MKV_FIRST_FRAME_READY generation=%" PRIu64
+             " canonicalBytes=%" PRIu64, generation,s->startup_canonical_bytes);
+    session_release(s);
+}
+
 int nova_transport_set_target_bps(uint64_t generation, uint64_t target_bps)
 {
     nova_session *s = session_acquire(generation);
