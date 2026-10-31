@@ -63,6 +63,17 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     return-void
 .end method
 
+.method public static resetIfOwned(Landroid/view/View;)V
+    .locals 1
+    sget-object v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->sCurrent:Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
+    if-eqz v0, :done
+    iget-object v0, v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mView:Landroid/view/View;
+    if-ne v0, p0, :done
+    invoke-static {}, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->reset()V
+    :done
+    return-void
+.end method
+
 .method public static onPrepared(Landroid/view/View;)Z
     .locals 3
     if-eqz p0, :ordinary
@@ -206,7 +217,7 @@ def patch(root: Path):
     part=src[p:tail]
     stop_hook='    const-string v0, "UI_STOP"'
     if(part.count(stop_hook)!=1):raise RuntimeError("994 stop hook count")
-    part=part.replace(stop_hook,"    invoke-static {}, "+NAME+"->reset()V\n"+stop_hook,1)
+    part=part.replace(stop_hook,\n        "    iget-object v0, p0, Lcom/archos/mediacenter/video/player/PlayerActivity;->mProgressView:Landroid/view/View;\\n"\n        "    invoke-static {v0}, "+NAME+"->resetIfOwned(Landroid/view/View;)V\\n"+stop_hook,1)
     src=src[:p]+part+src[tail:]
     player.write_text(src)
 
