@@ -11,7 +11,12 @@ mkdir -p migu/evidence
   adb shell cmd package list packages | grep -E 'tv|leanback|settings' | head -n 40 || true
 } | tee migu/evidence/baseline.txt
 test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 34
-adb shell getprop ro.build.characteristics | grep -q 'tv'
+adb shell cmd package list packages | grep -q '^package:com.android.tv
+adb shell dumpsys accessibility > migu/evidence/accessibility_baseline.txt
+adb shell uiautomator dump /sdcard/window.xml >/dev/null || true
+adb pull /sdcard/window.xml migu/evidence/window.xml || true
+
+adb shell getprop ro.product.model | grep -Ei 'tv|television'
 adb shell dumpsys accessibility > migu/evidence/accessibility_baseline.txt
 adb shell uiautomator dump /sdcard/window.xml >/dev/null || true
 adb pull /sdcard/window.xml migu/evidence/window.xml || true
