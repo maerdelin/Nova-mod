@@ -176,13 +176,17 @@ static void *_rebuffer_thread( void *data )
                         __atomic_load_n(&s->rebuffer_frame_seen,
                                         __ATOMIC_ACQUIRE);
                     if(nova_first_render && !s->seek &&
-                       s->video_error == VE_NO_ERROR)
-                        /* EOF is a complete buffer, even when the entire
-                         * short media is smaller than the 3X byte target. */
+                       s->video_error == VE_NO_ERROR){
+                        /* A reported threshold does not mean playback has
+                         * resumed. Keep the overlay visible while the
+                         * rebuffer hold is active; phase 3 is emitted only
+                         * AFTER stream_un_pause below. Fast-start playback
+                         * that never needed a hold can complete immediately. */
+                        int ready=(resident>=s->rebuffer_resume_bytes ||
+                                   source_eof || parsed_eof || s->stream_end);
                         nova_startup_overlay_milestone(s->src.url,
-                            (resident>=s->rebuffer_resume_bytes ||
-                             source_eof || parsed_eof || s->stream_end) ? 3 : 2);
-                    else if(s->video_error != VE_NO_ERROR)
+                            ready && !active && !s->paused ? 3 : 2);
+                    }else if(s->video_error != VE_NO_ERROR)
                         nova_startup_overlay_milestone(s->src.url,4);
                     if( !active ) {
                         int play_requested = __atomic_load_n(
@@ -255,10 +259,15 @@ static void *_rebuffer_thread( void *data )
                             if( s->message_cb )
                                 s->message_cb( s, STREAM_BUFFERING_END );
 
-                            if(!strcmp(reason,"threshold"))
-                                nova_startup_overlay_milestone(s->src.url,3);
                             if( !user_paused )
                                 stream_un_pause( s, 0 );
+                            /* The overlay must outlive the freeze until
+                             * the frame actually resumes, not merely until
+                             * the buffer bytes cross the target. */
+                            if( !user_paused && s->video_error == VE_NO_ERROR )
+                                nova_startup_overlay_milestone(s->src.url,3);
+                            else if(s->video_error != VE_NO_ERROR)
+                                nova_startup_overlay_milestone(s->src.url,4);
 
                             __atomic_store_n(
                                 &s->rebuffer_user_paused, 0, __ATOMIC_RELEASE );
