@@ -28,7 +28,7 @@
 #define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024) /* adaptive ceiling */
 #define NOVA_ISO_META_START_BYTES (256 * 1024) /* first metadata miss */
 #define NOVA_ISO_STARTUP_REPLAY_BYTES (4 * 1024 * 1024) /* bounded first-probe rewind */
-#define NOVA_MKV_TAIL_CACHE_BYTES (64 * 1024)
+#define NOVA_MKV_TAIL_WARM_BYTES (64 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
 #define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
 #define NOVA_WEAK_RETRY_MAX_DELAY_MS 3000
@@ -1405,8 +1405,8 @@ static int nova_mkv_tail_start(nova_session *s)
 {
     if(!s || !s->file_http_mode || s->upstream_size<1024*1024 ||
        s->mkv_tail_running || !s->origin_url)return -1;
-    s->mkv_tail_size=NOVA_MKV_TAIL_CACHE_BYTES;
-    s->mkv_tail_data=malloc(NOVA_MKV_TAIL_CACHE_BYTES);
+    s->mkv_tail_size=NOVA_MKV_TAIL_WARM_BYTES;
+    s->mkv_tail_data=malloc(NOVA_MKV_TAIL_WARM_BYTES);
     if(!s->mkv_tail_data){s->mkv_tail_size=0;return -1;}
     s->mkv_tail_start=s->upstream_size-s->mkv_tail_size;
     if(pthread_create(&s->mkv_tail_thread,NULL,
