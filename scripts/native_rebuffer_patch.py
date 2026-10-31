@@ -70,6 +70,9 @@ static int _nova_rebuffer_eof( STREAM *s )
     return audio_done && video_done;
 }
 
+/* Declared before the controller; source parsing is handled by the
+ * per-STREAM generation guard in stream_video.c. */
+static void nova_startup_overlay_milestone(const char *url,int state);
 static void *_rebuffer_thread( void *data )
 {
     STREAM *s = (STREAM *)data;
@@ -100,6 +103,19 @@ static void *_rebuffer_thread( void *data )
                     int active = __atomic_load_n(
                         &s->rebuffering, __ATOMIC_ACQUIRE );
 
+                    /* Before the first resume, retain the already-submitted
+                     * first image until full resume reserve, not just 1.5X
+                     * low watermark. The ordinary 1.5X rebuffer threshold
+                     * remains unchanged once startup has completed. */
+                    int nova_first_render=
+                        __atomic_load_n(&s->nova_diag_render_submitted,
+                                        __ATOMIC_ACQUIRE)>0 &&
+                        __atomic_load_n(&s->rebuffer_frame_seen,
+                                        __ATOMIC_ACQUIRE);
+                    if(nova_first_render && !s->seek &&
+                       !s->stream_end && !s->video_error)
+                        nova_startup_overlay_milestone(s->src.url,
+                            resident>=s->rebuffer_resume_bytes ? 3 : 2);
                     if( !active ) {
                         int play_requested = __atomic_load_n(
                             &s->rebuffer_play_requested, __ATOMIC_ACQUIRE );
@@ -115,7 +131,8 @@ static void *_rebuffer_thread( void *data )
                             !s->paused && !s->stream_end &&
                             s->video_error == VE_NO_ERROR &&
                             !parsed_eof && !source_eof &&
-                            resident < s->rebuffer_low_bytes ) {
+                            resident < s->rebuffer_resume_bytes &&
+                            nova_startup_ui_phase(s->src.url)<3 ) {
                             __atomic_store_n(
                                 &s->rebuffering, 1, __ATOMIC_RELEASE );
                             __atomic_store_n(
@@ -169,6 +186,8 @@ static void *_rebuffer_thread( void *data )
                             if( s->message_cb )
                                 s->message_cb( s, STREAM_BUFFERING_END );
 
+                            if(!strcmp(reason,"threshold"))
+                                nova_startup_overlay_milestone(s->src.url,3);
                             if( !user_paused )
                                 stream_un_pause( s, 0 );
 
@@ -1423,8 +1442,44 @@ STARTUP_MKV_FRAME_NOTIFY = r'''
 #include <string.h>
 #include <dlfcn.h>
 static void nova_startup_mkv_first_frame(const char *url);
+static void nova_startup_overlay_milestone(const char *url,int state);
+static int nova_startup_ui_phase(const char *url);
 '''
 STARTUP_MKV_FRAME_IMPL = r'''
+static int nova_startup_extract_generation(const char *url,uint64_t *generation)
+{
+    if(!url || strncmp(url,"novatransport://",16)!=0)return 0;
+    char *end=NULL;
+    unsigned long long gen=strtoull(url+16,&end,10);
+    if(!gen || !end || end==url+16 || *end!='/')return 0;
+    *generation=(uint64_t)gen;
+    return 1;
+}
+
+static int nova_startup_ui_phase(const char *url)
+{
+    uint64_t generation=0;
+    if(!nova_startup_extract_generation(url,&generation))return 3;
+    void *transport=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!transport)return 3;
+    int (*state)(uint64_t)=(int (*)(uint64_t))
+        dlsym(transport,"nova_transport_startup_ui_phase");
+    int phase=state?state(generation):3;
+    dlclose(transport);
+    return phase;
+}
+
+static void nova_startup_overlay_milestone(const char *url,int phase)
+{
+    uint64_t generation=0;
+    if(!nova_startup_extract_generation(url,&generation))return;
+    void *transport=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!transport)return;
+    void (*report)(uint64_t,int)=(void (*)(uint64_t,int))
+        dlsym(transport,"nova_transport_report_startup_ui_phase");
+    if(report)report(generation,phase);
+    dlclose(transport);
+}
 static void nova_startup_mkv_first_frame(const char *url)
 {
     if(!url || strncmp(url,"novatransport://",16)!=0) return;
