@@ -111,13 +111,13 @@ def main():
                 raise AssertionError("RAW did not download during startup")
             # Mandatory runtime acceptance: compiled string is NOT evidence.
             # This signed APK must execute staged MKV logic in the actual player.
-            begin=re.search(r"NOVA_STAGED_DECODE_BEGIN first=65536\\b",tail)
+            begin=re.search(r"NOVA_STAGED_DECODE_BEGIN first=65536\b",tail)
             if not begin:
                 raise AssertionError("MKV staged 64KB FIRST ROUND NOT EXECUTED by signed APK")
-            endst=re.search(r"NOVA_STAGED_DECODE_(?:SUCCESS|HANDOFF)\\b",tail)
+            endst=re.search(r"NOVA_STAGED_DECODE_(?:SUCCESS|HANDOFF)\b",tail)
             if not endst or endst.start()<=begin.start():
                 raise AssertionError("MKV staged decode has no real SUCCESS/HANDOFF")
-            stage_events=re.findall(r"NOVA_STAGED_DECODE_RETRY threshold=(\\d+)",tail)
+            stage_events=re.findall(r"NOVA_STAGED_DECODE_RETRY threshold=(\d+)",tail)
             for i in range(1,len(stage_events)):
                 if int(stage_events[i])<=int(stage_events[i-1]):
                     raise AssertionError("MKV stage thresholds not increasing")
