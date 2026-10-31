@@ -235,7 +235,10 @@ def apply(root: Path):
         '\t/* MKV marker lives in src.url, NOT src_query (only ?mpegts& copied). */\n'
         '\tint nova_staged_mkv = !(flags & STREAM_PARSER_THUMB) &&\n'
         '\t\ts->src.url && !strncmp(s->src.url,"novatransport://",16) &&\n'
-        '\t\tstrstr(s->src.url,"&nova_mkv=1")!=NULL;\n','scope')
+        '\t\tstrstr(s->src.url,"&nova_mkv=1")!=NULL;\n'
+        '\tserprintf("NOVA_STAGED_DECODE_GATE enabled=%d urlMkv=%d thumb=%d\\n",\n'
+        '\t\t nova_staged_mkv, s->src.url && strstr(s->src.url,"&nova_mkv=1")!=NULL,\n'
+        '\t\t !!(flags & STREAM_PARSER_THUMB));\n','scope')
     src=once(src,'av_dict_set(&ff_p->fmt_opts, "probesize", "10000000", 0);',
         'av_dict_set(&ff_p->fmt_opts, "probesize",\n'
         '\t\t\tnova_staged_mkv ? "65536" : "10000000", 0);',
