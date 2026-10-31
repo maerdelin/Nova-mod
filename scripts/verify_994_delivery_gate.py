@@ -51,11 +51,11 @@ def check(apk: Path, report_dir: Path) -> dict:
     old = mkv.get("baseline_median_startup_ms")
     new = mkv.get("candidate_median_startup_ms")
     assert isinstance(old, (int, float)) and isinstance(new, (int, float))
-    assert mkv.get("max_accepted_regression_percent") == 10, (
-        "994 #2: approved 10% startup tolerance policy not evidenced"
+    assert mkv.get("max_accepted_regression_ms") == 100, (
+        "994 #2: 100ms startup variance policy not evidenced"
     )
-    assert old > 0 and 0 <= new <= old * 1.10, (
-        "994 #2: measured MKV startup regression exceeds approved 10% tolerance versus #993"
+    assert old > 0 and 0 <= new <= old + 100, (
+        "994 #2: measured MKV startup regression exceeds 100ms versus #993"
     )
 
     ui = validated(report_dir / "994-startup-ui-runtime.json",
@@ -69,7 +69,7 @@ def check(apk: Path, report_dir: Path) -> dict:
         "994 #5: static Smali test alone cannot replace real visual acceptance"
     )
     return {"status": "PASS", "apk_sha256": digest,
-            "goals": ["ISO-parallel", "MKV-within-10pct-of-993", "ISO-no-rebase",
+            "goals": ["ISO-parallel", "MKV-within-100ms-of-993", "ISO-no-rebase",
                       "early-dual-lane", "500ms-percent-loading-overlay"]}
 
 

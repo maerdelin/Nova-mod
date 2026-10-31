@@ -175,8 +175,9 @@ def main():
             try:
                 # Alternate the order to reduce emulator heat/cache and
                 # host scheduler drift. Keep each run a clean signed APK
-                # install. A measured <=10% startup regression versus #993
-                # is explicitly accepted; missing frames/streams/seek still fail.
+                # install. The user permits small MKV startup variance:
+                # accept at most 100ms median regression versus #993 while
+                # never waiving real frames/streams or renderer seek checks.
                 # Both APKs use the exact same fixture, Range server,
                 # emulator, and renderer-confirmed first-frame endpoint.
                 apks={"baseline":args.baseline_apk,"candidate":args.apk}
@@ -202,7 +203,7 @@ def main():
             if not seek_ok:
                 raise RuntimeError("Signed candidate renderer-confirmed Seek regression absent")
             report={
-                "status":"PASS" if old>0 and 0<=new<=old*1.10 else "FAIL",
+                "status":"PASS" if old>0 and 0<=new<=old+100 else "FAIL",
                 "apk_sha256":digest,
                 "baseline_apk_sha256":bdigest,
                 "same_media_and_network_conditions":True,
@@ -213,8 +214,8 @@ def main():
                 "candidate_median_startup_ms":new,
                 "startup_delta_ms":new-old,
                 "startup_delta_percent":round(100*(new-old)/old, 2) if old else None,
-                "max_accepted_regression_percent":10,
-                "speed_acceptance_policy":"Candidate startup may be up to 10% slower than #993; report actual delta transparently",
+                "max_accepted_regression_ms":100,
+                "speed_acceptance_policy":"Candidate may be up to 100ms slower than #993 under same emulator/media; actual delta remains reported",
                 "samples":measurements,
                 "media_bytes":media.stat().st_size,
                 "same_emulator":True,
@@ -226,7 +227,7 @@ def main():
             }
             (args.reports/"994-mkv-startup-compare.json").write_text(json.dumps(report,indent=2)+"\n")
             if report["status"]!="PASS":
-                raise RuntimeError("New signed APK exceeded the approved 10% MKV startup regression tolerance versus #993: "+json.dumps({"baseline":old,"new":new}))
+                raise RuntimeError("New signed APK exceeded 100ms MKV startup tolerance versus #993: "+json.dumps({"baseline":old,"new":new}))
             print("NOVA_994_MKV_WITHIN_TOLERANCE=PASS "+json.dumps(report),flush=True)
         finally:
             try:adb("reverse","--remove",f"tcp:{port}")
