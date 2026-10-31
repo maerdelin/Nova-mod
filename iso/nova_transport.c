@@ -25,7 +25,8 @@
 #define UDF_BLOCK 2048
 /* Proven Run506 UDF metadata locality: 4 MiB per slot, eight LRU slots.
  * This is used ONLY before playback. The working RAW128 pipeline is untouched. */
-#define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)
+#define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024) /* adaptive ceiling */
+#define NOVA_ISO_META_START_BYTES (256 * 1024) /* first metadata miss */
 #define NOVA_ISO_META_PAGE_COUNT 8
 #define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
 #define NOVA_WEAK_RETRY_MAX_DELAY_MS 3000
@@ -287,6 +288,10 @@ typedef struct nova_session {
     uint64_t iso_meta_hits;
     uint64_t iso_meta_misses;
     uint64_t iso_meta_fetched;
+    /* NOVA_ISO_META_STAIR_V1: grows only for adjacent metadata misses. */
+    int iso_meta_window_bytes;
+    int64_t iso_meta_last_miss_end;
+    int iso_meta_peak_window;
     nova_iso_track_lang iso_tracks[NOVA_ISO_TRACK_LANG_CAP];
     unsigned iso_track_count;
 } nova_session;
@@ -621,7 +626,8 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
     while (copied < bytes) {
         int64_t pos = start + copied;
         int page_bytes = s->iso_meta_degraded ? NOVA_ISO_WEAK_PAGE_BYTES
-                                               : NOVA_ISO_META_PAGE_BYTES;
+            : (s->iso_meta_window_bytes > 0 ? s->iso_meta_window_bytes
+                                             : NOVA_ISO_META_PAGE_BYTES);
         int64_t aligned = pos & ~((int64_t)page_bytes - 1);
         int hit = -1, first_free = -1, lru = -1;
         uint64_t oldest = UINT64_MAX;
@@ -661,6 +667,8 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
             int64_t remaining = s->upstream_size - aligned;
             int request = (int)(remaining < page_bytes ?
                                 remaining : page_bytes);
+            LOGI("NOVA_ISO_META_STAIR_V1: miss=%" PRIu64 " tier=%d offset=%" PRId64 " bytes=%d",
+                 s->iso_meta_misses + 1, page_bytes, aligned, request);
             int got = read_exact(s->upstream, staging, request);
             if (got <= 0) {
                 free(staging);
@@ -676,6 +684,22 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
             entry->length = got;
             ++s->iso_meta_misses;
             s->iso_meta_fetched += (uint64_t)got;
+            if (page_bytes > s->iso_meta_peak_window)
+                s->iso_meta_peak_window = page_bytes;
+            /* A miss immediately next to the previous fetched page is proof
+             * that this small window was insufficient for the local UDF scan.
+             * Grow 256K -> 512K -> 1M -> 2M -> 4M; scattered reads stay 256K. */
+            if (!s->iso_meta_degraded && s->iso_meta_window_bytes > 0 &&
+                s->iso_meta_last_miss_end >= 0 &&
+                pos >= s->iso_meta_last_miss_end &&
+                pos - s->iso_meta_last_miss_end <= page_bytes &&
+                s->iso_meta_window_bytes < NOVA_ISO_META_PAGE_BYTES) {
+                int previous = s->iso_meta_window_bytes;
+                s->iso_meta_window_bytes *= 2;
+                LOGI("NOVA_ISO_META_STAIR_V1: advance=%d->%d reason=adjacent-miss pos=%" PRId64,
+                     previous, s->iso_meta_window_bytes, pos);
+            }
+            s->iso_meta_last_miss_end = aligned + got;
         }
         nova_iso_meta_page *entry = &s->iso_meta_pages[hit];
         entry->touched = ++s->iso_meta_tick;
@@ -1433,6 +1457,12 @@ static nova_session *session_create(const char *url, const char *headers, int is
     s->upstream_pos = -1;
     s->upstream_size = -1;
     s->mode = iso ? NOVA_MODE_BLURAY_ISO : NOVA_MODE_FILE;
+    if (iso) {
+        s->iso_meta_window_bytes = NOVA_ISO_META_START_BYTES;
+        s->iso_meta_last_miss_end = -1;
+        LOGI("NOVA_ISO_META_STAIR_V1: begin tier=%d max=%d",
+             s->iso_meta_window_bytes, NOVA_ISO_META_PAGE_BYTES);
+    }
     pthread_mutex_init(&s->io_lock, NULL);
     pthread_cond_init(&s->idle, NULL);
     if(nova_multi_session_init(s)<0){
@@ -1493,7 +1523,11 @@ static nova_session *session_create(const char *url, const char *headers, int is
              " misses=%" PRIu64 " fetched_bytes=%" PRIu64
              " page_bytes=%d pages=%d phase=metadata_only",
              s->iso_meta_reads, s->iso_meta_hits, s->iso_meta_misses,
-             s->iso_meta_fetched, NOVA_ISO_META_PAGE_BYTES, NOVA_ISO_META_PAGE_COUNT);
+             s->iso_meta_fetched, s->iso_meta_peak_window, NOVA_ISO_META_PAGE_COUNT);
+        LOGI("NOVA_ISO_META_STAIR_V1: done requested=%" PRIu64 " hits=%" PRIu64
+             " fetched=%" PRIu64 " finalTier=%d peakTier=%d",
+             s->iso_meta_reads,s->iso_meta_hits,s->iso_meta_fetched,
+             s->iso_meta_window_bytes,s->iso_meta_peak_window);
         /* ISO scan finished: remove metadata cache BEFORE RAW128 playback. */
         nova_iso_meta_release(s);
     } else {
