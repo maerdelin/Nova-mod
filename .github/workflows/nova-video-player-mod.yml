@@ -421,16 +421,8 @@ jobs:
           printf '{"signing_mode":"%s"}\n' "$SIGNING_MODE" > reports/signing.json
           (cd dist && sha256sum Nova_Video_Player_mod_SIGNED.apk > SHA256SUMS.txt)
 
-      # 994: the signed APK exists inside this CI job, but is not a
-      # deliverable until five goal-specific runtime artifacts match its SHA.
-      - name: Verify all five 994 goals before publishing installable APK
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/verify_994_delivery_gate.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
-
       - name: Upload runnable direct-transport test APK
+        if: github.ref != 'refs/heads/build/994-all-five-validation-20261031'
         uses: actions/upload-artifact@v4
         with:
           name: Nova-direct-transport-runnable-${{ github.run_number }}
@@ -540,6 +532,15 @@ jobs:
           Path('work/spec-upload.json').write_text(json.dumps(data))
           PY
           gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/patches/v982-granular.json" --input work/spec-upload.json --jq '{commit: .commit.sha, blob: .content.sha}' > reports/persisted-spec.json
+
+      # 994: the signed APK exists inside this CI job, but is not a
+      # deliverable until five goal-specific runtime artifacts match its SHA.
+      - name: Verify all five 994 goals before publishing installable APK
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_994_delivery_gate.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
