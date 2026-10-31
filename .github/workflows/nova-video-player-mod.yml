@@ -462,6 +462,25 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Prepare real Blu-ray ISO media for five-goal acceptance
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools/tsmuxer fixture reports/994-iso-device
+          curl -fsSL --retry 4 --retry-delay 2 -o tools/tsMuxer-2.7.0-linux.zip https://github.com/justdan96/tsMuxer/releases/download/2.7.0/tsMuxer-2.7.0-linux.zip
+          test "$(stat -c%s tools/tsMuxer-2.7.0-linux.zip)" -eq 3204762
+          unzip -q tools/tsMuxer-2.7.0-linux.zip -d tools/tsmuxer
+          binary="$(find tools/tsmuxer -type f -iname tsmuxer | head -n 1)"
+          test -n "$binary"
+          chmod +x "$binary"
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=1920x1080:rate=24 -t 16 -an -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r 24 -g 48 -b:v 5M -f h264 fixture/clip.264
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i sine=frequency=440:sample_rate=48000 -t 16 -c:a ac3 -b:a 192k -f ac3 fixture/clip.ac3
+          printf 'MUXOPT --blu-ray\nV_MPEG4/ISO/AVC, %s/fixture/clip.264, fps=24, ar=16:9\nA_AC3, %s/fixture/clip.ac3, lang=eng\n' "$PWD" "$PWD" > fixture/iso.meta
+          "$binary" fixture/iso.meta fixture/iso994.iso
+          test -s fixture/iso994.iso
+          test "$(stat -c%s fixture/iso994.iso)" -gt 2097152
+
       - name: Install and launch final APK on Android 11
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -483,6 +502,7 @@ jobs:
             python3 scripts/smoke_literange4_keepalive.py --reports reports
             python3 scripts/smoke_weaknet_webdav_formats.py --reports reports
             python3 scripts/smoke_startup_mkv_canonical_first.py --reports reports
+            python3 scripts/smoke_iso_parallel_994.py --iso fixture/iso994.iso --apk dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/994-iso-device
             python3 scripts/smoke_playback_completion.py --reports reports
             python3 scripts/smoke_seek_eof_completion.py --reports reports
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
