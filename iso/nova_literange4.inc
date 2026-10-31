@@ -1258,7 +1258,11 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
     if(s->multi_active && s->multi_committed_cursor!=target)
         nova_multi_stop(s,"iso-lba-jump",0);
     if(!s->multi_active && !s->multi_disabled){
-        if(nova_multi_start(s,target,1)<0)s->multi_disabled=1;
+        /* NOVA_ISO_EARLY_W2_V1: after libbluray identifies the
+         * correct title, start two movie-data Range lanes on first read.
+         * Do not launch speculative movie reads during UDF title scan. */
+        LOGI("NOVA_ISO_EARLY_W2_V1: first_movie_read start=%" PRId64 " lanes=2",target);
+        if(nova_multi_start(s,target,2)<0)s->multi_disabled=1;
     }
     if(s->multi_active){
         int done=0;
