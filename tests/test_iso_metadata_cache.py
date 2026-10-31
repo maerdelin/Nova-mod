@@ -74,6 +74,7 @@ typedef struct nova_session {
     int iso_meta_window_bytes;
     int64_t iso_meta_last_miss_end;
     int iso_meta_peak_window;
+    volatile uint64_t startup_wire_bytes;
 } nova_session;
 
 static int64_t avio_seek(mock_io *io, int64_t offset, int whence) {
