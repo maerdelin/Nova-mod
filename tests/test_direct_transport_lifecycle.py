@@ -76,6 +76,7 @@ typedef struct nova_session {
     char *upstream_headers;
     void *warehouse;
     uint8_t *iso_startup_replay;
+    volatile int iso_pump_stop;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
 } nova_session;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -95,6 +96,8 @@ static void log_event(const char *format, ...) {
 static void bd_close(void *p) { (void)p; }
 static void nova_file_release_java(nova_session *s) { (void)s; }
 static void nova_multi_destroy(nova_session *s) { (void)s; }
+static void nova_iso_stop_pump(nova_session *s) { (void)s; }
+static void nova_mkv_tail_join(nova_session *s) { (void)s; }
 /* The host lifecycle harness does not exercise page allocation; it
  * verifies that the session relinquishes its one warehouse reference. */
 static void nova_shared_warehouse_unref(void *w) { (void)w; }
