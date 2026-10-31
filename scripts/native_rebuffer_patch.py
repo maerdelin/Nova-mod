@@ -107,6 +107,11 @@ static void *_rebuffer_thread( void *data )
                             &s->rebuffer_frame_seen, __ATOMIC_ACQUIRE );
 
                         if( play_requested && frame_seen &&
+                            /* NOVA_FIRST_RENDER_HOLD_V1: do not freeze a black
+                             * Surface just because the sink accepted a frame.
+                             * sfdec2 must submit the first frame for rendering. */
+                            __atomic_load_n(&s->nova_diag_render_submitted,
+                                            __ATOMIC_ACQUIRE)>0 &&
                             !s->paused && !s->stream_end &&
                             s->video_error == VE_NO_ERROR &&
                             !parsed_eof && !source_eof &&
@@ -122,6 +127,9 @@ static void *_rebuffer_thread( void *data )
                                     &s->rebuffering, 0, __ATOMIC_RELEASE );
                             } else {
                                 last_wait_log = atime();
+                                serprintf("NOVA_FIRST_RENDER_HOLD_V1: renderedSubmit=%d firstSink=%d resident=%d\n",
+                                    __atomic_load_n(&s->nova_diag_render_submitted,__ATOMIC_ACQUIRE),
+                                    frame_seen,resident);
                                 serprintf(
                                     "NOVA_REBUFFER_ENTER: resident=%d raw=%d packet=%d low=%d resume=%d raw_cap=%d\n",
                                     resident, raw_used, packet_used,
