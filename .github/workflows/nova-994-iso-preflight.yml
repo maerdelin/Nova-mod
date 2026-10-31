@@ -1,0 +1,85 @@
+name: NOVA 994 ISO preflight on signed 1004
+on:
+  push:
+    branches: ['build/994-all-five-validation-20261031']
+    paths: ['.github/workflows/nova-994-iso-preflight.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  iso-real-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exact signed candidate and prepare genuine Blu-ray ISO fixture
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p apk tools/tsmuxer fixture reports
+          gh run download 41203951884 --name Nova-direct-transport-runnable-1004 --dir apk
+          test -s apk/Nova_Video_Player_mod_SIGNED.apk
+          (cd apk && sha256sum -c SHA256SUMS.txt)
+          curl -fsSL --retry 4 --retry-delay 2 \
+            -o tools/tsMuxer-2.7.0-linux.zip \
+            https://github.com/justdan96/tsMuxer/releases/download/2.7.0/tsMuxer-2.7.0-linux.zip
+          test "$(stat -c%s tools/tsMuxer-2.7.0-linux.zip)" -eq 3204762
+          unzip -q tools/tsMuxer-2.7.0-linux.zip -d tools/tsmuxer
+          find tools/tsmuxer -maxdepth 3 -type f -print
+          binary="$(find tools/tsmuxer -type f -iname tsmuxer | head -n 1)"
+          test -n "$binary"
+          chmod +x "$binary"
+          "$binary" --help | head -n 15 || true
+          # The hosted Ubuntu image no longer guarantees /usr/bin/ffmpeg.
+          # Match the pinned static tool used in the proven native workflow.
+          python3 -m pip install --user imageio-ffmpeg==0.6.0
+          ffmpeg_bin="$(python3 -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
+          test -x "$ffmpeg_bin"
+          mkdir -p tools/bin
+          ln -s "$ffmpeg_bin" tools/bin/ffmpeg
+          export PATH="$PWD/tools/bin:$PATH"
+          echo "$PWD/tools/bin" >> "$GITHUB_PATH"
+          ffmpeg -hide_banner -version | head -n 2
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=1920x1080:rate=24 -t 16 \
+            -an -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -r 24 -g 48 -b:v 5M -f h264 fixture/clip.264
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i sine=frequency=440:sample_rate=48000 -t 16 \
+            -c:a ac3 -b:a 192k -f ac3 fixture/clip.ac3
+          printf 'MUXOPT --blu-ray\nV_MPEG4/ISO/AVC, %s/fixture/clip.264, fps=24, ar=16:9\nA_AC3, %s/fixture/clip.ac3, lang=eng\n' "$PWD" "$PWD" > fixture/iso.meta
+          "$binary" fixture/iso.meta fixture/iso994.iso
+          test -s fixture/iso994.iso
+          test "$(stat -c%s fixture/iso994.iso)" -gt 2097152
+          file fixture/iso994.iso
+          sha256sum fixture/iso994.iso > reports/994-iso-fixture-sha256.txt
+      - name: Enable emulator hardware acceleration and disk headroom
+        shell: bash
+        run: |
+          set -euo pipefail
+          for unused in /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /opt/hostedtoolcache/CodeQL; do
+            if [[ -d "$unused" ]]; then sudo rm -rf "$unused"; fi
+          done
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Signed ISO real WebDAV playback test on Android 11
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            python3 scripts/smoke_install.py apk/Nova_Video_Player_mod_SIGNED.apk --reports reports/994-iso-device
+            python3 scripts/smoke_iso_parallel_994.py --iso fixture/iso994.iso --apk apk/Nova_Video_Player_mod_SIGNED.apk --reports reports/994-iso-device
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Nova-994-ISO-1004-preflight-evidence
+          path: reports/
+          retention-days: 14
+          if-no-files-found: warn
