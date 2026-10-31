@@ -1,0 +1,45 @@
+name: Migu Android 14 TV accessibility lab
+
+on:
+  push:
+    branches:
+      - lab/migu-android14-tv-20261031
+    paths:
+      - '.github/workflows/migu-android14-tv.yml'
+      - 'migu/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android14-tv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM for emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || true
+      - name: Boot Android TV 14 API 34 and capture baseline
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          cores: 2
+          ram-size: 3072M
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash migu/ci/tv14_baseline.sh
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migu-android14-tv-emulator-evidence
+          path: migu/evidence/
+          if-no-files-found: warn
