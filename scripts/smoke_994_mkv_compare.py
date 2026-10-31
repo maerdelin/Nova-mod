@@ -21,7 +21,10 @@ from smoke_direct_webdav import adb, run, logs, wait_for, PACKAGE, PLAYER
 def install(apk):
     subprocess.run(["adb", "shell", "am", "force-stop", PACKAGE], capture_output=True)
     subprocess.run(["adb", "uninstall", PACKAGE], capture_output=True)
-    run(["adb", "install", "-r", str(apk)], timeout=100)
+    # Match the proven clean-install smoke: -g grants runtime storage
+    # permissions. Without it #993 opens GrantPermissionsActivity and the
+    # benchmark waits for a frame that can never arrive.
+    run(["adb", "install", "--no-streaming", "-r", "-g", str(apk)], timeout=180)
     if PACKAGE not in adb("shell", "pm", "list", "packages", PACKAGE):
         raise RuntimeError("APK installation not confirmed")
 
