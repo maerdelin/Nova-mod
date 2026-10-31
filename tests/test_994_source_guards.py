@@ -64,6 +64,10 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("(int)((resident_bytes*100)/resume_bytes)",C)
         self.assertIn("s->startup_buffer_percent,percent",C)
         self.assertIn("nova_startup_overlay_buffer_percent",AVOS)
+        unfreeze=AVOS.index("stream_un_pause( s, 0 );")
+        complete=AVOS.index("nova_startup_overlay_milestone(s->src.url,3);",unfreeze)
+        self.assertLess(unfreeze,complete)  # overlay exits after true resume
+        self.assertIn("ready && !active && !s->paused ? 3 : 2",AVOS)
         self.assertIn("(int64_t)s->rebuffer_resume_bytes",AVOS)
         self.assertIn("pst->buffer_used +",AVOS)
         self.assertIn("(int64_t)pst->buffer2_used",AVOS)
