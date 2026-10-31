@@ -70,9 +70,42 @@ static int _nova_rebuffer_eof( STREAM *s )
     return audio_done && video_done;
 }
 
-/* Declared before the controller; source parsing is handled by the
- * per-STREAM generation guard in stream_video.c. */
-static void nova_startup_overlay_milestone(const char *url,int state);
+#include <dlfcn.h>
+/* The controller lives in stream.c, separate from stream_video.c.
+ * Resolve the bridge by the actual session generation, never by global
+ * 'most recent player' state. */
+static int nova_startup_overlay_generation(const char *url,uint64_t *gen)
+{
+    if(!url || strncmp(url,"novatransport://",16)!=0)return 0;
+    char *end=NULL;
+    unsigned long long parsed=strtoull(url+16,&end,10);
+    if(!parsed || !end || *end!='/')return 0;
+    *gen=(uint64_t)parsed;
+    return 1;
+}
+static int nova_startup_ui_phase(const char *url)
+{
+    uint64_t gen=0;
+    if(!nova_startup_overlay_generation(url,&gen))return 3;
+    void *h=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!h)return 3;
+    int (*query)(uint64_t)=(int (*)(uint64_t))
+        dlsym(h,"nova_transport_startup_ui_phase");
+    int phase=query?query(gen):3;
+    dlclose(h);
+    return phase;
+}
+static void nova_startup_overlay_milestone(const char *url,int state)
+{
+    uint64_t gen=0;
+    if(!nova_startup_overlay_generation(url,&gen))return;
+    void *h=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!h)return;
+    void (*report)(uint64_t,int)=(void (*)(uint64_t,int))
+        dlsym(h,"nova_transport_report_startup_ui_phase");
+    if(report)report(gen,state);
+    dlclose(h);
+}
 static void *_rebuffer_thread( void *data )
 {
     STREAM *s = (STREAM *)data;
