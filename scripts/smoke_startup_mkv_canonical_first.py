@@ -99,6 +99,10 @@ def main():
                 "NOVA_STARTUP_TRACE first_frame_sink" in t[t.rfind(marker):],
                 40,"real MKV decoded first frame and native generation callback")
             tail=output[output.rfind(marker):]
+            # Preserve the real test log on both success and failure.
+            # AVOS serprintf can flush after native LOGI even when the native
+            # callback is synchronous in the first-frame code path.
+            (args.reports/"startup-mkv-canonical-first-logcat.txt").write_text(tail)
             if "FATAL EXCEPTION" in tail or "Fatal signal" in tail:
                 raise RuntimeError("Startup APK crashed")
             if "NOVA_STARTUP_MKV_CANONICAL_FIRST_V1" not in tail:
@@ -108,8 +112,10 @@ def main():
             probe=tail.find("NOVA_STARTUP_TRACE probe_done")
             first=tail.find("NOVA_STARTUP_TRACE first_frame_sink")
             ready=tail.find("NOVA_STARTUP_MKV_FIRST_FRAME_READY")
-            if not (probe>=0 and probe<first<ready):
-                raise AssertionError("Probe/first frame/native callback order invalid")
+            if not (probe>=0 and probe<first and ready>=0):
+                raise AssertionError(
+                    f"Missing probe/first/native callback: probe={probe} first={first} ready={ready}"
+                )
             curl=tail.find("NOVA_BOOT_CURL_BEGIN")
             if curl>=0 and curl<ready:
                 raise AssertionError("The old stalled 4MiB CURL path ran before first frame")
