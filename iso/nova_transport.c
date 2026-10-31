@@ -304,6 +304,13 @@ typedef struct nova_session {
      * 3=threshold-resumed 4=terminal. Read by the player UI only. */
     volatile int startup_ui_state;
     volatile uint64_t startup_wire_bytes;
+    int64_t startup_speed_sample_ms;
+    uint64_t startup_speed_sample_bytes, startup_speed_bps;
+    /* ISO W2 startup uses an exclusive temporary CURLM owner. */
+    int iso_capture_movie_lba;
+    int64_t iso_first_movie_lba;
+    pthread_t iso_pump_thread;
+    volatile int iso_pump_running, iso_pump_stop;
     nova_iso_track_lang iso_tracks[NOVA_ISO_TRACK_LANG_CAP];
     unsigned iso_track_count;
 } nova_session;
@@ -330,6 +337,10 @@ static int nova_multi_read(nova_session *s,uint8_t *dst,int size);
 static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,int64_t target,int bytes);
 static int nova_multi_current_lanes(nova_session *s);
 static void nova_multi_set_target(nova_session *s,uint64_t target_bps);
+static int nova_multi_enable_http(JNIEnv *,nova_session *,
+                                  const char *,const char *);
+static int nova_iso_start_pump(nova_session *,int64_t);
+static void nova_iso_stop_pump(nova_session *);
 
 
 static int transport_interrupt(void *opaque)
@@ -741,6 +752,10 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
         return -1;
     int64_t target = (int64_t)lba * UDF_BLOCK;
     int bytes = num_blocks * UDF_BLOCK;
+    if(s->iso_capture_movie_lba && s->iso_first_movie_lba<0){
+        s->iso_first_movie_lba=target;
+        LOGI("NOVA_ISO_PARALLEL_V1: selected_movie_candidate_lba=%" PRId64,target);
+    }
     if (s->iso_meta_active && s->upstream_size > 0) {
         int blocks = nova_iso_meta_read(s, (uint8_t *)buf, target, bytes);
         if (blocks > 0)
@@ -833,6 +848,29 @@ static int select_main_title(nova_session *s)
     int64_t select_start_ms = nova_iso_uptime_ms();
     if (!bd_select_title(s->bd, (uint32_t)main_title))
         return -1;
+    /* Identify the physical first movie block only after the authoritative
+     * playlist is selected. Do not speculate UDF extents or clip identity.
+     * Rewind libbluray before continuing the title metadata read. */
+    if(s->multi_http_ready && !s->stopping){
+        uint8_t verify[192*8];
+        s->iso_first_movie_lba=-1;
+        s->iso_capture_movie_lba=1;
+        int got=bd_read(s->bd,verify,sizeof(verify));
+        s->iso_capture_movie_lba=0;
+        int m2ts=got==(int)sizeof(verify),ts188=m2ts;
+        if(m2ts)
+            for(int i=0;i<8;i++)
+                if(verify[i*192+4]!=0x47){m2ts=0;break;}
+        if(ts188)
+            for(int i=0;i<8;i++)
+                if(verify[i*188]!=0x47){ts188=0;break;}
+        int64_t rewind=bd_seek(s->bd,0);
+        LOGI("NOVA_ISO_PARALLEL_V1: validated=%d got=%d rewind=%" PRId64
+             " physical=%" PRId64,m2ts||ts188,got,rewind,
+             s->iso_first_movie_lba);
+        if((m2ts||ts188) && rewind==0 && s->iso_first_movie_lba>=0)
+            nova_iso_start_pump(s,s->iso_first_movie_lba);
+    }
     s->output_size = bd_get_title_size(s->bd);
     BLURAY_TITLE_INFO *ti = bd_get_title_info(s->bd, (uint32_t)main_title, 0);
     if (ti) {
@@ -1430,6 +1468,8 @@ static void session_free(nova_session *s)
 {
     if (!s)
         return;
+    s->iso_pump_stop=1;
+    nova_iso_stop_pump(s);
     pthread_mutex_lock(&g_lock);
     if (g_opening_session == s)
         g_opening_session = NULL;
@@ -1464,7 +1504,9 @@ static void session_free(nova_session *s)
     free(s);
 }
 
-static nova_session *session_create(const char *url, const char *headers, int iso)
+static nova_session *session_create(JNIEnv *env,const char *url,
+                                     const char *headers,int iso,
+                                     const char *origin,const char *auth)
 {
     int64_t iso_start_ms = iso ? nova_iso_uptime_ms() : 0;
     int64_t stage_start_ms = iso_start_ms;
@@ -1475,6 +1517,7 @@ static nova_session *session_create(const char *url, const char *headers, int is
     s->upstream_size = -1;
     s->mode = iso ? NOVA_MODE_BLURAY_ISO : NOVA_MODE_FILE;
     if (iso) {
+        s->iso_first_movie_lba=-1;
         s->iso_meta_window_bytes = NOVA_ISO_META_START_BYTES;
         s->iso_meta_last_miss_end = -1;
         LOGI("NOVA_ISO_META_STAIR_V1: begin tier=%d max=%d",
@@ -1503,6 +1546,12 @@ static nova_session *session_create(const char *url, const char *headers, int is
     if (nova_upstream_open_until_ready(s) < 0) {
         session_free(s);
         return NULL;
+    }
+    /* HTTP origin can be prepared while UDF metadata is not yet parsed.
+     * Actual W2 awaits the selected title's verified movie LBA. */
+    if(iso && env && origin && *origin){
+        int rc=nova_multi_enable_http(env,s,origin,auth ? auth:"");
+        LOGI("NOVA_ISO_PARALLEL_V1: http_prepared=%d",rc>=0);
     }
     /* Temporary UDF scanning cache, OFF before first streaming byte. */
     if (iso && s->upstream_size > 0)
@@ -1545,6 +1594,7 @@ static nova_session *session_create(const char *url, const char *headers, int is
              " fetched=%" PRIu64 " finalTier=%d peakTier=%d",
              s->iso_meta_reads,s->iso_meta_hits,s->iso_meta_fetched,
              s->iso_meta_window_bytes,s->iso_meta_peak_window);
+        nova_iso_stop_pump(s);
         /* ISO scan finished: remove metadata cache BEFORE RAW128 playback.
          * Cache only the first 4 MiB of real, already-verified movie bytes
          * to survive the internal FFmpeg start-of-stream probe rewind. */
@@ -2250,7 +2300,8 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
     const int mkv=(!jiso && origin && nova_is_mkv_origin_url(origin));
     nova_session *fresh=mkv ?
         session_create_file(env,origin,original_auth ? original_auth : "") :
-        session_create(url,headers ? headers : "",jiso ? 1 : 0);
+        session_create(env,url,headers ? headers : "",jiso ? 1 : 0,
+                       origin,original_auth);
     if(fresh && !jiso && origin && !mkv &&
        *origin && strcmp(origin,url)!=0){
             fresh->origin_url=strdup(origin);
@@ -2280,7 +2331,7 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
                 LOGI("NOVA_FILE_ORIGIN_FRESH_V1: enabled=1");
             }
     }
-    if(fresh && origin && *origin){
+    if(fresh && origin && *origin && !fresh->multi_http_ready){
         int multi_rc=nova_multi_enable_http(env,fresh,origin,
                          original_auth ? original_auth : "");
         if(multi_rc<0){
