@@ -60,8 +60,8 @@ jobs:
           python3 -m py_compile scripts/native_rebuffer_patch.py scripts/direct_transport_apply.py scripts/startup_loading_994_patch.py
           python3 scripts/startup_loading_994_patch.py decoded
           grep -q 'NovaStartupOverlay;->onPrepared' decoded/smali/com/archos/mediacenter/video/player/PlayerActivity.smali
-          grep -q 'nativeStartupBytes()J' decoded/smali_classes*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
-          grep -q 'nova_speed' decoded/res/layout/player.xml
+          grep -q 'nativeStartupPercent()I' decoded/smali_classes*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
+          grep -q 'nova_buffer_percent' decoded/res/layout/player.xml
           echo 'NOVA_994_UI_PATCH_SMOKE=PASS'
           find forensics -type f | sort > forensics/file-list.txt
           test -s forensics/file-list.txt
