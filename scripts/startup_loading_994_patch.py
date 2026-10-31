@@ -150,17 +150,51 @@ def one(paths, name):
 def patch(root: Path):
     player=one(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity.smali"),"activity")
     src=player.read_text()
-    prepare='''    invoke-static {}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->end()V
-
-    invoke-virtual {v0, v1}, Landroid/view/View;->setVisibility(I)V'''
-    replacement='''    invoke-static {v0}, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->onPrepared(Landroid/view/View;)Z
-    move-result v4
-    if-nez v4, :nova994_keep_spinner
-    invoke-static {}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->end()V
-    invoke-virtual {v0, v1}, Landroid/view/View;->setVisibility(I)V
-    :nova994_keep_spinner'''
-    if(src.count(prepare)!=1):raise RuntimeError("994 prepared spinner anchor count")
-    src=src.replace(prepare,replacement,1)
+    # The official build applies NovaLoadingTrace fresh and inserts its
+    # end() hook directly above setVisibility, whereas signed 993 may have a
+    # blank line there. Patch the target method only, preserving all other
+    # visibility calls and allocating a new local register for the result.
+    method_header=re.compile(
+        r"(?m)^\.method[^\n]* postVideoInfoAndPrepared\(\)V\n")
+    match_headers=list(method_header.finditer(src))
+    if len(match_headers)!=1:
+        raise RuntimeError("994 prepared method unique match required")
+    method_begin=match_headers[0].start()
+    method_end=src.index(".end method",method_begin)+len(".end method")
+    method=src[method_begin:method_end]
+    register=re.search(r"(?m)^    \.locals (\d+)$",method)
+    if not register:
+        raise RuntimeError("994 prepared method requires .locals to preserve p0")
+    free_local=int(register.group(1))
+    if free_local>=255:
+        raise RuntimeError("994 prepared method has no safe scratch register")
+    scratch="v"+str(free_local)
+    method=method[:register.start(1)]+str(free_local+1)+method[register.end(1):]
+    hide=re.compile(
+        r"(?m)^[ \t]*invoke-static \{\}, "
+        +re.escape(TRACE)+r"->end\(\)V[ \t]*\n"
+        r"(?:[ \t]*\n)*"
+        r"[ \t]*invoke-virtual(?:/range)? \{(v\d+), (v\d+)\}, "
+        r"Landroid/view/View;->setVisibility\(I\)V[ \t]*$")
+    matches=list(hide.finditer(method))
+    if len(matches)!=1:
+        raise RuntimeError("994 prepared spinner anchor count="+str(len(matches)))
+    anchor=matches[0]
+    view,visibility=anchor.group(1),anchor.group(2)
+    invoke=("invoke-static/range {"+view+" .. "+view+"}, "
+            if int(view[1:])>15 else "invoke-static {"+view+"}, ")
+    keep_label=":nova994_keep_spinner"
+    if keep_label in method:
+        raise RuntimeError("994 prepared double patch")
+    patched=(
+        "    "+invoke+NAME+"->onPrepared(Landroid/view/View;)Z\n"
+        "    move-result "+scratch+"\n"
+        "    if-nez "+scratch+", "+keep_label+"\n"
+        "    invoke-static {}, "+TRACE+"->end()V\n"
+        "    invoke-virtual {"+view+", "+visibility+"}, Landroid/view/View;->setVisibility(I)V\n"
+        "    "+keep_label)
+    method=method[:anchor.start()]+patched+method[anchor.end():]
+    src=src[:method_begin]+method+src[method_end:]
     start='''    invoke-static {}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->begin()V'''
     if(src.count(start)!=1):raise RuntimeError("994 start hook count")
     src=src.replace(start,start+"\n    invoke-static {}, "+NAME+"->reset()V",1)
