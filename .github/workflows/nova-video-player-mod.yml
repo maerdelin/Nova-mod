@@ -433,17 +433,17 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      - name: Retrieve pre-staged #976 signed baseline for real MKV speed comparison
+      - name: Retrieve #993 signed baseline for real MKV speed comparison
         if: github.ref == 'refs/heads/build/994-all-five-validation-20261031'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p inputs/976-baseline
-          gh run download 41174869621 --name Nova-installable-signed-976 --dir inputs/976-baseline
-          test -s inputs/976-baseline/Nova_Video_Player_mod_SIGNED.apk
-          (cd inputs/976-baseline && sha256sum -c SHA256SUMS.txt)
+          mkdir -p inputs/993-baseline
+          gh run download 41193199944 --name Nova-installable-signed-993 --dir inputs/993-baseline
+          test -s inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk
+          (cd inputs/993-baseline && sha256sum -c SHA256SUMS.txt)
 
       - name: Reserve Android emulator disk capacity
         shell: bash
@@ -516,7 +516,7 @@ jobs:
             python3 scripts/smoke_startup_mkv_canonical_first.py --reports reports
             python3 scripts/smoke_iso_parallel_994.py --iso fixture/iso994.iso --apk dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/994-iso-device
             python3 scripts/smoke_994_ui_runtime.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --iso-log reports/994-iso-device/994-iso-logcat.txt --reports reports
-            python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/976-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+            python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             python3 scripts/smoke_playback_completion.py --reports reports
             python3 scripts/smoke_seek_eof_completion.py --reports reports
             python3 scripts/smoke_mp4_tail_moov.py --reports reports
