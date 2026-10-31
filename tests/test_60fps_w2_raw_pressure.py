@@ -36,7 +36,8 @@ class RealNativePressureGate(unittest.TestCase):
     def test_production_c_gate_under_actual_page_ownership(self):
         gate = extract("nova_lite_can_stage")
         self.assertIn("NOVA_W2_RAW_PRESSURE_GUARD_V1", INC)
-        self.assertIn("NOVA_WH_RAW_PAGES", gate)
+        self.assertIn("NOVA_W2_RAW_HIGH_PAGES", gate)
+        self.assertIn("NOVA_WH_RAW_PAGES", INC)
         self.assertIn("p->start>e->session->multi_committed_cursor", gate)
         self.assertIn("limit>(int)NOVA_W2_FUTURE_SOFT_PAGES", gate)
         source = r"""
