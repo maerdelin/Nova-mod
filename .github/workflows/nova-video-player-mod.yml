@@ -401,6 +401,29 @@ jobs:
           retention-days: 30
           compression-level: 0
 
+      - name: Reserve Android emulator disk capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          # #972 failed BEFORE APK installation: emulator userdata needed
+          # 7372.80 MB but GitHub ubuntu-24.04 disk had only 5204.45 MB.
+          # The native libraries and signed APK are already built here;
+          # remove only unrelated hosted compiler/runtime toolchains.
+          df -h "$HOME"
+          for unused in /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /opt/hostedtoolcache/CodeQL; do
+            if [[ -d "$unused" ]]; then
+              sudo du -sh "$unused" || true
+              sudo rm -rf -- "$unused"
+            fi
+          done
+          df -h "$HOME"
+          available_kib="$(df -Pk "$HOME" | awk 'END {print $4}')"
+          if (( available_kib < 9*1024*1024 )); then
+            echo "::error::Insufficient disk headroom for emulator. Free KiB=$available_kib; require >= 9 GiB"
+            exit 1
+          fi
+          echo "NOVA_60FPS_EMULATOR_DISK_HEADROOM=PASS availableKiB=$available_kib"
+
       - name: Enable emulator hardware acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
