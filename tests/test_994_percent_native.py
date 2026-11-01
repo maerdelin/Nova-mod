@@ -25,6 +25,9 @@ class NativeStartupBufferPercentTests(unittest.TestCase):
 #define LOGI(...) ((void)0)
 typedef struct nova_session {
     volatile int startup_buffer_percent;
+    volatile int64_t startup_resident_bytes;
+    volatile int64_t startup_resume_bytes;
+    volatile int startup_authoritative_seen;
 } nova_session;
 static nova_session live;
 static nova_session *session_acquire(uint64_t generation) {
