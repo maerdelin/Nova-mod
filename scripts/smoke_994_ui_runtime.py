@@ -42,8 +42,8 @@ def check(apk, log, reports):
         r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live)
     probe=re.search(r"NOVA_STARTUP_TRACE probe_done",live)
     lock=re.search(r"NOVA_STARTUP_DENOM_LOCK_V1: generation=(\d+) resume=(\d+)",live)
-    xlock=re.search(r"NOVA_STARTUP_X_LOCK_V1: source=(?:iso-title-metadata|ffmpeg-probe) x=(\d+) resume=(\d+)",live)
-    if not xlock or not lock or int(xlock.group(2))!=int(lock.group(2)):
+    xlock=re.search(r"NOVA_STARTUP_X_LOCK_V1: source=(iso-title-metadata|ffmpeg-probe) x=(\d+) resume=(\d+)",live)
+    if not xlock or not lock or int(xlock.group(3))!=int(lock.group(2)):
         raise RuntimeError("No real-X first threshold lock with consistent UI denominator")
     if xlock.group(1) == "iso-title-metadata" and (
         not probe or xlock.start() >= probe.start()):
