@@ -40,7 +40,7 @@ def patch(text):
     text=once(text,"static uint64_t nova_direct_generation(const char *url)",pre+"static uint64_t nova_direct_generation(const char *url)","ABI marker")
     old="""    if (!raw->direct_read || !raw->direct_seek ||
         !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)
-        return AVERROR(ENOSYS);
+        return nova_direct_init_fail(raw,"transport_symbols",AVERROR(ENOSYS));
 
     unsigned char *buffer = av_malloc(NOVA_RAW_IO_BYTES);"""
     new="""    if (!raw->direct_read || !raw->direct_seek ||
@@ -60,9 +60,11 @@ def patch(text):
                          "nova_transport_page_release");
     if(!raw->shared_acquire || !raw->shared_release ||
        !raw->page_take || !raw->page_data || !raw->page_length ||
-       !raw->page_release)return AVERROR(ENOSYS);
+       !raw->page_release)
+        return nova_direct_init_fail(raw,"shared_page_symbols",AVERROR(ENOSYS));
     raw->shared_base=raw->shared_acquire(raw->transport_generation);
-    if(!raw->shared_base)return AVERROR(ENOMEM);
+    if(!raw->shared_base)
+        return nova_direct_init_fail(raw,"shared128_acquire",AVERROR(ENOMEM));
     raw->shared_pages=1;
     raw->capacity_bytes=86 * 1024 * 1024;
     raw->page_head=raw->page_tail=raw->page_queued=0;
