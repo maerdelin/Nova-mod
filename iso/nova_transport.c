@@ -7,6 +7,8 @@
 #include <pthread.h>
 #include <curl/curl.h>
 #include <stdint.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,12 +138,26 @@ typedef struct nova_shared_warehouse {
     /* The only large allocation; metadata costs < 64 KiB. */
     uint8_t data[NOVA_WH_TOTAL_BYTES];
 } nova_shared_warehouse;
-static nova_shared_warehouse *nova_shared_warehouse_new(void)
+/* NOVA_1054_WAREHOUSE_REUSE_V1: the Run632 player opened 12 sessions
+ * successfully and subsequent sessions failed before DIRECT_SOURCE_OPEN.
+ * A fresh contiguous 128 MiB malloc on every close/open is unnecessary on
+ * 32-bit Android and can fail after address-space fragmentation even when
+ * MemAvailable is high. Keep exactly one idle *virtual allocation*, never
+ * share it with an active generation. Drop its physical media pages while
+ * idle (page-aligned madvise) so background memory pressure stays low.
+ *
+ * Important: the refcount includes the transport session and the RAW user.
+ * Only the last release may publish an idle allocation, after both owners
+ * have stopped accessing any staged/RAW page. Concurrent active sessions
+ * never share the warehouse. */
+static pthread_mutex_t g_warehouse_idle_lock=PTHREAD_MUTEX_INITIALIZER;
+static nova_shared_warehouse *g_warehouse_idle=NULL;
+
+static void nova_shared_warehouse_reset(nova_shared_warehouse *w)
 {
-    nova_shared_warehouse *w=(nova_shared_warehouse *)malloc(sizeof(*w));
-    if(!w)return NULL;
-    if(pthread_mutex_init(&w->lock,NULL)){free(w);return NULL;}
+    /* Only a freshly allocated or wholly unreferenced cached object enters. */
     __atomic_store_n(&w->refs,1u,__ATOMIC_RELEASE);
+    pthread_mutex_lock(&w->lock);
     w->free_count=NOVA_WH_PAGES;
     for(unsigned i=0;i<NOVA_WH_PAGES;++i){
         w->free_stack[i]=(int)i;
@@ -150,14 +166,69 @@ static nova_shared_warehouse *nova_shared_warehouse_new(void)
         w->pages[i].consumed=0;
         w->pages[i].state=NOVA_WH_FREE;
     }
+    pthread_mutex_unlock(&w->lock);
+}
+static void nova_shared_warehouse_drop_payload(nova_shared_warehouse *w)
+{
+    /* The first/last partly aligned pages may contain malloc bookkeeping.
+     * Discard only complete pages *inside* the media payload. Failure is
+     * harmless: it affects idle RSS, never byte validity or ownership. */
+    long page=sysconf(_SC_PAGESIZE);
+    if(page<=0)return;
+    uintptr_t start=(uintptr_t)w->data, align=(uintptr_t)page;
+    uintptr_t begin=((start+align-1)/align)*align;
+    uintptr_t end=((start+(uintptr_t)NOVA_WH_TOTAL_BYTES)/align)*align;
+    if(end>begin && madvise((void *)begin,(size_t)(end-begin),MADV_DONTNEED)!=0)
+        LOGE("NOVA_1054_WAREHOUSE_MADVISE_FAIL errno=%d",errno);
+}
+static nova_shared_warehouse *nova_shared_warehouse_new(void)
+{
+    pthread_mutex_lock(&g_warehouse_idle_lock);
+    nova_shared_warehouse *w=g_warehouse_idle;
+    g_warehouse_idle=NULL;
+    pthread_mutex_unlock(&g_warehouse_idle_lock);
+    if(w){
+        int free_before=w->free_count;
+        nova_shared_warehouse_reset(w);
+        LOGI("NOVA_1054_WAREHOUSE_REUSE cache=hit bytes=%zu freeBefore=%d",
+             sizeof(*w),free_before);
+        return w;
+    }
+    w=(nova_shared_warehouse *)malloc(sizeof(*w));
+    if(!w){
+        LOGE("NOVA_1054_WAREHOUSE_ALLOC_FAIL bytes=%zu errno=%d",
+             sizeof(nova_shared_warehouse),errno);
+        return NULL;
+    }
+    int rc=pthread_mutex_init(&w->lock,NULL);
+    if(rc){
+        LOGE("NOVA_1054_WAREHOUSE_MUTEX_FAIL rc=%d",rc);
+        free(w);
+        return NULL;
+    }
+    nova_shared_warehouse_reset(w);
+    LOGI("NOVA_1054_WAREHOUSE_REUSE cache=miss bytes=%zu",sizeof(*w));
     return w;
 }
 static void nova_shared_warehouse_unref(nova_shared_warehouse *w)
 {
-    if(w && __atomic_sub_fetch(&w->refs,1u,__ATOMIC_ACQ_REL)==0u){
-        pthread_mutex_destroy(&w->lock);
-        free(w);
+    if(!w)return;
+    if(__atomic_sub_fetch(&w->refs,1u,__ATOMIC_ACQ_REL)!=0u)return;
+    nova_shared_warehouse_drop_payload(w);
+    pthread_mutex_lock(&g_warehouse_idle_lock);
+    if(!g_warehouse_idle){
+        g_warehouse_idle=w;
+        w=NULL;
     }
+    pthread_mutex_unlock(&g_warehouse_idle_lock);
+    if(!w){
+        LOGI("NOVA_1054_WAREHOUSE_CACHE refs=0 standby=1");
+        return;
+    }
+    /* Two overlapping sessions may allocate two distinct pools; retain
+     * only one idle mapping and free the extra after its last release. */
+    pthread_mutex_destroy(&w->lock);
+    free(w);
 }
 static nova_shared_warehouse *nova_shared_warehouse_from_data(void *data)
 {
@@ -1651,10 +1722,17 @@ __attribute__((visibility("default")))
 void *nova_transport_warehouse_acquire(uint64_t generation)
 {
     nova_session *s=session_acquire(generation);
-    if(!s)return NULL;
+    if(!s){
+        LOGE("NOVA_1054_WAREHOUSE_ACQUIRE_FAIL generation=%" PRIu64
+             " stage=stale_or_stopping",generation);
+        return NULL;
+    }
     pthread_mutex_lock(&s->io_lock);
     if(!s->warehouse)s->warehouse=nova_shared_warehouse_new();
     nova_shared_warehouse *w=s->warehouse;
+    if(!w)
+        LOGE("NOVA_1054_WAREHOUSE_ACQUIRE_FAIL generation=%" PRIu64
+             " stage=allocation",generation);
     if(w)__atomic_add_fetch(&w->refs,1u,__ATOMIC_ACQ_REL);
     pthread_mutex_unlock(&s->io_lock);
     session_release(s);
