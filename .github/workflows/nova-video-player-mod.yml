@@ -217,7 +217,7 @@ jobs:
           python3 scripts/startup_boot_raw_diag.py --native native-src/native/avos
           python3 scripts/startup_onepass_speed_patch.py --native native-src/native/avos
           python3 scripts/startup_staged_decode_patch.py --native native-src/native/avos
-          grep -Fq 'NOVA_60FPS_SYSTEM_FORENSICS_V2' native-src/native/avos/Source/stream.c
+          grep -Fq 'NOVA_60FPS_SYSTEM_FORENSICS_V2' native-src/native/avos/Source/stream_video.c
           grep -Fq 'nova_60fps_note_late' native-src/native/avos/Source/codec_sfdec2.c
           grep -Fq 'nova_startup_overlay_raw_percent' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_FIRST_RENDER_HOLD_V1' native-src/native/avos/Source/stream_video.c
