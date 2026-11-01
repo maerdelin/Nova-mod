@@ -134,9 +134,156 @@ void nova_startup_overlay_raw_percent(const char *url,int64_t resident,int64_t r
     if(fn)fn(gen,resident,resume);
     dlclose(h);
 }
+/* NOVA_60FPS_SYSTEM_FORENSICS_V2: dedicated passive 1Hz Linux snapshot.
+ * This worker cannot hold AVOS/media/network locks; permission-denied
+ * values are -1, never fabricated. Late drops burst sample at 250ms.
+ * /proc task schedstat is the actual runtime/wait measure per TID. */
+#include <dirent.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#include <time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+static volatile unsigned nova_60fps_late_seq=0;
+void nova_60fps_note_late(void) {
+    __atomic_add_fetch(&nova_60fps_late_seq,1u,__ATOMIC_RELAXED);
+}
+static long nova_diag_value(const char *path,const char *key)
+{
+    FILE *f=fopen(path,"r");
+    if(!f)return -1;
+    char line[256];
+    long val=-1;
+    size_t prefix=key?strlen(key):0;
+    while(fgets(line,sizeof(line),f)){
+        if(!key || strncmp(line,key,prefix)==0){
+            char *p=line+prefix;
+            while(*p==' ' || *p==':' || *p=='\t')p++;
+            if(sscanf(p,"%ld",&val)!=1)val=-1;
+            break;
+        }
+    }
+    fclose(f);
+    return val;
+}
+static long nova_diag_psi(const char *path)
+{
+    FILE *f=fopen(path,"r");
+    if(!f)return -1;
+    char line[256];
+    long scaled=-1;
+    if(fgets(line,sizeof(line),f)){
+        char *p=strstr(line,"avg10=");
+        if(p){double x=0;
+            if(sscanf(p+6,"%lf",&x)==1)
+                scaled=(long)(x*1000.0);
+        }
+    }
+    fclose(f);
+    return scaled;
+}
+static void *nova_60fps_sys_sampler(void *unused)
+{
+    (void)unused;
+    unsigned last_seq=0;
+    int burst=0;
+    while(1){
+        struct timespec when;
+        clock_gettime(CLOCK_MONOTONIC,&when);
+        long tid=(long)syscall(SYS_gettid);
+        struct rusage ru;
+        memset(&ru,0,sizeof(ru));
+        getrusage(RUSAGE_SELF,&ru);
+        long vmrss=nova_diag_value("/proc/self/status","VmRSS");
+        long vmhwm=nova_diag_value("/proc/self/status","VmHWM");
+        long vm_swap=nova_diag_value("/proc/self/status","VmSwap");
+        long fdsize=nova_diag_value("/proc/self/status","FDSize");
+        long read_bytes=nova_diag_value("/proc/self/io","read_bytes");
+        long write_bytes=nova_diag_value("/proc/self/io","write_bytes");
+        long rchar=nova_diag_value("/proc/self/io","rchar");
+        long wchar=nova_diag_value("/proc/self/io","wchar");
+        long mem_avail=nova_diag_value("/proc/meminfo","MemAvailable");
+        long dirty=nova_diag_value("/proc/meminfo","Dirty");
+        long psi_cpu=nova_diag_psi("/proc/pressure/cpu");
+        long psi_mem=nova_diag_psi("/proc/pressure/memory");
+        long psi_io=nova_diag_psi("/proc/pressure/io");
+        long freqs[8];
+        for(int i=0;i<8;i++){
+            char path[160];
+            snprintf(path,sizeof(path),"/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq",i);
+            freqs[i]=nova_diag_value(path,NULL);
+        }
+        int threads=0;
+        long long sched_run=0,sched_wait=0,sched_slices=0;
+        long long max_wait=0;
+        long worst_tid=-1;
+        DIR *dir=opendir("/proc/self/task");
+        if(dir){
+            struct dirent *ent;
+            while((ent=readdir(dir))!=NULL && threads<256){
+                char *end=NULL;
+                long t=strtol(ent->d_name,&end,10);
+                if(!ent->d_name[0] || !end || *end || t<=0)continue;
+                char path[192];
+                snprintf(path,sizeof(path),"/proc/self/task/%ld/schedstat",t);
+                FILE *f=fopen(path,"r");
+                if(f){
+                    long long run=0,wait=0,slices=0;
+                    if(fscanf(f,"%lld %lld %lld",&run,&wait,&slices)==3){
+                        sched_run+=run;sched_wait+=wait;sched_slices+=slices;
+                        if(wait>max_wait){max_wait=wait;worst_tid=t;}
+                    }
+                    fclose(f);
+                }
+                threads++;
+            }
+            closedir(dir);
+        }
+        long thermal_max=-1;
+        for(int i=0;i<24;i++){
+            char path[128];
+            snprintf(path,sizeof(path),"/sys/class/thermal/thermal_zone%d/temp",i);
+            long temp=nova_diag_value(path,NULL);
+            if(temp>=0 && temp<130000 && temp>thermal_max)thermal_max=temp;
+        }
+        unsigned seq=__atomic_load_n(&nova_60fps_late_seq,__ATOMIC_RELAXED);
+        if(seq!=last_seq){burst=12;last_seq=seq;}
+        serprintf("NOVA_60FPS_SYSTEM_FORENSICS_V2 monoMs=%lld samplerTid=%ld lateSeq=%u "
+            "rssKB=%ld hwmKB=%ld swapKB=%ld fdsize=%ld memAvailKB=%ld dirtyKB=%ld "
+            "minflt=%ld majflt=%ld nvcsw=%ld nivcsw=%ld "
+            "readBytes=%ld writeBytes=%ld rchar=%ld wchar=%ld "
+            "psiCpu10_milli=%ld psiMem10_milli=%ld psiIo10_milli=%ld "
+            "threads=%d taskRunNs=%lld taskWaitNs=%lld taskSlices=%lld worstTaskTid=%ld worstWaitCumNs=%lld "
+            "freq0=%ld freq1=%ld freq2=%ld freq3=%ld freq4=%ld freq5=%ld freq6=%ld freq7=%ld "
+            "thermalMax_mC=%ld validSysfs=best_effort\n",
+            (long long)when.tv_sec*1000LL+when.tv_nsec/1000000LL,tid,seq,
+            vmrss,vmhwm,vm_swap,fdsize,mem_avail,dirty,
+            ru.ru_minflt,ru.ru_majflt,ru.ru_nvcsw,ru.ru_nivcsw,
+            read_bytes,write_bytes,rchar,wchar,
+            psi_cpu,psi_mem,psi_io,threads,sched_run,sched_wait,sched_slices,
+            worst_tid,max_wait,
+            freqs[0],freqs[1],freqs[2],freqs[3],freqs[4],freqs[5],freqs[6],freqs[7],
+            thermal_max);
+        struct timespec pause;
+        if(burst>0){pause.tv_sec=0;pause.tv_nsec=250000000;burst--;}
+        else {pause.tv_sec=1;pause.tv_nsec=0;}
+        nanosleep(&pause,NULL);
+    }
+    return NULL;
+}
+static pthread_once_t nova_60fps_monitor_once=PTHREAD_ONCE_INIT;
+static void nova_60fps_start_sampler(void)
+{
+    pthread_t id;
+    if(!pthread_create(&id,NULL,nova_60fps_sys_sampler,NULL))
+        pthread_detach(id);
+}
 static void *_rebuffer_thread( void *data )
 {
     STREAM *s = (STREAM *)data;
+    pthread_once(&nova_60fps_monitor_once,nova_60fps_start_sampler);
     int last_wait_log = 0;
     int last_percent_report_ms = -1000;
 
