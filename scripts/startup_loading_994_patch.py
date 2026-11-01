@@ -270,15 +270,15 @@ def patch(root: Path):
         raise RuntimeError("994 early UI handler marker count="+str(len(handler_candidates)))
     hp,hsrc=handler_candidates[0]
     pattern=re.compile(
-        r"(?m)(^[ \\t]*invoke-static(?:/range)? \\{[^\\n]+\\}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->visibility\\(I\\)V[ \\t]*\\n)"
-        r"(^[ \\t]*invoke-virtual(?:/range)? \\{([^}\\n]+)\\}, Landroid/view/View;->setVisibility\\(I\\)V[ \\t]*$)")
+        r"(?m)(^[ \t]*invoke-static(?:/range)? \{[^\n]+\}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->visibility\(I\)V[ \t]*\n)"
+        r"(^[ \t]*invoke-virtual(?:/range)? \{([^}\n]+)\}, Landroid/view/View;->setVisibility\(I\)V[ \t]*$)")
     matches=list(pattern.finditer(hsrc))
     if not matches:
         raise RuntimeError("994 early UI missing spinner visibility pair")
     for match in reversed(matches):
         operands=match.group(3).strip()
         # apktool may normalize invoke-virtual to /range {vN .. vN+1}.
-        found=re.findall(r"v\\d+",operands)
+        found=re.findall(r"v\d+",operands)
         if len(found)!=2:
             raise RuntimeError("994 early UI unexpected View.setVisibility args: "+operands)
         view,vis=found
@@ -288,7 +288,7 @@ def patch(root: Path):
             invoke="invoke-static/range {"+view+" .. "+vis+"}, "
         else:
             invoke="invoke-static {"+view+", "+vis+"}, "
-        inserted=match.group(1)+"    "+invoke+NAME+"->armEarly(Landroid/view/View;I)V\\n"+match.group(2)
+        inserted=match.group(1)+"    "+invoke+NAME+"->armEarly(Landroid/view/View;I)V\n"+match.group(2)
         hsrc=hsrc[:match.start()]+inserted+hsrc[match.end():]
     hp.write_text(hsrc)
 
