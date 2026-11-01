@@ -159,18 +159,7 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     if-eqz v2, :reschedule
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeStartupPercent()I
     move-result v3
-    if-nez v3, :append_percent
-    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeStartupResidentBytes()J
-    move-result-wide v0
-    const-wide/16 v3, 0x0
-    cmp-long v3, v0, v3
-    if-lez v3, :append_percent
-    const-string v3, "<1%"
-    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
-    const-string v0, "NOVA_994_UI_TICK"
-    invoke-static {v0, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
-    goto :reschedule
-    :append_percent
+    # NOVA_1052_INTEGER_ONLY_V1: no text for fractions: 0..0.999% is 0%.
     new-instance v4, Ljava/lang/StringBuilder;
     invoke-direct {v4}, Ljava/lang/StringBuilder;-><init>()V
     invoke-virtual {v4, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;

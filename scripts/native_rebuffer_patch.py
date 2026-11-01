@@ -495,6 +495,9 @@ typedef struct NOVA_RAW_PREFETCH {
     uint64_t last_log_consumed;
     int64_t last_log_us;
     int64_t early_percent_last_us;
+    /* NOVA_1052_UNIQUE_PREFIX_V1: contiguous, de-duplicated movie bytes
+     * fetched from offset zero. Consumed bytes remain counted. */
+    int64_t startup_contiguous_bytes;
     /* NOVA_MKV_BBC_SEEK_GUARD_V1: only MKV one-GET source. */
     int mkv_single_get;
     volatile int mkv_seek_active;
@@ -571,6 +574,19 @@ static void nova_raw_reset_locked(NOVA_RAW_PREFETCH *raw)
     raw->read_off = 0;
     raw->write_off = 0;
     raw->used_bytes = 0;
+}
+
+/* NOVA_1052_UNIQUE_PREFIX_V1: prefix [0,seen) grows only when producer
+ * reaches the next unobserved movie byte. Probe rewind or far tail index
+ * seeks do not duplicate bytes or fabricate progress. */
+static int64_t nova_raw_unique_prefix_next(int64_t seen,int64_t consumer_pos,
+                                           int64_t used,int got)
+{
+    if(seen<0 || consumer_pos<0 || used<0 || got<=0 ||
+       used<got || consumer_pos>INT64_MAX-used)return seen;
+    int64_t end=consumer_pos+used;
+    int64_t first=end-got;
+    return first<=seen && end>seen ? end : seen;
 }
 
 static void nova_raw_log_locked(NOVA_RAW_PREFETCH *raw)
@@ -695,6 +711,9 @@ static void *nova_raw_thread(void *opaque)
                 raw->write_off = 0;
             raw->used_bytes += got;
             raw->produced_bytes += got;
+            raw->startup_contiguous_bytes=nova_raw_unique_prefix_next(
+                raw->startup_contiguous_bytes,raw->consumer_pos,
+                raw->used_bytes,got);
             raw->eof = 0;
             raw->error = 0;
             __atomic_store_n(
@@ -707,7 +726,7 @@ static void *nova_raw_thread(void *opaque)
             int report_early=raw->early_percent_last_us==0 ||
                 now_us-raw->early_percent_last_us>=200000;
             if(report_early)raw->early_percent_last_us=now_us;
-            int64_t resident_early=raw->used_bytes;
+            int64_t resident_early=raw->startup_contiguous_bytes;
             int64_t resume_early=__atomic_load_n(
                 &raw->s->startup_resume_fixed_bytes,__ATOMIC_ACQUIRE);
             pthread_cond_broadcast(&raw->can_read);
@@ -1360,11 +1379,14 @@ DYNAMIC_POLICY = r'''
         int startup_known=__atomic_load_n(
             &s->startup_resume_fixed_bytes,__ATOMIC_ACQUIRE);
         if(startup_known>0){
-            int raw_now=0,cap_now=0;
-            nova_raw_stats(&ff_p->raw,&raw_now,&cap_now);
-            /* Publish actual live RAW bytes as soon as the first X exists.
-             * Packet+RAW statistics take over when queues are initialized. */
-            nova_startup_overlay_raw_percent(s->src.url,raw_now,startup_known);
+            int64_t unique_prefix=0;
+            pthread_mutex_lock(&ff_p->raw.mutex);
+            unique_prefix=ff_p->raw.startup_contiguous_bytes;
+            pthread_mutex_unlock(&ff_p->raw.mutex);
+            /* Publish previously acquired movie prefix as soon as X exists.
+             * Does not change playback's live buffer decision. */
+            nova_startup_overlay_raw_percent(s->src.url,
+                unique_prefix,startup_known);
         }
         serprintf(
             "NOVA_RAW_FIXED128_POLICY: mode=%s size=%llu duration_ms=%d x_bytes_per_sec=%llu requested_low=%llu requested_resume=%llu low=%d resume=%d capacity=%d packet_handoff=%d max_resident=%d clamped=%d\n",

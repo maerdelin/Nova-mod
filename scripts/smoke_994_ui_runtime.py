@@ -62,8 +62,13 @@ def check(apk, log, reports):
     if int(native_early.group(1))<=0 or int(native_early.group(2))<=0:
         raise RuntimeError("No actual positive RAW numerator with locked real-X denominator before probe")
     resident,resume,percentage=map(int,b.groups())
-    if percentage != min(100,max(0,(resident*100)//resume)):
-        raise RuntimeError("Displayed percent source is not actual resident/first-resume")
+    # Cumulative contiguous-movie UI count is distinct from live resident.
+    if not (0<=percentage<=100):
+        raise RuntimeError("Displayed percent outside integer 0..100")
+    if any(b<a for a,b in zip(percents,percents[1:])):
+        raise RuntimeError("1049 regression: startup percentage backtracked")
+    if "<1%" in live:
+        raise RuntimeError("1049 regression: forbidden fractional spinner")
     phase=re.search(r"NOVA_STARTUP_UI_PHASE_V1: generation=\d+ old=[12] new=3",live)
     hidden=re.search(r"NOVA_994_UI_HIDE: after-native-resume",live)
     frame=re.search(r"NOVA_STARTUP_TRACE first_frame_sink",live)

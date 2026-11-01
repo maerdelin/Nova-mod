@@ -22,8 +22,9 @@ class NativeStartupBufferPercentTests(unittest.TestCase):
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
-#define LOGI(...) ((void)0)
-#define LOGE(...) ((void)0)
+/* Type-check log-only variables in strict -Werror host regression. */
+#define LOGI(...) do { if(0) fprintf(stderr,__VA_ARGS__); } while(0)
+#define LOGE(...) do { if(0) fprintf(stderr,__VA_ARGS__); } while(0)
 typedef struct nova_session {
     uint64_t generation;
     volatile int startup_ui_state;
@@ -34,8 +35,13 @@ typedef struct nova_session {
     volatile int startup_authoritative_seen;
 } nova_session;
 static nova_session live = {.generation=42,.startup_ui_state=1};
+static nova_session iso_two = {.generation=43,.startup_ui_state=1};
+static nova_session iso_three = {.generation=44,.startup_ui_state=1};
 static nova_session *session_acquire(uint64_t generation) {
-    return generation == 42 ? &live : NULL;
+    if(generation==42)return &live;
+    if(generation==43)return &iso_two;
+    if(generation==44)return &iso_three;
+    return NULL;
 }
 static void session_release(nova_session *s) { (void)s; }
 '''
@@ -45,24 +51,48 @@ int main(void) {
     nova_transport_report_startup_raw(42, 0, threshold);
     nova_transport_report_startup_buffer(42, 0, threshold);
     assert(live.startup_buffer_percent == 0);
+    nova_transport_report_startup_raw(42, threshold/4, threshold);
     nova_transport_report_startup_buffer(42, threshold/4, threshold/2);
     assert(live.startup_resume_bytes == threshold);
     assert(live.startup_buffer_percent == 25);
+    nova_transport_report_startup_raw(42, threshold/2, threshold);
     nova_transport_report_startup_buffer(42, threshold/2, threshold);
     assert(live.startup_buffer_percent == 50);
+    nova_transport_report_startup_raw(42, threshold-1, threshold);
     nova_transport_report_startup_buffer(42, threshold-1, threshold);
     assert(live.startup_buffer_percent == 99);
+    nova_transport_report_startup_raw(42, threshold, threshold);
     nova_transport_report_startup_buffer(42, threshold, threshold);
     assert(live.startup_buffer_percent == 100);
     nova_transport_report_startup_buffer(42, threshold*2, threshold);
     assert(live.startup_buffer_percent == 100);
     nova_transport_report_startup_buffer(42, -123, threshold);
-    assert(live.startup_buffer_percent == 0);
+    assert(live.startup_buffer_percent == 100);
     nova_transport_report_startup_buffer(42, 1, 0);
-    assert(live.startup_buffer_percent == 0);
+    assert(live.startup_buffer_percent == 100);
     nova_transport_report_startup_buffer(11, threshold, threshold);
-    assert(live.startup_buffer_percent == 0);
-    puts("NOVA_994_NATIVE_BUFFER_PERCENT_V1=PASS");
+    assert(live.startup_buffer_percent == 100);
+    nova_transport_report_startup_raw(43, 65536, 30750054);
+    assert(iso_two.startup_buffer_percent == 0); /* <1% is 0%. */
+    nova_transport_report_startup_raw(43, 765436, 30750054);
+    assert(iso_two.startup_buffer_percent == 2);
+    nova_transport_report_startup_buffer(43, 575107, 30750054);
+    assert(iso_two.startup_buffer_percent == 2);
+    nova_transport_report_startup_raw(43, 6150108, 30750054);
+    assert(iso_two.startup_buffer_percent == 20);
+    nova_transport_report_startup_buffer(43, 800, 30750053);
+    assert(iso_two.startup_resume_bytes == 30750054);
+    assert(iso_two.startup_resident_bytes == 800);
+    assert(iso_two.startup_buffer_percent == 20);
+    nova_transport_report_startup_raw(44, 1240873, 35721822);
+    assert(iso_three.startup_buffer_percent == 3);
+    nova_transport_report_startup_buffer(44, 958928, 35721822);
+    nova_transport_report_startup_buffer(44, 481345, 35721822);
+    assert(iso_three.startup_buffer_percent == 3);
+    assert(iso_three.startup_resident_bytes == 481345);
+    nova_transport_report_startup_buffer(99, 35721822, 35721822);
+    assert(iso_three.startup_buffer_percent == 3);
+    puts("NOVA_1052_NATIVE_INTEGER_MONOTONE=PASS");
     return 0;
 }
 '''

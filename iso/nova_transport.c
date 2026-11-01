@@ -308,11 +308,10 @@ typedef struct nova_session {
     /* NOVA_STARTUP_UI_STATE_V1: 1=preparing 2=first-frame-held
      * 3=threshold-resumed 4=terminal. Read by the player UI only. */
     volatile int startup_ui_state;
-    /* Measured post-demux packet + RAW resident bytes divided by the actual
-     * first-resume threshold; 0..100, updated by the AVOS buffer controller.
-     * Not the received network byte counter (which may already be consumed). */
+    /* NOVA_1052_UI_ONLY: cumulative contiguous movie prefix / locked X.
+     * Never used for the actual decoder/rebuffer startup gate. */
     volatile int startup_buffer_percent;
-    /* NOVA_EARLY_PERCENT_V2: always the live, not cumulative, buffer. */
+    /* Raw memory residency and cumulative UI progress are independent. */
     volatile int64_t startup_resident_bytes;
     volatile int64_t startup_resume_bytes;
     volatile int startup_resume_mismatch_reported;
@@ -676,6 +675,12 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
         int page_bytes = s->iso_meta_degraded ? NOVA_ISO_WEAK_PAGE_BYTES
             : (s->iso_meta_window_bytes > 0 ? s->iso_meta_window_bytes
                                              : NOVA_ISO_META_PAGE_BYTES);
+        /* NOVA_1052_ISO_TAIL_ANCHOR_V1: UDF backup anchor fetch at EOF
+         * stalled 13+ seconds for a 512-KiB page in the failed ISO log.
+         * Tail metadata needs small exact reads; retain mid-disc cache. */
+        int tail_anchor = (s->upstream_size>0 &&
+            pos>=s->upstream_size-(2LL*1024*1024));
+        if(tail_anchor && page_bytes>64*1024)page_bytes=64*1024;
         /* 3/5/6/7 MiB are not powers of two. */
         int64_t aligned = (pos / (int64_t)page_bytes) * (int64_t)page_bytes;
         int hit = -1, first_free = -1, lru = -1;
@@ -706,7 +711,9 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
              * that libbluray may need later in the same title scan. */
             uint8_t *staging = malloc((size_t)page_bytes);
             if (!staging) return -1;
+            int64_t fetch_start_ms=nova_iso_uptime_ms();
             int64_t moved = avio_seek(s->upstream, aligned, SEEK_SET);
+            int64_t fetch_seek_ms=nova_iso_uptime_ms()-fetch_start_ms;
             if (moved != aligned) {
                 free(staging);
                 s->iso_meta_degraded = 1;
@@ -719,6 +726,10 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
             LOGI("NOVA_ISO_META_STAIR_V1: miss=%" PRIu64 " tier=%d offset=%" PRId64 " bytes=%d",
                  s->iso_meta_misses + 1, page_bytes, aligned, request);
             int got = read_exact(s->upstream, staging, request);
+            LOGI("NOVA_1052_ISO_META_FETCH_V1: offset=%" PRId64
+                 " bytes=%d got=%d tail=%d seekMs=%" PRId64
+                 " readMs=%" PRId64,aligned,request,got,tail_anchor,
+                 fetch_seek_ms,nova_iso_uptime_ms()-fetch_start_ms-fetch_seek_ms);
             if (got <= 0) {
                 free(staging);
                 s->iso_meta_degraded = 1;
@@ -740,7 +751,8 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
              * that this small window was insufficient for the local UDF scan.
              * Grow 256K -> 512K -> 1M -> 2M -> 3M -> 4M ... -> 8M.
          * Disjoint misses do not grow the window; the 8-MiB cap bounds memory. */
-            if (!s->iso_meta_degraded && s->iso_meta_window_bytes > 0 &&
+            if (!tail_anchor && !s->iso_meta_degraded &&
+                s->iso_meta_window_bytes > 0 &&
                 s->iso_meta_last_miss_end >= 0 &&
                 pos >= s->iso_meta_last_miss_end &&
                 pos - s->iso_meta_last_miss_end <= page_bytes &&
@@ -786,6 +798,14 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
     if(s->iso_capture_movie_lba && s->iso_first_movie_lba<0){
         s->iso_first_movie_lba=target;
         LOGI("NOVA_ISO_PARALLEL_V1: selected_movie_candidate_lba=%" PRId64,target);
+        /* NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: start only from the
+         * libbluray-discovered first movie LBA, parallel with bd_read.
+         * Validation still controls acceptance; failed TS proof stops it. */
+        if(s->multi_http_ready && !s->stopping){
+            int rc=nova_iso_start_pump(s,target);
+            LOGI("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: candidate=%" PRId64
+                 " started=%d",target,rc==0);
+        }
     }
     if (s->iso_meta_active && s->upstream_size > 0) {
         int blocks = nova_iso_meta_read(s, (uint8_t *)buf, target, bytes);
@@ -899,8 +919,15 @@ static int select_main_title(nova_session *s)
         LOGI("NOVA_ISO_PARALLEL_V1: validated=%d got=%d rewind=%" PRId64
              " physical=%" PRId64,m2ts||ts188,got,rewind,
              s->iso_first_movie_lba);
-        if((m2ts||ts188) && rewind==0 && s->iso_first_movie_lba>=0)
-            nova_iso_start_pump(s,s->iso_first_movie_lba);
+        if((m2ts||ts188) && rewind==0 && s->iso_first_movie_lba>=0){
+            if(!s->iso_pump_running)
+                nova_iso_start_pump(s,s->iso_first_movie_lba);
+            LOGI("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: verified=1 running=%d",
+                 s->iso_pump_running);
+        }else if(s->iso_pump_running){
+            nova_iso_stop_pump(s);
+            LOGI("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: verified=0 stopped=1");
+        }
     }
     s->output_size = bd_get_title_size(s->bd);
     BLURAY_TITLE_INFO *ti = bd_get_title_info(s->bd, (uint32_t)main_title, 0);
@@ -2514,6 +2541,22 @@ static int64_t nova_startup_fixed_denominator(nova_session *s,int64_t offered)
     return locked;
 }
 
+/* NOVA_1052_MONOTONE_INTEGER_V1: per-session 0..100 floor integer,
+ * with immutable first X and atomic maximum across concurrent publishers.
+ * This affects only presentation, never playback flow control. */
+static int nova_startup_unique_integer_percent(nova_session *s,int64_t count,int64_t denom)
+{
+    if(!s || denom<=0)return 0;
+    int value=count<=0?0:count>=denom?100:(int)((count*100)/denom);
+    if(value<0)value=0;
+    if(value>100)value=100;
+    int prior=__atomic_load_n(&s->startup_buffer_percent,__ATOMIC_ACQUIRE);
+    while(value>prior &&
+          !__atomic_compare_exchange_n(&s->startup_buffer_percent,
+              &prior,value,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)){}
+    return __atomic_load_n(&s->startup_buffer_percent,__ATOMIC_ACQUIRE);
+}
+
 /* First verified RAW bytes are published directly by the RAW producer
  * during FFmpeg probe, not waiting for parser stats or first frame.
  * The AVOS source replaces these provisional stats when ready. */
@@ -2525,15 +2568,15 @@ void nova_transport_report_startup_raw(uint64_t generation,
     nova_session *s=session_acquire(generation);
     if(!s)return;
     int phase=__atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE);
-    if(phase<3 &&
-       !__atomic_load_n(&s->startup_authoritative_seen,__ATOMIC_ACQUIRE)){
+    if(phase<3){
         if(resident<0)resident=0;
         int64_t locked=nova_startup_fixed_denominator(s,resume);
-        int p=resident>=locked?100:(int)((resident*100)/locked);
-        __atomic_store_n(&s->startup_resident_bytes,resident,__ATOMIC_RELEASE);
-        __atomic_store_n(&s->startup_buffer_percent,p,__ATOMIC_RELEASE);
+        int p=nova_startup_unique_integer_percent(s,resident,locked);
+        if(!__atomic_load_n(&s->startup_authoritative_seen,__ATOMIC_ACQUIRE))
+            __atomic_store_n(&s->startup_resident_bytes,resident,__ATOMIC_RELEASE);
         LOGI("NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=%" PRIu64
-             " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
+             " resident=%" PRId64 " resume=%" PRId64 " percent=%d"
+             " metric=unique_contiguous_prefix",
              generation,resident,locked,p);
     }
     session_release(s);
@@ -2550,13 +2593,10 @@ void nova_transport_report_startup_buffer(uint64_t generation,
     nova_session *s=session_acquire(generation);
     if(!s)return;
     int64_t locked=nova_startup_fixed_denominator(s,resume_bytes);
-    int percent=resident_bytes<=0?0:
-        resident_bytes>=locked?100:
-        (int)((resident_bytes*100)/locked);
-    if(percent<0)percent=0;
-    if(percent>100)percent=100;
+    /* AVOS reports live RAW+packet buffering for the actual resume gate.
+     * Do not overwrite UI cumulative unique-prefix progress. */
+    int percent=__atomic_load_n(&s->startup_buffer_percent,__ATOMIC_ACQUIRE);
     __atomic_store_n(&s->startup_resident_bytes,resident_bytes,__ATOMIC_RELEASE);
-    __atomic_store_n(&s->startup_buffer_percent,percent,__ATOMIC_RELEASE);
     __atomic_store_n(&s->startup_authoritative_seen,1,__ATOMIC_RELEASE);
     LOGI("NOVA_STARTUP_BUFFER_PERCENT_V1: generation=%" PRIu64
          " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
