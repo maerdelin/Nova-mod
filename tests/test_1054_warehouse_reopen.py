@@ -26,6 +26,9 @@ class WarehouseReopen1054(unittest.TestCase):
         structs = src[src.index("typedef struct nova_wh_page"):src.index("/* NOVA_1054_WAREHOUSE_REUSE_V1:")]
         block = src[src.index("static pthread_mutex_t g_warehouse_idle_lock"):src.index("static nova_shared_warehouse *nova_shared_warehouse_from_data")]
         self.assertIn("madvise", block)
+        self.assertIn("NOVA_1054_OS_ALLOC_FORENSICS", block)
+        self.assertIn("getrlimit(RLIMIT_AS", block)
+        self.assertIn("/proc/self/maps", block)
         self.assertIn("g_warehouse_idle=NULL;", block)
         self.assertIn("if(__atomic_sub_fetch(&w->refs,1u,__ATOMIC_ACQ_REL)!=0u)return;", block)
         ctest = r"""
@@ -39,6 +42,7 @@ class WarehouseReopen1054(unittest.TestCase):
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #define NOVA_WH_PAGES 64
 #define NOVA_WH_PAGE_BYTES (64u*1024u)

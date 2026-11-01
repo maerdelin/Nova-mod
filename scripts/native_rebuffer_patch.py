@@ -1023,6 +1023,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     __atomic_store_n(&raw->run, 1, __ATOMIC_RELEASE);
 
     int ret = AVERROR(ENOMEM);
+    const char *nova_1054_raw_stage="sync_init";
     int mutex_ready = 0, source_mutex_ready = 0;
     int can_read_ready = 0, can_write_ready = 0;
     int raw_mutex_rc=pthread_mutex_init(&raw->mutex, NULL);
@@ -1031,16 +1032,29 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         return AVERROR(raw_mutex_rc);
     }
     mutex_ready = 1;
-    if( pthread_mutex_init(&raw->source_mutex, NULL) )
+    int sync_rc=pthread_mutex_init(&raw->source_mutex, NULL);
+    if(sync_rc){
+        ret=AVERROR(sync_rc);
+        nova_1054_raw_stage="source_mutex_init";
         goto init_fail;
+    }
     source_mutex_ready = 1;
-    if( pthread_cond_init(&raw->can_read, NULL) )
+    sync_rc=pthread_cond_init(&raw->can_read, NULL);
+    if(sync_rc){
+        ret=AVERROR(sync_rc);
+        nova_1054_raw_stage="can_read_init";
         goto init_fail;
+    }
     can_read_ready = 1;
-    if( pthread_cond_init(&raw->can_write, NULL) )
+    sync_rc=pthread_cond_init(&raw->can_write, NULL);
+    if(sync_rc){
+        ret=AVERROR(sync_rc);
+        nova_1054_raw_stage="can_write_init";
         goto init_fail;
+    }
     can_write_ready = 1;
 
+    nova_1054_raw_stage="raw_ring_alloc";
     raw->ring = av_malloc(NOVA_RAW_FALLBACK_CAP_BYTES);
     if( !raw->ring ) {
         ret = AVERROR(ENOMEM);
@@ -1055,6 +1069,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         .callback = nova_raw_interrupt,
         .opaque = raw,
     };
+    nova_1054_raw_stage="source_open";
     ret = avio_open2(
         &raw->source, url, AVIO_FLAG_READ, &interrupt, &io_options );
     av_dict_free(&io_options);
@@ -1062,6 +1077,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         goto fail;
 
     raw->source_size = avio_size(raw->source);
+    nova_1054_raw_stage="source_seek_zero";
     int64_t origin = avio_seek(raw->source, 0, SEEK_SET);
     if( origin < 0 ) {
         ret = (int)origin;
@@ -1072,11 +1088,13 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
      * FFmpeg as soon as it is ready, while keeping other formats untouched. */
     int consumer_bytes = raw->mkv_single_get ?
         NOVA_MKV_STARTUP_READ_BYTES : NOVA_RAW_IO_BYTES;
+    nova_1054_raw_stage="consumer_buffer_alloc";
     unsigned char *buffer = av_malloc(consumer_bytes);
     if( !buffer ) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
+    nova_1054_raw_stage="consumer_avio_alloc";
     raw->consumer = avio_alloc_context(
         buffer, consumer_bytes, 0, raw,
         nova_raw_read, NULL, nova_raw_seek );
@@ -1128,6 +1146,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
      * Unknown X publishes no denominator; JNI keeps returning initial 0%. */
     if(locked_early>0)
         nova_startup_overlay_raw_percent(s->src.url,0,locked_early);
+    nova_1054_raw_stage="producer_pthread_create";
     ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);
     if( ret ) {
         serprintf("NOVA_1054_RAW_INIT_FAIL: stage=producer_thread rc=%d\n",ret);
@@ -1145,7 +1164,8 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     return 1;
 
 fail:
-    serprintf("NOVA_1054_RAW_INIT_FAIL: stage=raw_setup rc=%d errno=%d\n",ret,errno);
+    serprintf("NOVA_1054_RAW_INIT_FAIL: stage=%s rc=%d errno=%d\n",
+              nova_1054_raw_stage,ret,errno);
     __atomic_store_n(&raw->run, 0, __ATOMIC_RELEASE);
     if( raw->thread_started ) {
         pthread_mutex_lock(&raw->mutex);
@@ -1169,7 +1189,8 @@ fail:
     __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
 init_fail:
     if(!can_write_ready || !can_read_ready || !source_mutex_ready)
-        serprintf("NOVA_1054_RAW_INIT_FAIL: stage=sync_init rc=%d\n",ret);
+        serprintf("NOVA_1054_RAW_INIT_FAIL: stage=%s rc=%d\n",
+                  nova_1054_raw_stage,ret);
     if( can_write_ready ) pthread_cond_destroy(&raw->can_write);
     if( can_read_ready ) pthread_cond_destroy(&raw->can_read);
     if( source_mutex_ready ) pthread_mutex_destroy(&raw->source_mutex);
@@ -1734,9 +1755,11 @@ def patch_stream_parser_ffmpeg(path: Path) -> None:
 			serprintf("NOVA_1054_FF_INPUT_FAIL: stage=raw_open rc=%d\\n",raw_result);
 			return raw_result;
 		}
-		if (raw_result > 0)
-			return avformat_open_input(&priv->fmt, url, NULL, options);
-		return avformat_open_input(&priv->fmt, url, NULL, options);
+		int ff_rc=avformat_open_input(&priv->fmt, url, NULL, options);
+		if(ff_rc<0)
+			serprintf("NOVA_1054_FF_INPUT_FAIL: stage=avformat_open_input raw=%d rc=%d\\n",
+					  raw_result,ff_rc);
+		return ff_rc;
 	}
 	int fd;
 	int64_t offset, length;

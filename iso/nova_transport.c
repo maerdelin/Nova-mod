@@ -8,6 +8,7 @@
 #include <curl/curl.h>
 #include <stdint.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -152,6 +153,52 @@ typedef struct nova_shared_warehouse {
  * never share the warehouse. */
 static pthread_mutex_t g_warehouse_idle_lock=PTHREAD_MUTEX_INITIALIZER;
 static nova_shared_warehouse *g_warehouse_idle=NULL;
+/* NOVA_1054_OS_ALLOC_FORENSICS_V1: only invoked after allocation failure.
+ * Read Linux VM/rlimit state to distinguish per-process VA fragmentation
+ * from overall device physical-memory pressure. Never log paths or URLs. */
+static void nova_1054_pool_failure_snapshot(const char *stage,size_t requested,int failure_errno)
+{
+    struct rlimit limit_as={0},limit_data={0};
+    int as_rc=getrlimit(RLIMIT_AS,&limit_as);
+    int data_rc=getrlimit(RLIMIT_DATA,&limit_data);
+    unsigned long long vm=0,peak=0,rss=0,data=0,swap=0,threads=0;
+    char line[512];
+    FILE *p=fopen("/proc/self/status","r");
+    if(p){
+        while(fgets(line,sizeof(line),p)){
+            if(!strncmp(line,"VmSize:",7))sscanf(line+7,"%llu",&vm);
+            else if(!strncmp(line,"VmPeak:",7))sscanf(line+7,"%llu",&peak);
+            else if(!strncmp(line,"VmRSS:",6))sscanf(line+6,"%llu",&rss);
+            else if(!strncmp(line,"VmData:",7))sscanf(line+7,"%llu",&data);
+            else if(!strncmp(line,"VmSwap:",7))sscanf(line+7,"%llu",&swap);
+            else if(!strncmp(line,"Threads:",8))sscanf(line+8,"%llu",&threads);
+        }
+        fclose(p);
+    }
+    unsigned maps_count=0;
+    unsigned long long last_end=0,max_gap=0;
+    p=fopen("/proc/self/maps","r");
+    if(p){
+        while(fgets(line,sizeof(line),p)){
+            unsigned long long begin=0,end=0;
+            if(sscanf(line,"%llx-%llx",&begin,&end)!=2)continue;
+            if(last_end && begin>last_end && begin-last_end>max_gap)
+                max_gap=begin-last_end;
+            if(end>last_end)last_end=end;
+            maps_count++;
+        }
+        fclose(p);
+    }
+    LOGE("NOVA_1054_OS_ALLOC_FORENSICS stage=%s requestB=%zu errno=%d "
+         "pointerBits=%u VmPeakKB=%llu VmSizeKB=%llu VmRSSKB=%llu "
+         "VmDataKB=%llu VmSwapKB=%llu threads=%llu "
+         "rlimitAS=%llu rlimitData=%llu maps=%u largestVmaGapMiB=%llu",
+         stage,requested,failure_errno,(unsigned)(sizeof(void *)*8),
+         peak,vm,rss,data,swap,threads,
+         as_rc==0?(unsigned long long)limit_as.rlim_cur:0ull,
+         data_rc==0?(unsigned long long)limit_data.rlim_cur:0ull,
+         maps_count,max_gap/(1024ull*1024ull));
+}
 
 static void nova_shared_warehouse_reset(nova_shared_warehouse *w)
 {
@@ -196,13 +243,16 @@ static nova_shared_warehouse *nova_shared_warehouse_new(void)
     }
     w=(nova_shared_warehouse *)malloc(sizeof(*w));
     if(!w){
+        int saved_errno=errno;
         LOGE("NOVA_1054_WAREHOUSE_ALLOC_FAIL bytes=%zu errno=%d",
-             sizeof(nova_shared_warehouse),errno);
+             sizeof(nova_shared_warehouse),saved_errno);
+        nova_1054_pool_failure_snapshot("malloc128",sizeof(*w),saved_errno);
         return NULL;
     }
     int rc=pthread_mutex_init(&w->lock,NULL);
     if(rc){
         LOGE("NOVA_1054_WAREHOUSE_MUTEX_FAIL rc=%d",rc);
+        nova_1054_pool_failure_snapshot("warehouse_mutex_init",sizeof(*w),rc);
         free(w);
         return NULL;
     }

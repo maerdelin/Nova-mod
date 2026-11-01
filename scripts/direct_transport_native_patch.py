@@ -49,12 +49,50 @@ static int64_t nova_direct_seek(void *opaque, int64_t off, int whence)
     return raw->direct_seek(raw->transport_generation, off, whence);
 }
 
-/* NOVA_1054_DIRECT_INIT_FAIL_V1: a failed init must preserve its exact stage.
- * The historical FFmpeg "cannot open file" message discards the error. */
+/* NOVA_1054_DIRECT_INIT_FAIL_V1: failure-only Linux syscall evidence:
+ * actual FD count, virtual address space, rlimits, and original errno.
+ * No media URL, filename, WebDAV token or playback payload is recorded. */
 static int nova_direct_init_fail(NOVA_RAW_PREFETCH *raw, const char *stage, int ret)
 {
+    int saved_errno=errno;
+    struct rlimit limit_as={0},limit_data={0},limit_fd={0};
+    int as_rc=getrlimit(RLIMIT_AS,&limit_as);
+    int data_rc=getrlimit(RLIMIT_DATA,&limit_data);
+    int fd_rc=getrlimit(RLIMIT_NOFILE,&limit_fd);
+    unsigned long long vm=0,peak=0,rss=0,data=0,swap=0,threads=0;
+    char line[512];
+    FILE *status=fopen("/proc/self/status","r");
+    if(status){
+        while(fgets(line,sizeof(line),status)){
+            if(!strncmp(line,"VmSize:",7))sscanf(line+7,"%llu",&vm);
+            else if(!strncmp(line,"VmPeak:",7))sscanf(line+7,"%llu",&peak);
+            else if(!strncmp(line,"VmRSS:",6))sscanf(line+6,"%llu",&rss);
+            else if(!strncmp(line,"VmData:",7))sscanf(line+7,"%llu",&data);
+            else if(!strncmp(line,"VmSwap:",7))sscanf(line+7,"%llu",&swap);
+            else if(!strncmp(line,"Threads:",8))sscanf(line+8,"%llu",&threads);
+        }
+        fclose(status);
+    }
+    int fds=0;
+    DIR *folder=opendir("/proc/self/fd");
+    if(folder){
+        struct dirent *ent;
+        while((ent=readdir(folder)))if(ent->d_name[0]!='.')fds++;
+        closedir(folder);
+        if(fds>0)fds--; /* exclude the observation FD itself */
+    }
     serprintf("NOVA_1054_DIRECT_INIT_FAIL: generation=%llu stage=%s rc=%d errno=%d\n",
-              (unsigned long long)raw->transport_generation,stage,ret,errno);
+              (unsigned long long)raw->transport_generation,stage,ret,saved_errno);
+    serprintf("NOVA_1054_DIRECT_OS_FORENSICS generation=%llu stage=%s "
+              "ptrBits=%u VmPeakKB=%llu VmSizeKB=%llu VmRSSKB=%llu "
+              "VmDataKB=%llu VmSwapKB=%llu threads=%llu fdCount=%d "
+              "rlimitAS=%llu rlimitData=%llu rlimitFD=%llu\n",
+              (unsigned long long)raw->transport_generation,stage,
+              (unsigned)(sizeof(void *)*8),peak,vm,rss,data,swap,threads,fds,
+              as_rc==0?(unsigned long long)limit_as.rlim_cur:0ull,
+              data_rc==0?(unsigned long long)limit_data.rlim_cur:0ull,
+              fd_rc==0?(unsigned long long)limit_fd.rlim_cur:0ull);
+    errno=saved_errno;
     return ret;
 }
 
@@ -65,8 +103,13 @@ static int nova_direct_source_open(NOVA_RAW_PREFETCH *raw, const char *url)
         return nova_direct_init_fail(raw,"generation_parse",AVERROR(EINVAL));
 
     raw->transport_handle = dlopen("libnova_transport.so", RTLD_NOW | RTLD_LOCAL);
-    if (!raw->transport_handle)
+    if (!raw->transport_handle) {
+        const char *loader_error=dlerror();
+        serprintf("NOVA_1054_NATIVE_DLERROR generation=%llu error=%.200s\n",
+                  (unsigned long long)raw->transport_generation,
+                  loader_error?loader_error:"not-reported");
         return nova_direct_init_fail(raw,"transport_dlopen",AVERROR(ENOENT));
+    }
     /* Set ownership IMMEDIATELY: the v1053 successful-only ownership marker
      * leaked dlopen references and Shared42 on partially failed opens. */
     raw->direct_transport = 1;
@@ -275,7 +318,7 @@ def apply(root: Path, report: Path|None=None):
 
     if "#include <dlfcn.h>" not in text:
         text = once(text, "#include <sys/resource.h>\n",
-                    "#include <sys/resource.h>\n#include <dlfcn.h>\n",
+                    "#include <sys/resource.h>\n#include <dlfcn.h>\n#include <dirent.h>\n",
                     "dlfcn include")
 
     text = once(
