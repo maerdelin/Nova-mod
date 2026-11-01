@@ -278,7 +278,7 @@ def patch(root: Path):
     for match in reversed(matches):
         operands=match.group(3).strip()
         # apktool may normalize invoke-virtual to /range {vN .. vN+1}.
-        found=re.findall(r"v\d+",operands)
+        found=re.findall(r"[vp]\d+",operands)
         if len(found)!=2:
             raise RuntimeError("994 early UI unexpected View.setVisibility args: "+operands)
         view,vis=found

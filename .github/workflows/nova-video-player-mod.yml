@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: nova-video-player-mod-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' }}
 
 jobs:
   build:
