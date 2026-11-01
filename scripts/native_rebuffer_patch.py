@@ -1025,8 +1025,11 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     int ret = AVERROR(ENOMEM);
     int mutex_ready = 0, source_mutex_ready = 0;
     int can_read_ready = 0, can_write_ready = 0;
-    if( pthread_mutex_init(&raw->mutex, NULL) )
-        return AVERROR(ENOMEM);
+    int raw_mutex_rc=pthread_mutex_init(&raw->mutex, NULL);
+    if(raw_mutex_rc){
+        serprintf("NOVA_1054_RAW_INIT_FAIL: stage=mutex rc=%d\n",raw_mutex_rc);
+        return AVERROR(raw_mutex_rc);
+    }
     mutex_ready = 1;
     if( pthread_mutex_init(&raw->source_mutex, NULL) )
         goto init_fail;
@@ -1127,6 +1130,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
         nova_startup_overlay_raw_percent(s->src.url,0,locked_early);
     ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);
     if( ret ) {
+        serprintf("NOVA_1054_RAW_INIT_FAIL: stage=producer_thread rc=%d\n",ret);
         ret = AVERROR(ret);
         goto fail;
     }
@@ -1141,6 +1145,7 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     return 1;
 
 fail:
+    serprintf("NOVA_1054_RAW_INIT_FAIL: stage=raw_setup rc=%d errno=%d\n",ret,errno);
     __atomic_store_n(&raw->run, 0, __ATOMIC_RELEASE);
     if( raw->thread_started ) {
         pthread_mutex_lock(&raw->mutex);
@@ -1163,6 +1168,8 @@ fail:
     __atomic_store_n(&s->raw_prefetch_enabled, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
 init_fail:
+    if(!can_write_ready || !can_read_ready || !source_mutex_ready)
+        serprintf("NOVA_1054_RAW_INIT_FAIL: stage=sync_init rc=%d\n",ret);
     if( can_write_ready ) pthread_cond_destroy(&raw->can_write);
     if( can_read_ready ) pthread_cond_destroy(&raw->can_read);
     if( source_mutex_ready ) pthread_mutex_destroy(&raw->source_mutex);
@@ -1723,8 +1730,10 @@ def patch_stream_parser_ffmpeg(path: Path) -> None:
 		if (priv->s)
 			raw_result = nova_raw_open(
 				&priv->raw, priv->s, priv->fmt, url, options);
-		if (raw_result < 0)
+		if (raw_result < 0) {
+			serprintf("NOVA_1054_FF_INPUT_FAIL: stage=raw_open rc=%d\n",raw_result);
 			return raw_result;
+		}
 		if (raw_result > 0)
 			return avformat_open_input(&priv->fmt, url, NULL, options);
 		return avformat_open_input(&priv->fmt, url, NULL, options);
