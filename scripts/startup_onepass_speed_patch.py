@@ -25,17 +25,27 @@ def apply(root):
         "    unsigned startup_reloc_pending; /* under raw->mutex */\n"
         "    int (*startup_probe_hint)(uint64_t,int);\n",
         "RAW startup fields")
-    s = once(s,
-        '    if (!raw->direct_read || !raw->direct_seek ||\n'
-        '        !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)\n'
-        '        return AVERROR(ENOSYS);\n',
-        '    if (!raw->direct_read || !raw->direct_seek ||\n'
-        '        !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)\n'
-        '        return AVERROR(ENOSYS);\n'
-        '    raw->startup_probe_hint=(int (*)(uint64_t,int))dlsym(\n'
-        '        raw->transport_handle,"nova_transport_startup_probe_hint");\n'
-        '    if(!raw->startup_probe_hint)return AVERROR(ENOSYS);\n',
-        "direct transport hint ABI")
+    # 1054 enriches the mandatory Direct-source ABI failure with an exact
+    # stage code; preserve that diagnostic. The legacy fixture and 1053
+    # still use AVERROR(ENOSYS), so both remain supported by this patch.
+    abi_anchor=(
+        '    if (!raw->direct_read || !raw->direct_seek ||\\n'
+        '        !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)\\n'
+        '        return AVERROR(ENOSYS);\\n'
+    )
+    have_1054='NOVA_1054_DIRECT_INIT_FAIL_V1' in s
+    if have_1054:
+        abi_anchor=abi_anchor.replace(
+            'return AVERROR(ENOSYS);',
+            'return nova_direct_init_fail(raw,"transport_symbols",AVERROR(ENOSYS));')
+    extra=(
+        '    raw->startup_probe_hint=(int (*)(uint64_t,int))dlsym(\\n'
+        '        raw->transport_handle,"nova_transport_startup_probe_hint");\\n'
+        + ('    if(!raw->startup_probe_hint)return nova_direct_init_fail(raw,"startup_probe_hint",AVERROR(ENOSYS));\\n'
+            if have_1054 else
+           '    if(!raw->startup_probe_hint)return AVERROR(ENOSYS);\\n')
+    )
+    s = once(s,abi_anchor,abi_anchor+extra,"direct transport hint ABI")
     s = once(s,
         "    ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);\n",
         "    /* NOVA_STARTUP_FOURFIX_V1: ISO also uses the same AVIO source mutex.\n"
