@@ -39,7 +39,7 @@ def check(apk, log, reports):
     # Signed device playback must prove the first real RAW bytes were
     # published before FFmpeg completed probing; no synthetic counters.
     native_early=re.search(
-        r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\\d+ resident=(\\d+) resume=(\\d+) percent=(\\d+)",live)
+        r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live)
     probe=re.search(r"NOVA_STARTUP_TRACE probe_done",live)
     if not native_early or not probe or not native_early.start()<probe.start():
         raise RuntimeError("Early RAW resident percentage not published before FFmpeg probe_done")
