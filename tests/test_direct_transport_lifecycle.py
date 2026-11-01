@@ -76,6 +76,7 @@ typedef struct nova_session {
     char *upstream_headers;
     void *warehouse;
     uint8_t *iso_startup_replay;
+    uint8_t *mkv_rewind_data; /* production session_free owns this too */
     volatile int iso_pump_stop;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
 } nova_session;
