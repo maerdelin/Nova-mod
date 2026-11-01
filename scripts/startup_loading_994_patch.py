@@ -21,6 +21,7 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
 .field private mView:Landroid/view/View;
 .field private mPercent:Landroid/widget/TextView;
 .field private mRunning:Z
+.field private mPrepared:Z
 
 .method private constructor <init>(Landroid/view/View;)V
     .locals 2
@@ -66,6 +67,27 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     return-void
 .end method
 
+.method public static armEarly(Landroid/view/View;I)V
+    .locals 3
+    if-nez p0, :early_done
+    if-nez p1, :early_done
+    sget-object v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->sCurrent:Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
+    if-eqz v0, :early_new
+    iget-object v1, v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mView:Landroid/view/View;
+    if-eq v1, p0, :early_done
+    invoke-static {}, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->reset()V
+    :early_new
+    new-instance v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
+    invoke-direct {v0, p0}, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;-><init>(Landroid/view/View;)V
+    sput-object v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->sCurrent:Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
+    invoke-virtual {p0, v0}, Landroid/view/View;->post(Ljava/lang/Runnable;)Z
+    const-string v1, "NOVA_EARLY_UI_V2"
+    const-string v2, "spinner-visible-start"
+    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    :early_done
+    return-void
+.end method
+
 .method public static onPrepared(Landroid/view/View;)Z
     .locals 2
     if-eqz p0, :ordinary
@@ -74,6 +96,14 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     if-lez v0, :ordinary
     const/4 v1, 0x3
     if-ge v0, v1, :ordinary
+    sget-object v1, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->sCurrent:Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
+    if-eqz v1, :fresh_prepared
+    iget-object v0, v1, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mView:Landroid/view/View;
+    if-ne v0, p0, :fresh_prepared
+    const/4 v0, 0x1
+    iput-boolean v0, v1, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mPrepared:Z
+    return v0
+    :fresh_prepared
     invoke-static {}, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->reset()V
     new-instance v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
     invoke-direct {v0, p0}, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;-><init>(Landroid/view/View;)V
@@ -117,13 +147,25 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     if-ne p0, v0, :done
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeStartupState()I
     move-result v0
-    if-eqz v0, :finish
+    if-eqz v0, :reschedule
     const/4 v1, 0x3
     if-ge v0, v1, :finish
     iget-object v2, p0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mPercent:Landroid/widget/TextView;
     if-eqz v2, :reschedule
     invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeStartupPercent()I
     move-result v3
+    if-nez v3, :append_percent
+    invoke-static {}, Lcom/archos/mediacenter/video/player/DirectTransportProxy;->nativeStartupResidentBytes()J
+    move-result-wide v0
+    const-wide/16 v3, 0x0
+    cmp-long v3, v0, v3
+    if-lez v3, :append_percent
+    const-string v3, "<1%"
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+    const-string v0, "NOVA_994_UI_TICK"
+    invoke-static {v0, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    goto :reschedule
+    :append_percent
     new-instance v4, Ljava/lang/StringBuilder;
     invoke-direct {v4}, Ljava/lang/StringBuilder;-><init>()V
     invoke-virtual {v4, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
@@ -216,6 +258,36 @@ def patch(root: Path):
     src=src[:p]+part+src[tail:]
     player.write_text(src)
 
+    # Arm the same overlay at the actual View.VISIBLE operation instead of
+    # waiting for postVideoInfoAndPrepared(). No original visibility call
+    # is removed, and normal non-NOVA spinner remains owned by Android.
+    handler_candidates=[]
+    for hp in root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity$*.smali"):
+        hsrc=hp.read_text()
+        if "NovaLoadingTrace;->visibility(I)V" in hsrc:
+            handler_candidates.append((hp,hsrc))
+    if len(handler_candidates)!=1:
+        raise RuntimeError("994 early UI handler marker count="+str(len(handler_candidates)))
+    hp,hsrc=handler_candidates[0]
+    pattern=re.compile(
+        r"(    invoke-static(?:/range)? \{[^\n]+\}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->visibility\(I\)V\n)"
+        r"(    invoke-virtual(?:/range)? \{(v\d+), (v\d+)\}, Landroid/view/View;->setVisibility\(I\)V)")
+    matches=list(pattern.finditer(hsrc))
+    if not matches:
+        raise RuntimeError("994 early UI missing visibility/smali register pair")
+    for match in reversed(matches):
+        view,vis=match.group(3),match.group(4)
+        # Only inject for low v-register operands; /range could be used
+        # by the original call, but this helper has two direct args.
+        vi,vis_i=int(view[1:]),int(vis[1:])
+        invoke=("invoke-static {"+view+", "+vis+"}, " if vi<16 and vis_i<16
+                else "invoke-static/range {"+view+" .. "+vis+"}, ")
+        if vi>=16 or vis_i>=16:
+            if vis_i!=vi+1:raise RuntimeError("994 early UI non-adjacent high registers")
+        inserted=match.group(1)+"    "+invoke+NAME+"->armEarly(Landroid/view/View;I)V\n"+match.group(2)
+        hsrc=hsrc[:match.start()]+inserted+hsrc[match.end():]
+    hp.write_text(hsrc)
+
     proxy=one(root.glob("smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali"),"proxy")
     txt=proxy.read_text()
     anchor='.method private constructor <init>()V'
@@ -224,6 +296,8 @@ def patch(root: Path):
 .method public static native nativeStartupState()I
 .end method
 .method public static native nativeStartupPercent()I
+.end method
+.method public static native nativeStartupResidentBytes()J
 .end method
 
 '''+anchor,1)
