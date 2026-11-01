@@ -61,7 +61,7 @@ class IsoTrackLanguageTests(unittest.TestCase):
     def test_run704_seek_buffer_policy_preserved(self):
         self.assertIn("NOVA_ISO_INDEX_MAP_V3", (ROOT/"scripts/iso_index_seek_patch.py").read_text())
         self.assertIn("NOVA_MKV_RANGE_RETRY_V2",T)
-        self.assertIn("NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)",T)
+        self.assertIn("NOVA_ISO_META_PAGE_BYTES (8 * 1024 * 1024)",T)
         self.assertIn("NOVA_ISO_TRACK_APPLIED_V1",P)
         self.assertIn("NOVA_MKV_BBC_CUE_SEEK_V1",P)
         self.assertIn("NOVA_ISO_INDEX_SEEK_V3",P)
