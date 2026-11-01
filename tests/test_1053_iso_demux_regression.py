@@ -61,6 +61,8 @@ class Iso1053(unittest.TestCase):
         self.assertIn('FFMPEG: read failure: Out of memory',SMOKE)
         self.assertIn("Prepare real Blu-ray ISO media",CI)
         self.assertIn("fix/1053-iso-validated-pump-20261101",CI)
+        self.assertNotIn('if [[ "$GITHUB_REF_NAME" == "fix/1053-iso-validated-pump-20261101" ]]',CI)
+        self.assertIn('[ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] ||',CI)
 
 if __name__=="__main__":
     unittest.main()
