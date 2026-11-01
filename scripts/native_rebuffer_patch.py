@@ -1731,7 +1731,7 @@ def patch_stream_parser_ffmpeg(path: Path) -> None:
 			raw_result = nova_raw_open(
 				&priv->raw, priv->s, priv->fmt, url, options);
 		if (raw_result < 0) {
-			serprintf("NOVA_1054_FF_INPUT_FAIL: stage=raw_open rc=%d\n",raw_result);
+			serprintf("NOVA_1054_FF_INPUT_FAIL: stage=raw_open rc=%d\\n",raw_result);
 			return raw_result;
 		}
 		if (raw_result > 0)
