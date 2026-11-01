@@ -798,14 +798,11 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
     if(s->iso_capture_movie_lba && s->iso_first_movie_lba<0){
         s->iso_first_movie_lba=target;
         LOGI("NOVA_ISO_PARALLEL_V1: selected_movie_candidate_lba=%" PRId64,target);
-        /* NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: start only from the
-         * libbluray-discovered first movie LBA, parallel with bd_read.
-         * Validation still controls acceptance; failed TS proof stops it. */
-        if(s->multi_http_ready && !s->stopping){
-            int rc=nova_iso_start_pump(s,target);
-            LOGI("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: candidate=%" PRId64
-                 " started=%d",target,rc==0);
-        }
+        /* NOVA_1053_ISO_PUMP_GUARD_V1: DO NOT start CURLM here.
+         * This is a libbluray block callback BEFORE the TS packet check
+         * and bd_seek(0) have succeeded. #1052 started a concurrent owner
+         * inside this callback and its real 4K ISO later demuxed ENOMEM.
+         * Restore #1049's strictly verified-then-start ordering. */
     }
     if (s->iso_meta_active && s->upstream_size > 0) {
         int blocks = nova_iso_meta_read(s, (uint8_t *)buf, target, bytes);
@@ -919,14 +916,14 @@ static int select_main_title(nova_session *s)
         LOGI("NOVA_ISO_PARALLEL_V1: validated=%d got=%d rewind=%" PRId64
              " physical=%" PRId64,m2ts||ts188,got,rewind,
              s->iso_first_movie_lba);
+        /* NOVA_1053_ISO_PUMP_GUARD_V1: same behavior as known-good
+         * #1049: the CURLM owner may start only after both the TS signature
+         * and the libbluray rewind are verified. No pre-validation network
+         * ownership, no unproven speculative page handoff. */
         if((m2ts||ts188) && rewind==0 && s->iso_first_movie_lba>=0){
-            if(!s->iso_pump_running)
-                nova_iso_start_pump(s,s->iso_first_movie_lba);
-            LOGI("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: verified=1 running=%d",
-                 s->iso_pump_running);
-        }else if(s->iso_pump_running){
-            nova_iso_stop_pump(s);
-            LOGI("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1: verified=0 stopped=1");
+            LOGI("NOVA_1053_ISO_PUMP_GUARD_V1: validated=1 rewind=0 start=%" PRId64,
+                 s->iso_first_movie_lba);
+            nova_iso_start_pump(s,s->iso_first_movie_lba);
         }
     }
     s->output_size = bd_get_title_size(s->bd);

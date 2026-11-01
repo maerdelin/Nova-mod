@@ -65,6 +65,11 @@ REBUFFER_THREAD = r'''
 // *****************************************************************************
 static int _nova_rebuffer_eof( STREAM *s )
 {
+    /* NOVA_1053_DEMUX_ERROR_NOT_EOF_V1: parser_input_error() marks both
+     * audio/video parse_end even when av_read_frame returned ENOMEM and
+     * the source has NOT reached EOF. It also sets parser_error=1.
+     * That condition is a FILE ERROR, never a successful end-of-stream. */
+    if(s->parser_error)return 0;
     int audio_done = !s->audio->valid || s->audio_parse_end;
     int video_done = !s->video->valid || s->video_parse_end;
     return audio_done && video_done;
@@ -317,6 +322,15 @@ static void *_rebuffer_thread( void *data )
                     int parsed_eof = _nova_rebuffer_eof( s );
                     int source_eof = __atomic_load_n(
                         &s->raw_prefetch_eof, __ATOMIC_ACQUIRE );
+                    /* An unrecoverable FFmpeg demux error stops packet
+                     * production. Alert playback before the hold can
+                     * mistake synthetic parse_end for real physical EOF.
+                     * Do not change network or hardware decode policies. */
+                    if(s->parser_error && s->video_error==VE_NO_ERROR){
+                        serprintf("NOVA_1053_DEMUX_ERROR_NOT_EOF_V1: parser_error=1 source_eof=%d; raise VE_FILE_ERROR\n",
+                                  source_eof);
+                        stream_set_error(s,VE_FILE_ERROR);
+                    }
                     int active = __atomic_load_n(
                         &s->rebuffering, __ATOMIC_ACQUIRE );
 

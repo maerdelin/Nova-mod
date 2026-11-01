@@ -115,9 +115,10 @@ def main():
                 ),
                 100,"Blu-ray ISO real first frame")
         finally:
-            # The first frame may precede the 500ms UI poll and hide.
-            # Observe actual resumed playback before collecting telemetry.
-            time.sleep(0.85)
+            # 1053: The #1052 ISO failed ~1.4 s AFTER first-frame sink
+            # while its original ISO smoke declared PASS too early.
+            # Observe at least 4 seconds after the first-frame event.
+            time.sleep(4.0)
             full=logs()
             (args.reports/"994-iso-logcat.txt").write_text(full)
         live=full[full.rfind(marker):]
@@ -139,6 +140,22 @@ def main():
             raise RuntimeError("NOVA 994 ISO crashed during real source open")
         if found["first_frame"]<0:
             raise RuntimeError("no ISO first frame from signed APK")
+        # 1053: the ISO startup CURLM owner must start AFTER the real
+        # bd_read TS signature and bd_seek(0) verification, not inside the
+        # libbluray read_blocks callback (the #1052 regression).
+        verified=index("NOVA_ISO_PARALLEL_V1: validated=1")
+        guard=index("NOVA_1053_ISO_PUMP_GUARD_V1: validated=1 rewind=0")
+        if verified<0 or guard<=verified or found["pump_begin"]<=verified:
+            raise RuntimeError("1053: ISO pump ran before verified TS+rewind")
+        if "NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1" in live:
+            raise RuntimeError("1053: reverted speculative ISO pump still present")
+        if ("NOVA_AVDIAG_DEMUX_ERROR: rc=-12" in live or
+            "FFMPEG: read failure: Out of memory" in live):
+            raise RuntimeError("1053: ISO FFmpeg ENOMEM regression recurred")
+        if ("NOVA_REBUFFER_EXIT:" in live and
+            "reason=eof" in live and "NOVA_PLAYBACK_COMPLETE:" in live and
+            "NOVA_AVDIAG_DEMUX_ERROR:" in live):
+            raise RuntimeError("1053: demux error misreported as normal EOF")
         if found["meta_done"]<0 or found["meta_done"]>found["first_frame"]:
             raise RuntimeError("ISO metadata scan completion was not recorded before first frame")
         if found["w2_start"]<0 or found["w2_start"]>found["first_frame"]:
@@ -172,6 +189,8 @@ def main():
           "real_first_frame":True,
           "w2_during_metadata":True,
           "curl_multi_perform_before_meta_end": True,
+          "pump_after_ts_and_rewind_verified": True,
+          "no_demux_enomem_during_4s_observation": True,
           "two_lanes":True,
           "startup_prefix_replay":True,
           "owner_handoff":True,
