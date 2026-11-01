@@ -262,10 +262,9 @@ def apply(root: Path):
         "\t\t\tff_p->fmt->probesize=10000000;\n"
         "\t\t}\n"
         "\t\tif(nova_staged_mkv && ff_p->fmt && ff_p->fmt->pb){\n"
-        "\t\t\tserprintf(\"NOVA_MKV_HEADER_SCAN_V1: actual=%s ioPos=%lld dataOffset=%lld phase=avformat_open_input\\n\",\n"
+        "\t\t\tserprintf(\"NOVA_MKV_HEADER_SCAN_V1: actual=%s ioPos=%lld phase=avformat_open_input\\n\",\n"
         "\t\t\t          ff_p->fmt->iformat ? ff_p->fmt->iformat->name : \"unknown\",\n"
-        "\t\t\t          (long long)avio_tell(ff_p->fmt->pb),\n"
-        "\t\t\t          (long long)ff_p->fmt->data_offset);\n"
+        "\t\t\t          (long long)avio_tell(ff_p->fmt->pb));\n"
         "\t\t}\n"
         '\t\t/* ONE find_stream_info call: its FFStreamInfo state is freed\n'
         '\t\t * after return. Incomplete headers keep original 10 MB path. */\n'
