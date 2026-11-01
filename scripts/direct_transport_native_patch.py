@@ -49,15 +49,27 @@ static int64_t nova_direct_seek(void *opaque, int64_t off, int whence)
     return raw->direct_seek(raw->transport_generation, off, whence);
 }
 
+/* NOVA_1054_DIRECT_INIT_FAIL_V1: a failed init must preserve its exact stage.
+ * The historical FFmpeg "cannot open file" message discards the error. */
+static int nova_direct_init_fail(NOVA_RAW_PREFETCH *raw, const char *stage, int ret)
+{
+    serprintf("NOVA_1054_DIRECT_INIT_FAIL: generation=%llu stage=%s rc=%d errno=%d\n",
+              (unsigned long long)raw->transport_generation,stage,ret,errno);
+    return ret;
+}
+
 static int nova_direct_source_open(NOVA_RAW_PREFETCH *raw, const char *url)
 {
     raw->transport_generation = nova_direct_generation(url);
     if (!raw->transport_generation)
-        return AVERROR(EINVAL);
+        return nova_direct_init_fail(raw,"generation_parse",AVERROR(EINVAL));
 
     raw->transport_handle = dlopen("libnova_transport.so", RTLD_NOW | RTLD_LOCAL);
     if (!raw->transport_handle)
-        return AVERROR(ENOENT);
+        return nova_direct_init_fail(raw,"transport_dlopen",AVERROR(ENOENT));
+    /* Set ownership IMMEDIATELY: the v1053 successful-only ownership marker
+     * leaked dlopen references and Shared42 on partially failed opens. */
+    raw->direct_transport = 1;
 
     raw->direct_read = (nova_transport_read_fn)dlsym(
         raw->transport_handle, "nova_transport_read");
@@ -71,18 +83,18 @@ static int nova_direct_source_open(NOVA_RAW_PREFETCH *raw, const char *url)
         raw->transport_handle, "nova_transport_set_target_bps");
     if (!raw->direct_read || !raw->direct_seek ||
         !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)
-        return AVERROR(ENOSYS);
+        return nova_direct_init_fail(raw,"transport_symbols",AVERROR(ENOSYS));
 
     unsigned char *buffer = av_malloc(NOVA_RAW_IO_BYTES);
     if (!buffer)
-        return AVERROR(ENOMEM);
+        return nova_direct_init_fail(raw,"avio_buffer_alloc",AVERROR(ENOMEM));
 
     raw->source = avio_alloc_context(
         buffer, NOVA_RAW_IO_BYTES, 0, raw,
         nova_direct_read, NULL, nova_direct_seek);
     if (!raw->source) {
         av_free(buffer);
-        return AVERROR(ENOMEM);
+        return nova_direct_init_fail(raw,"avio_context_alloc",AVERROR(ENOMEM));
     }
     raw->source->seekable = AVIO_SEEKABLE_NORMAL;
     /* NOVA_NONISO_AVIO_UNLATCH_V1: direct read bypasses FFmpeg's cached
@@ -91,7 +103,6 @@ static int nova_direct_source_open(NOVA_RAW_PREFETCH *raw, const char *url)
     if (strstr(url, "/stream?") != NULL)
         raw->source->direct = 1;
     raw->source_size = raw->direct_size(raw->transport_generation);
-    raw->direct_transport = 1;
     serprintf("NOVA_DIRECT_SOURCE_OPEN: generation=%llu size=%lld\n",
         (unsigned long long)raw->transport_generation,
         (long long)raw->source_size);
