@@ -312,6 +312,10 @@ typedef struct nova_session {
      * first-resume threshold; 0..100, updated by the AVOS buffer controller.
      * Not the received network byte counter (which may already be consumed). */
     volatile int startup_buffer_percent;
+    /* NOVA_EARLY_PERCENT_V2: always the live, not cumulative, buffer. */
+    volatile int64_t startup_resident_bytes;
+    volatile int64_t startup_resume_bytes;
+    volatile int startup_authoritative_seen;
     volatile uint64_t startup_wire_bytes;
     int64_t startup_speed_sample_ms;
     uint64_t startup_speed_sample_bytes, startup_speed_bps;
@@ -1800,6 +1804,7 @@ static nova_session *session_create(JNIEnv *env,const char *url,
     if (g_opening_session)
         g_opening_session->stopping = 1;
     g_opening_session = s;
+    __atomic_store_n(&s->startup_ui_state,1,__ATOMIC_RELEASE);
     pthread_mutex_unlock(&g_lock);
     if (nova_upstream_open_until_ready(s) < 0) {
         session_free(s);
@@ -1933,6 +1938,7 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
     pthread_mutex_lock(&g_lock);
     if(g_opening_session)g_opening_session->stopping=1;
     g_opening_session=s;
+    __atomic_store_n(&s->startup_ui_state,1,__ATOMIC_RELEASE);
     pthread_mutex_unlock(&g_lock);
     /* A temporary HTTP 503 at the first request cannot destroy playback
      * startup. The original logical resource remains authoritative;
@@ -2437,6 +2443,7 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupState
     (void)env;(void)cls;
     pthread_mutex_lock(&g_lock);
     nova_session *s=g_session;
+    if(g_opening_session && !g_opening_session->stopping)s=g_opening_session;
     int state=s && !s->stopping
         ? __atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE) : 0;
     pthread_mutex_unlock(&g_lock);
@@ -2463,10 +2470,51 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupPerce
     (void)env;(void)cls;
     pthread_mutex_lock(&g_lock);
     nova_session *s=g_session;
+    if(g_opening_session && !g_opening_session->stopping)s=g_opening_session;
     int percent=s && !s->stopping ?
         __atomic_load_n(&s->startup_buffer_percent,__ATOMIC_ACQUIRE) : 0;
     pthread_mutex_unlock(&g_lock);
     return percent;
+}
+
+/* Native UI sees the exact numerator; <1% must not be rounded to 1%. */
+JNIEXPORT jlong JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupResidentBytes(
+        JNIEnv *env,jclass cls)
+{
+    (void)env;(void)cls;
+    pthread_mutex_lock(&g_lock);
+    nova_session *s=g_session;
+    if(g_opening_session && !g_opening_session->stopping)s=g_opening_session;
+    int64_t n=s && !s->stopping ?
+        __atomic_load_n(&s->startup_resident_bytes,__ATOMIC_ACQUIRE) : 0;
+    pthread_mutex_unlock(&g_lock);
+    return n>0 ? (jlong)n : 0;
+}
+
+/* First verified RAW bytes are published directly by the RAW producer
+ * during FFmpeg probe, not waiting for parser stats or first frame.
+ * The AVOS source replaces these provisional stats when ready. */
+__attribute__((visibility("default")))
+void nova_transport_report_startup_raw(uint64_t generation,
+                                      int64_t resident,int64_t resume)
+{
+    if(resume<=0)return;
+    nova_session *s=session_acquire(generation);
+    if(!s)return;
+    int phase=__atomic_load_n(&s->startup_ui_state,__ATOMIC_ACQUIRE);
+    if(phase<3 &&
+       !__atomic_load_n(&s->startup_authoritative_seen,__ATOMIC_ACQUIRE)){
+        if(resident<0)resident=0;
+        int p=resident>=resume?100:(int)((resident*100)/resume);
+        __atomic_store_n(&s->startup_resident_bytes,resident,__ATOMIC_RELEASE);
+        __atomic_store_n(&s->startup_resume_bytes,resume,__ATOMIC_RELEASE);
+        __atomic_store_n(&s->startup_buffer_percent,p,__ATOMIC_RELEASE);
+        LOGI("NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=%" PRIu64
+             " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
+             generation,resident,resume,p);
+    }
+    session_release(s);
 }
 
 /* AVOS supplies the same resident and resume threshold used by its first
@@ -2484,7 +2532,10 @@ void nova_transport_report_startup_buffer(uint64_t generation,
         (int)((resident_bytes*100)/resume_bytes);
     if(percent<0)percent=0;
     if(percent>100)percent=100;
+    __atomic_store_n(&s->startup_resident_bytes,resident_bytes,__ATOMIC_RELEASE);
+    __atomic_store_n(&s->startup_resume_bytes,resume_bytes,__ATOMIC_RELEASE);
     __atomic_store_n(&s->startup_buffer_percent,percent,__ATOMIC_RELEASE);
+    __atomic_store_n(&s->startup_authoritative_seen,1,__ATOMIC_RELEASE);
     LOGI("NOVA_STARTUP_BUFFER_PERCENT_V1: generation=%" PRIu64
          " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
          generation,resident_bytes,resume_bytes,percent);
