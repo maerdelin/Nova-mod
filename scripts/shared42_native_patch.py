@@ -45,7 +45,7 @@ def patch(text):
     unsigned char *buffer = av_malloc(NOVA_RAW_IO_BYTES);"""
     new="""    if (!raw->direct_read || !raw->direct_seek ||
         !raw->direct_size || !raw->direct_abort || !raw->direct_set_target_bps)
-        return AVERROR(ENOSYS);
+        return nova_direct_init_fail(raw,"transport_symbols",AVERROR(ENOSYS));
     raw->shared_acquire=(void *(*)(uint64_t))dlsym(raw->transport_handle,
                          "nova_transport_warehouse_acquire");
     raw->shared_release=(void (*)(void *))dlsym(raw->transport_handle,
