@@ -270,21 +270,25 @@ def patch(root: Path):
         raise RuntimeError("994 early UI handler marker count="+str(len(handler_candidates)))
     hp,hsrc=handler_candidates[0]
     pattern=re.compile(
-        r"(    invoke-static(?:/range)? \{[^\n]+\}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->visibility\(I\)V\n)"
-        r"(    invoke-virtual(?:/range)? \{(v\d+), (v\d+)\}, Landroid/view/View;->setVisibility\(I\)V)")
+        r"(?m)(^[ \\t]*invoke-static(?:/range)? \\{[^\\n]+\\}, Lcom/archos/mediacenter/video/player/NovaLoadingTrace;->visibility\\(I\\)V[ \\t]*\\n)"
+        r"(^[ \\t]*invoke-virtual(?:/range)? \\{([^}\\n]+)\\}, Landroid/view/View;->setVisibility\\(I\\)V[ \\t]*$)")
     matches=list(pattern.finditer(hsrc))
     if not matches:
-        raise RuntimeError("994 early UI missing visibility/smali register pair")
+        raise RuntimeError("994 early UI missing spinner visibility pair")
     for match in reversed(matches):
-        view,vis=match.group(3),match.group(4)
-        # Only inject for low v-register operands; /range could be used
-        # by the original call, but this helper has two direct args.
+        operands=match.group(3).strip()
+        # apktool may normalize invoke-virtual to /range {vN .. vN+1}.
+        found=re.findall(r"v\\d+",operands)
+        if len(found)!=2:
+            raise RuntimeError("994 early UI unexpected View.setVisibility args: "+operands)
+        view,vis=found
         vi,vis_i=int(view[1:]),int(vis[1:])
-        invoke=("invoke-static {"+view+", "+vis+"}, " if vi<16 and vis_i<16
-                else "invoke-static/range {"+view+" .. "+vis+"}, ")
         if vi>=16 or vis_i>=16:
             if vis_i!=vi+1:raise RuntimeError("994 early UI non-adjacent high registers")
-        inserted=match.group(1)+"    "+invoke+NAME+"->armEarly(Landroid/view/View;I)V\n"+match.group(2)
+            invoke="invoke-static/range {"+view+" .. "+vis+"}, "
+        else:
+            invoke="invoke-static {"+view+", "+vis+"}, "
+        inserted=match.group(1)+"    "+invoke+NAME+"->armEarly(Landroid/view/View;I)V\\n"+match.group(2)
         hsrc=hsrc[:match.start()]+inserted+hsrc[match.end():]
     hp.write_text(hsrc)
 
