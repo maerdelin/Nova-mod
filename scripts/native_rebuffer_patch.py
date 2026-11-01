@@ -122,6 +122,18 @@ static void nova_startup_overlay_buffer_percent(
     if(report)report(gen,resident,resume);
     dlclose(h);
 }
+/* Shared with producer code in stream_parser_ffmpeg.c; no decoder locks. */
+void nova_startup_overlay_raw_percent(const char *url,int64_t resident,int64_t resume)
+{
+    uint64_t gen=0;
+    if(!nova_startup_overlay_generation(url,&gen)||resume<=0)return;
+    void *h=dlopen("libnova_transport.so",RTLD_NOW);
+    if(!h)return;
+    void (*fn)(uint64_t,int64_t,int64_t)=(void (*)(uint64_t,int64_t,int64_t))
+        dlsym(h,"nova_transport_report_startup_raw");
+    if(fn)fn(gen,resident,resume);
+    dlclose(h);
+}
 static void *_rebuffer_thread( void *data )
 {
     STREAM *s = (STREAM *)data;
@@ -328,6 +340,7 @@ typedef struct NOVA_RAW_PREFETCH {
     uint64_t last_log_produced;
     uint64_t last_log_consumed;
     int64_t last_log_us;
+    int64_t early_percent_last_us;
     /* NOVA_MKV_BBC_SEEK_GUARD_V1: only MKV one-GET source. */
     int mkv_single_get;
     volatile int mkv_seek_active;
@@ -339,6 +352,8 @@ typedef struct NOVA_RAW_PREFETCH {
 
 
 RAW_CODE = r'''
+extern void nova_startup_overlay_raw_percent(const char *url,
+        int64_t resident,int64_t resume);
 
 static long nova_cpu_max_freq_khz(int cpu)
 {
@@ -531,8 +546,20 @@ static void *nova_raw_thread(void *opaque)
             __atomic_store_n(
                 &raw->s->raw_prefetch_eof, 0, __ATOMIC_RELEASE );
             nova_raw_log_locked(raw);
+            /* First live RAW byte is available before probe_done. Send a
+             * snapshot outside the RAW mutex and at most every 200ms.
+             * No cumulative traffic, no decoder or network policy change. */
+            int64_t now_us=av_gettime_relative();
+            int report_early=raw->early_percent_last_us==0 ||
+                now_us-raw->early_percent_last_us>=200000;
+            if(report_early)raw->early_percent_last_us=now_us;
+            int64_t resident_early=raw->used_bytes;
+            int64_t resume_early=raw->s->rebuffer_resume_bytes;
             pthread_cond_broadcast(&raw->can_read);
             pthread_mutex_unlock(&raw->mutex);
+            if(report_early && resume_early>0)
+                nova_startup_overlay_raw_percent(raw->s->src.url,
+                    resident_early,resume_early);
             continue;
         }
 
