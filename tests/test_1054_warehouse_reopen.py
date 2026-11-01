@@ -45,8 +45,8 @@ class WarehouseReopen1054(unittest.TestCase):
 #define NOVA_WH_TOTAL_BYTES (4u*1024u*1024u)
 #define NOVA_WH_FREE 0
 #define NOVA_WH_RAW 2
-#define LOGI(...) ((void)0)
-#define LOGE(...) ((void)0)
+#define LOGI(...) fprintf(stderr, __VA_ARGS__)
+#define LOGE(...) fprintf(stderr, __VA_ARGS__)
 """ + structs + r"""
 static int malloc_calls=0,fail_malloc=0;
 static void *test_malloc(size_t n){
