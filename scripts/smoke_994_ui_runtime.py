@@ -38,9 +38,13 @@ def check(apk, log, reports):
         raise RuntimeError("Missing real native resident/first-resume threshold")
     # Signed device playback must prove the first real RAW bytes were
     # published before FFmpeg completed probing; no synthetic counters.
-    native_early=re.search(
-        r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live)
+    early_reports=list(re.finditer(
+        r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live))
     probe=re.search(r"NOVA_STARTUP_TRACE probe_done",live)
+    # First X correctly publishes a zero-byte baseline. Select the first
+    # REAL positive buffer sample before probe completion, not the baseline.
+    native_early=next((m for m in early_reports if probe and
+        m.start()<probe.start() and int(m.group(1))>0 and int(m.group(2))>0),None)
     lock=re.search(r"NOVA_STARTUP_DENOM_LOCK_V1: generation=(\d+) resume=(\d+)",live)
     xlock=re.search(r"NOVA_STARTUP_X_LOCK_V1: source=(iso-title-metadata|ffmpeg-probe) x=(\d+) resume=(\d+)",live)
     if not xlock or not lock or int(xlock.group(3))!=int(lock.group(2)):
@@ -56,7 +60,7 @@ def check(apk, log, reports):
     if not native_early or not probe or not native_early.start()<probe.start():
         raise RuntimeError("Early RAW resident percentage not published before FFmpeg probe_done")
     if int(native_early.group(1))<=0 or int(native_early.group(2))<=0:
-        raise RuntimeError("Early numerator or fallback denominator was not real positive bytes")
+        raise RuntimeError("No actual positive RAW numerator with locked real-X denominator before probe")
     resident,resume,percentage=map(int,b.groups())
     if percentage != min(100,max(0,(resident*100)//resume)):
         raise RuntimeError("Displayed percent source is not actual resident/first-resume")
