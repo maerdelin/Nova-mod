@@ -483,7 +483,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Prepare real Blu-ray ISO media for five-goal acceptance
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101'
         shell: bash
         run: |
           set -euo pipefail
