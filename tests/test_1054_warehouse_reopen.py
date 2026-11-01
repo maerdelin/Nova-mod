@@ -43,6 +43,7 @@ class WarehouseReopen1054(unittest.TestCase):
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <string.h>
 #include <unistd.h>
 #define NOVA_WH_PAGES 64
 #define NOVA_WH_PAGE_BYTES (64u*1024u)
@@ -132,6 +133,47 @@ int main(void){
         self.assertIn('nova_direct_init_fail(raw,"transport_symbols"', self.shared)
         self.assertIn('NOVA_1054_FF_INPUT_FAIL', self.raw)
         self.assertIn('NOVA_1054_RAW_INIT_FAIL', self.raw)
+        self.assertIn('NOVA_1054_DIRECT_OS_FORENSICS', self.direct)
+        self.assertIn('NOVA_1054_NATIVE_DLERROR', self.direct)
+        self.assertIn('stage=avformat_open_input', self.raw)
+
+    def test_exact_tested_official_v662_is_fail_closed(self):
+        import importlib.util
+        import os
+        from unittest.mock import patch
+
+        check = ROOT / "scripts" / "check_upstream.py"
+        with patch.dict(os.environ, {"NOVA_1054_EXACT_1053_BASELINE": "v6.6.2"}):
+            spec = importlib.util.spec_from_file_location("nova1054_check_upstream", check)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.assertIn("releases/tags/v6.6.2", module.LATEST_URL)
+            self.assertEqual(module.POLICY, "github-official-exact-1053-baseline-v6.6.2")
+            good_digest="2ec057186f781bafde2d628edb09771994e2a0b15c6bff2661b5169ba24ca764"
+            release={"id":425796880,"tag_name":"v6.6.2","draft":False,
+                     "prerelease":False,"published_at":"2026-10-27T18:05:15Z"}
+            asset={"id":682384761,"name":"nova-universal-release.apk",
+                   "size":93234228,"state":"uploaded","digest":"sha256:"+good_digest,
+                   "browser_download_url":
+                   "https://github.com/nova-video-player/aos-AVP/releases/download/v6.6.2/nova-universal-release.apk"}
+            def fake_api(url):
+                if url == module.LATEST_URL:
+                    return release
+                if url.startswith(module.API_ROOT + "/releases/425796880/assets?"):
+                    return [asset]
+                raise AssertionError("Unexpected official API URL " + url)
+            record=module.resolve_latest(fake_api)
+            self.assertEqual(record["official_sha256"],good_digest)
+            self.assertEqual(record["tag"],"v6.6.2")
+            asset["digest"]="sha256:"+"0"*64
+            with self.assertRaises(module.UpstreamError):
+                module.resolve_latest(fake_api)
+        with patch.dict(os.environ, {"NOVA_1054_EXACT_1053_BASELINE": "none"}):
+            spec = importlib.util.spec_from_file_location("nova_latest_check_upstream", check)
+            latest = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(latest)
+            self.assertEqual(latest.POLICY,"github-official-latest-stable")
+            self.assertTrue(latest.LATEST_URL.endswith("/releases/latest"))
 
     def test_no_iso_or_media_policy_changes(self):
         self.assertIn("NOVA_1053_ISO_PUMP_GUARD_V1", self.c)

@@ -7,12 +7,15 @@ moves to a different major/minor release. No fallback to an older branch.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 OFFICIAL_REPOSITORY = "nova-video-player/aos-AVP"
-OFFICIAL_POLICY = "github-official-latest-stable"
+OFFICIAL_POLICY = ("github-official-exact-1053-baseline-v6.6.2"
+                   if os.environ.get("NOVA_1054_EXACT_1053_BASELINE") == "v6.6.2"
+                   else "github-official-latest-stable")
 VERSION = re.compile(r"v([1-9][0-9]*)\.([0-9]+)\.([0-9]+)\Z")
 
 

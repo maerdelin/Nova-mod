@@ -26,8 +26,14 @@ import zipfile
 
 REPOSITORY = "nova-video-player/aos-AVP"
 API_ROOT = f"https://api.github.com/repos/{REPOSITORY}"
-LATEST_URL = f"{API_ROOT}/releases/latest"
-POLICY = "github-official-latest-stable"
+# NOVA 1054 reuses the tested 1053 official v6.6.2 binary (not latest v6.6.3).
+# All other branches retain strict latest and never silently fall back.
+NOVA_1054_EXACT_1053_BASELINE = os.environ.get("NOVA_1054_EXACT_1053_BASELINE") == "v6.6.2"
+NOVA_1053_OFFICIAL_SHA256 = "2ec057186f781bafde2d628edb09771994e2a0b15c6bff2661b5169ba24ca764"
+LATEST_URL = (f"{API_ROOT}/releases/tags/v6.6.2" if NOVA_1054_EXACT_1053_BASELINE
+              else f"{API_ROOT}/releases/latest")
+POLICY = ("github-official-exact-1053-baseline-v6.6.2"
+          if NOVA_1054_EXACT_1053_BASELINE else "github-official-latest-stable")
 DIGEST_RE = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 UNIVERSAL_RE = re.compile(r"(?:^|[._-])universal(?:[._-]|$)", re.I)
 UNSAFE_FLAVOR_RE = re.compile(r"(?:^|[._-])(?:debug|unsigned|test|beta|alpha|preview)(?:[._-]|$)", re.I)
@@ -167,6 +173,9 @@ def resolve_latest(fetch_json: Callable[[str], Any] | None = None) -> dict[str, 
     else:
         raise UpstreamError("Excessive asset pages; refusing a partial selection")
     asset = select_asset(assets)
+    if NOVA_1054_EXACT_1053_BASELINE:
+        if release["tag_name"] != "v6.6.2" or asset["digest"] != "sha256:" + NOVA_1053_OFFICIAL_SHA256:
+            raise UpstreamError("NOVA1054 official 1053 base tag/digest changed; fail closed")
     return {"schema_version": 1, "policy": POLICY, "repository": REPOSITORY,
             "release_id": release["id"], "tag": release["tag_name"],
             "published_at": release["published_at"], "asset_id": asset["id"],
@@ -234,9 +243,11 @@ def download_latest(output: Path, metadata: Path, *, fetch_json=None, downloader
         temporary.unlink(missing_ok=True)
     action_outputs(tag=selected["tag"], release_id=selected["release_id"],
                    asset_id=selected["asset_id"], sha256=selected["downloaded_sha256"])
-    summary(f"## Dynamic official latest\n\nSelected official release: `{selected['tag']}`\n\n"
+    summary(f"## {'Exact official 1053 baseline' if NOVA_1054_EXACT_1053_BASELINE else 'Dynamic official latest'}\n\nSelected official release: `{selected['tag']}`\n\n"
             f"Asset: `{selected['asset_name']}`\n\nSHA-256: `{selected['downloaded_sha256']}`\n\n"
             f"Build input: `{output}`. Download and integrity verification completed. No version fallback.")
+    if NOVA_1054_EXACT_1053_BASELINE:
+        print("NOVA_1054_PINNED_1053_OFFICIAL=VERIFIED tag=v6.6.2 sha256=" + NOVA_1053_OFFICIAL_SHA256)
     print("LATEST_OFFICIAL=" + selected["tag"])
     print("LATEST_UPSTREAM_SHA256=" + selected["downloaded_sha256"])
     return selected
