@@ -36,6 +36,15 @@ def check(apk, log, reports):
     b=re.search(r"NOVA_STARTUP_BUFFER_PERCENT_V1: generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live)
     if not b or int(b.group(2))<=0:
         raise RuntimeError("Missing real native resident/first-resume threshold")
+    # Signed device playback must prove the first real RAW bytes were
+    # published before FFmpeg completed probing; no synthetic counters.
+    native_early=re.search(
+        r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\\d+ resident=(\\d+) resume=(\\d+) percent=(\\d+)",live)
+    probe=re.search(r"NOVA_STARTUP_TRACE probe_done",live)
+    if not native_early or not probe or not native_early.start()<probe.start():
+        raise RuntimeError("Early RAW resident percentage not published before FFmpeg probe_done")
+    if int(native_early.group(1))<=0 or int(native_early.group(2))<=0:
+        raise RuntimeError("Early numerator or fallback denominator was not real positive bytes")
     resident,resume,percentage=map(int,b.groups())
     if percentage != min(100,max(0,(resident*100)//resume)):
         raise RuntimeError("Displayed percent source is not actual resident/first-resume")
@@ -68,6 +77,9 @@ def check(apk, log, reports):
       "title_hides_independently":True,
       "verified_from_real_playback":True,
       "textview_percent_updates":len(percents),
+      "native_raw_before_probe":True,
+      "native_early_resident_bytes":int(native_early.group(1)),
+      "native_early_fallback_resume_bytes":int(native_early.group(2)),
       "displayed_percents":percents[:20],
       "native_resident":resident,"native_resume_threshold":resume,
       "observed_tick_intervals_ms":[b-a for a,b in zip(intervals,intervals[1:])],

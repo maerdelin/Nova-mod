@@ -85,6 +85,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_noniso_startup_zero_seek.py -v
           python3 -m unittest discover -s tests -p test_main_startup_seek_only.py -v
           python3 -m unittest discover -s tests -p test_weak_network_native.py -v
+          python3 -m unittest discover -s tests -p test_mp4_tail_moov_equivalence.py -v
           python3 -m unittest discover -s tests -p test_noniso_seek_avio.py -v
           python3 -m unittest discover -s tests -p test_redirect_freshness.py -v
           python3 -m unittest discover -s tests -p test_mkv_bbc_seek_regression.py -v

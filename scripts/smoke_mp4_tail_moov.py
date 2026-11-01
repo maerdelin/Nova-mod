@@ -45,6 +45,33 @@ def top_atoms(path):
             out.append((typ,pos,n));pos+=n
     return out
 
+def verify_tail_access(size, moov_off, requests, log, raw_i, probe_i):
+    """Accept exact late-moov byte seek with verified remote Range OR cached bytes.
+
+    The server may deliver the full file from byte zero into RAW before the
+    demuxer seeks back. Requiring a second remote tail Range in that case
+    falsely fails correct playback, so the completed full-body response must
+    instead be independently recorded by the actual HTTP server.
+    """
+    seek_events=[]
+    for m in re.finditer(r'NOVA_RAW128_SEEK: target=(\d+) result=(\d+) generation=\d+',log):
+        target,result=map(int,m.groups())
+        if raw_i<m.start()<probe_i and target==result and moov_off-512*1024<=target<size:
+            seek_events.append(target)
+    if not seek_events:
+        raise RuntimeError('No exact RAW late-moov seek before probe_done')
+    remote_tail=any(r['start']>=moov_off-512*1024 and r['start']<size
+                    for r in requests)
+    full_head=any(r['start']==0 and r['complete'] and r['delivered']==size
+                  for r in requests)
+    if not remote_tail and not full_head:
+        raise RuntimeError('Neither remote tail Range nor fully delivered origin response was proved')
+    return {'tail_access_path':'remote-tail-range' if remote_tail else 'complete-head-prefetch',
+            'remote_tail_range':remote_tail,
+            'complete_origin_body':full_head,
+            'exact_tail_seeks':seek_events}
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--reports',type=Path,required=True);a=p.parse_args()
     a.reports.mkdir(parents=True,exist_ok=True)
@@ -68,7 +95,7 @@ def main():
             if not (mdat_off < moov_off and moov_off > size*0.70):
                 raise RuntimeError('Generated MP4 is not a late-moov file: '+repr((size,atoms)))
 
-            starts=[];lock=threading.Lock()
+            starts=[];requests=[];lock=threading.Lock()
             class H(http.server.BaseHTTPRequestHandler):
                 protocol_version='HTTP/1.1'
                 def log_message(self,*_): pass
@@ -82,21 +109,33 @@ def main():
                         if not m:self.send_error(416);return
                         start=int(m[1]);end=min(size-1,int(m[2])) if m[2] else size-1;partial=True
                     if start>end or start>=size:self.send_error(416);return
-                    with lock: starts.append(start)
+                    record={'start':start,'end':end,'delivered':0,'complete':False}
+                    with lock:
+                        starts.append(start)
+                        requests.append(record)
                     self.send_response(206 if partial else 200)
                     self.send_header('Content-Type','video/mp4')
                     self.send_header('Accept-Ranges','bytes')
                     self.send_header('Content-Length',str(end-start+1))
                     if partial:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
                     self.send_header('Connection','close');self.end_headers()
+                    delivered=0
+                    complete=False
                     try:
                         with media.open('rb') as f:
                             f.seek(start);left=end-start+1
                             while left:
                                 b=f.read(min(left,65536))
                                 if not b:break
-                                self.wfile.write(b);left-=len(b)
+                                self.wfile.write(b)
+                                left-=len(b)
+                                delivered+=len(b)
+                            complete=(left==0)
                     except (BrokenPipeError,ConnectionResetError): pass
+                    finally:
+                        with lock:
+                            record['delivered']=delivered
+                            record['complete']=complete
 
             server=http.server.ThreadingHTTPServer(('127.0.0.1',0),H);port=server.server_port
             threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -117,14 +156,14 @@ def main():
             probe_i=text.index('NOVA_STARTUP_TRACE probe_done')
             if raw_i > probe_i:
                 raise RuntimeError('RAW AVIO was not installed before MP4 probe')
-            with lock: ranges=list(starts)
-            far=[x for x in ranges if x>size*0.60]
-            if not far:
-                raise RuntimeError('HTTP server did not observe a far tail Range seek: '+repr(ranges))
+            with lock:
+                ranges=list(starts)
+                receipts=[dict(r) for r in requests]
+            proof=verify_tail_access(size,moov_off,receipts,text,raw_i,probe_i)
             report.update(status='PASS',size=size,moov_offset=moov_off,
                           moov_fraction=moov_off/size,range_starts=ranges,
-                          far_tail_range=True,raw_before_probe=True,
-                          raw_seek_seen=True,first_frame=True)
+                          tail_access_proof=proof,far_tail_range=proof['remote_tail_range'],
+                          raw_before_probe=True,raw_seek_seen=True,first_frame=True)
             (a.reports/'mp4-tail-moov-logcat.txt').write_text(text)
             print('MP4_TAIL_MOOV_SMOKE=PASS '+json.dumps(report))
     except Exception as e:
