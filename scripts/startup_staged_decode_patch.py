@@ -244,6 +244,29 @@ def apply(root: Path):
         '\t\t\tnova_staged_mkv ? "65536" : "10000000", 0);',
         'probe limit')
     src=once(src,"\t\t// Normal mode: analyze all streams\n",
+        "\t\t/* NOVA_MKV_REAL_CONTAINER_V1: FFmpeg actual demuxer wins over suffix. */\n"
+        "\t\tif(!nova_staged_mkv && !(flags & STREAM_PARSER_THUMB) &&\n"
+        "\t\t   s->src.url && !strncmp(s->src.url,\"novatransport://\",16) &&\n"
+        "\t\t   ff_p->fmt && ff_p->fmt->iformat &&\n"
+        "\t\t   !strncmp(ff_p->fmt->iformat->name,\"matroska\",8)){\n"
+        "\t\t\tnova_staged_mkv=1;\n"
+        "\t\t\tff_p->fmt->probesize=65536;\n"
+        "\t\t\tserprintf(\"NOVA_STAGED_MKV_BY_CONTENT_V1: enabled=1 name=%s\\n\",\n"
+        "\t\t\t          ff_p->fmt->iformat->name);\n"
+        "\t\t}\n"
+        "\t\tif(nova_staged_mkv && ff_p->fmt && ff_p->fmt->iformat &&\n"
+        "\t\t   strncmp(ff_p->fmt->iformat->name,\"matroska\",8)){\n"
+        "\t\t\tserprintf(\"NOVA_STAGED_MKV_WRONG_SUFFIX_V1: actual=%s fast=off\\n\",\n"
+        "\t\t\t          ff_p->fmt->iformat->name);\n"
+        "\t\t\tnova_staged_mkv=0;\n"
+        "\t\t\tff_p->fmt->probesize=10000000;\n"
+        "\t\t}\n"
+        "\t\tif(nova_staged_mkv && ff_p->fmt && ff_p->fmt->pb){\n"
+        "\t\t\tserprintf(\"NOVA_MKV_HEADER_SCAN_V1: actual=%s ioPos=%lld dataOffset=%lld phase=avformat_open_input\\n\",\n"
+        "\t\t\t          ff_p->fmt->iformat ? ff_p->fmt->iformat->name : \"unknown\",\n"
+        "\t\t\t          (long long)avio_tell(ff_p->fmt->pb),\n"
+        "\t\t\t          (long long)ff_p->fmt->data_offset);\n"
+        "\t\t}\n"
         '\t\t/* ONE find_stream_info call: its FFStreamInfo state is freed\n'
         '\t\t * after return. Incomplete headers keep original 10 MB path. */\n'
         '\t\tif(nova_staged_mkv && !nova_staged_header_ok(ff_p->fmt)){\n'

@@ -73,7 +73,7 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn('android:tag="nova_buffer_percent"',UI)
         self.assertIn('android:text="0%"',UI)
         self.assertIn('android:layout_width="52.0dp"',UI)
-        self.assertIn('const-wide/16 v1, 0x1f4', UI)  # 500 milliseconds
+        self.assertIn('const-wide/16 v1, 0xc8', UI)  # 200 milliseconds
         self.assertIn("nova_transport_report_startup_buffer",C)
         self.assertIn("resident_bytes>=resume_bytes?100",C)
         self.assertIn("(int)((resident_bytes*100)/resume_bytes)",C)

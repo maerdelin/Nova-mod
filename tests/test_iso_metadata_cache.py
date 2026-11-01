@@ -1,4 +1,4 @@
-"""Run588 ISO scan-only 4-MiB x 8 LRU cache regression tests.
+"""Run588 ISO scan-only bounded 8-MiB x 8 LRU cache regression tests.
 
 Simulate disjoint UDF block reads against fake random-access upstream bytes.
 This does NOT touch or emulate the RAW128 pre-demux movie data pipeline.
@@ -15,7 +15,7 @@ END = "/* ISO_META_CACHE_END */"
 
 class IsoScanOnlyCacheTests(unittest.TestCase):
     def test_proven_run506_cache_shape_and_lifetime(self):
-        self.assertIn("#define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)", SOURCE)
+        self.assertIn("#define NOVA_ISO_META_PAGE_BYTES (8 * 1024 * 1024)", SOURCE)
         self.assertIn("#define NOVA_ISO_META_PAGE_COUNT 8", SOURCE)
         self.assertIn("if (s->iso_meta_active && s->upstream_size > 0)", SOURCE)
         self.assertIn("if (blocks > 0)", SOURCE)
@@ -43,7 +43,7 @@ class IsoScanOnlyCacheTests(unittest.TestCase):
 #include <string.h>
 #define LOGI(...) fprintf(stderr, __VA_ARGS__)
 #define UDF_BLOCK 2048
-#define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024)
+#define NOVA_ISO_META_PAGE_BYTES (8 * 1024 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
 #define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
 
@@ -99,7 +99,7 @@ static int read_exact(mock_io *io, uint8_t *dst, int bytes) {
 '''
         suffix = r'''
 int main(void) {
-    mock_io io = {.pos=0, .size=(int64_t)48 * 1024 * 1024};
+    mock_io io = {.pos=0, .size=(int64_t)128 * 1024 * 1024};
     nova_session s = {.iso_meta_active=1, .upstream_size=io.size, .iso_meta_window_bytes=256*1024, .iso_meta_last_miss_end=-1,
                       .upstream_pos=0, .upstream=&io};
     uint8_t buf[4096];
@@ -136,7 +136,7 @@ int main(void) {
     assert(s.iso_meta_misses==(uint64_t)io.reads);
     /* Fill all eight slots, then deliberately fail the next miss. The
      * selected LRU slot must retain its old bytes and index on failure. */
-    mock_io io2 = {.pos=0, .size=(int64_t)48 * 1024 * 1024};
+    mock_io io2 = {.pos=0, .size=(int64_t)128 * 1024 * 1024};
     nova_session e = {.iso_meta_active=1, .upstream_size=io2.size, .iso_meta_window_bytes=256*1024, .iso_meta_last_miss_end=-1,
                       .upstream_pos=0, .upstream=&io2};
     for (int i=0; i<8; i++)
@@ -155,7 +155,7 @@ int main(void) {
     for(int i=0;i<NOVA_ISO_META_PAGE_COUNT;++i)
         assert(s.iso_meta_pages[i].data==NULL);
     assert(nova_iso_meta_read(&s,buf,4096,2048)==-1);
-    puts("ISO metadata cache 4MiB x8: hit/miss/LRU/boundary/release PASS");
+    puts("ISO metadata cache 8MiB x8: hit/miss/LRU/boundary/release PASS");
 }
 '''
         with tempfile.TemporaryDirectory() as td:

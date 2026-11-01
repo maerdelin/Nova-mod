@@ -25,10 +25,13 @@
 #define UDF_BLOCK 2048
 /* Proven Run506 UDF metadata locality: 4 MiB per slot, eight LRU slots.
  * This is used ONLY before playback. The working RAW128 pipeline is untouched. */
-#define NOVA_ISO_META_PAGE_BYTES (4 * 1024 * 1024) /* adaptive ceiling */
+#define NOVA_ISO_META_PAGE_BYTES (8 * 1024 * 1024) /* 256K/512K/1M/2M then +1M through 8M */
 #define NOVA_ISO_META_START_BYTES (256 * 1024) /* first metadata miss */
 #define NOVA_ISO_STARTUP_REPLAY_BYTES (24 * 1024 * 1024) /* cap startup demux probe rewind; never cache full ISO */
 #define NOVA_MKV_TAIL_WARM_BYTES (64 * 1024)
+/* Retain only the last 64 KiB of ALREADY delivered head bytes so an MKV
+ * Cues tail lookup can return to the first Cluster without a new GET. */
+#define NOVA_MKV_HEAD_REWIND_BYTES (64 * 1024)
 #define NOVA_ISO_META_PAGE_COUNT 8
 #define NOVA_ISO_WEAK_PAGE_BYTES (256 * 1024)
 #define NOVA_WEAK_RETRY_MAX_DELAY_MS 3000
@@ -320,6 +323,9 @@ typedef struct nova_session {
     pthread_t mkv_tail_thread;
     volatile int mkv_tail_running, mkv_tail_ready;
     uint8_t *mkv_tail_data;
+    uint8_t *mkv_rewind_data;
+    int64_t mkv_rewind_start;
+    int mkv_rewind_size;
     int mkv_tail_size;
     int64_t mkv_tail_start;
     nova_iso_track_lang iso_tracks[NOVA_ISO_TRACK_LANG_CAP];
@@ -665,7 +671,8 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
         int page_bytes = s->iso_meta_degraded ? NOVA_ISO_WEAK_PAGE_BYTES
             : (s->iso_meta_window_bytes > 0 ? s->iso_meta_window_bytes
                                              : NOVA_ISO_META_PAGE_BYTES);
-        int64_t aligned = pos & ~((int64_t)page_bytes - 1);
+        /* 3/5/6/7 MiB are not powers of two. */
+        int64_t aligned = (pos / (int64_t)page_bytes) * (int64_t)page_bytes;
         int hit = -1, first_free = -1, lru = -1;
         uint64_t oldest = UINT64_MAX;
         for (int i = 0; i < NOVA_ISO_META_PAGE_COUNT; ++i) {
@@ -726,14 +733,20 @@ static int nova_iso_meta_read(nova_session *s, uint8_t *dst, int64_t start, int 
                 s->iso_meta_peak_window = page_bytes;
             /* A miss immediately next to the previous fetched page is proof
              * that this small window was insufficient for the local UDF scan.
-             * Grow 256K -> 512K -> 1M -> 2M -> 4M; scattered reads stay 256K. */
+             * Grow 256K -> 512K -> 1M -> 2M -> 3M -> 4M ... -> 8M.
+         * Disjoint misses do not grow the window; the 8-MiB cap bounds memory. */
             if (!s->iso_meta_degraded && s->iso_meta_window_bytes > 0 &&
                 s->iso_meta_last_miss_end >= 0 &&
                 pos >= s->iso_meta_last_miss_end &&
                 pos - s->iso_meta_last_miss_end <= page_bytes &&
                 s->iso_meta_window_bytes < NOVA_ISO_META_PAGE_BYTES) {
                 int previous = s->iso_meta_window_bytes;
-                s->iso_meta_window_bytes *= 2;
+                if(s->iso_meta_window_bytes<2*1024*1024)
+                    s->iso_meta_window_bytes*=2;
+                else
+                    s->iso_meta_window_bytes+=1024*1024;
+                if(s->iso_meta_window_bytes>NOVA_ISO_META_PAGE_BYTES)
+                    s->iso_meta_window_bytes=NOVA_ISO_META_PAGE_BYTES;
                 LOGI("NOVA_ISO_META_STAIR_V1: advance=%d->%d reason=adjacent-miss pos=%" PRId64,
                      previous, s->iso_meta_window_bytes, pos);
             }
@@ -1306,6 +1319,10 @@ static int nova_file_java_open_at(nova_session *s,int64_t target)
     /* Transactional commit: old connection stays valid until the fresh
      * exact-byte response has been validated and its stream is live. */
     nova_file_java_close_active(s);
+    if(s->mkv_rewind_data){
+        s->mkv_rewind_start=target;
+        s->mkv_rewind_size=0;
+    }
     s->file_conn=live_conn;
     s->file_stream=live_stream;
     s->file_conn_disconnect=disconnect;
@@ -1452,6 +1469,36 @@ static void nova_mkv_tail_join(nova_session *s)
 /* NOVA_MKV_RANGE_RETRY_V2: three attempts for a transient GET failure only.
  * A terminal 401/403/404 returns immediately, without scanning old data.
  * The committed media cursor is updated by the caller on success only. */
+/* NOVA_MKV_HEAD_REWIND_V1: the full first-Cluster header belongs to the
+ * continuous canonical GET even when FFmpeg temporarily visits tail Cues.
+ * Only replay previously verified bytes; never fabricate/suppress streams. */
+static void nova_mkv_head_rewind_store(nova_session *s,int64_t at,
+                                       const uint8_t *src,int got)
+{
+    if(!s || !s->mkv_rewind_data || !src || got<=0)return;
+    if(got>=NOVA_MKV_HEAD_REWIND_BYTES){
+        memcpy(s->mkv_rewind_data,src+got-NOVA_MKV_HEAD_REWIND_BYTES,
+               NOVA_MKV_HEAD_REWIND_BYTES);
+        s->mkv_rewind_start=at+got-NOVA_MKV_HEAD_REWIND_BYTES;
+        s->mkv_rewind_size=NOVA_MKV_HEAD_REWIND_BYTES;
+        return;
+    }
+    if(s->mkv_rewind_size<=0 ||
+       at!=s->mkv_rewind_start+s->mkv_rewind_size){
+        s->mkv_rewind_start=at;
+        s->mkv_rewind_size=0;
+    }
+    int overflow=s->mkv_rewind_size+got-NOVA_MKV_HEAD_REWIND_BYTES;
+    if(overflow>0){
+        memmove(s->mkv_rewind_data,s->mkv_rewind_data+overflow,
+                (size_t)(s->mkv_rewind_size-overflow));
+        s->mkv_rewind_start+=overflow;
+        s->mkv_rewind_size-=overflow;
+    }
+    memcpy(s->mkv_rewind_data+s->mkv_rewind_size,src,(size_t)got);
+    s->mkv_rewind_size+=got;
+}
+
 static int nova_mkv_seek_retry(nova_session *s,int64_t target)
 {
     if(target<0 || target>s->upstream_size)return AVERROR(EINVAL);
@@ -1459,6 +1506,14 @@ static int nova_mkv_seek_retry(nova_session *s,int64_t target)
     if(__atomic_load_n(&s->mkv_tail_ready,__ATOMIC_ACQUIRE) &&
        target>=s->mkv_tail_start && target<s->upstream_size){
         LOGI("NOVA_MKV_TAIL_WARM_V1: seek_hit=%" PRId64,target);
+        return 0;
+    }
+    if(s->file_stream && s->mkv_rewind_data && s->mkv_rewind_size>0 &&
+       s->upstream_pos==s->mkv_rewind_start+s->mkv_rewind_size &&
+       target>=s->mkv_rewind_start && target<s->upstream_pos){
+        LOGI("NOVA_MKV_HEAD_REWIND_V1: seek_hit=%" PRId64
+             " headEnd=%" PRId64 " cached=%d avoidedGet=1",
+             target,s->upstream_pos,s->mkv_rewind_size);
         return 0;
     }
     if(s->file_stream && target==s->file_cursor &&
@@ -1488,6 +1543,20 @@ static int nova_mkv_single_get_read(nova_session *s, uint8_t *dst, int bytes)
         s->file_cursor+=take;
         return take;
     }
+    if(s->file_stream && s->mkv_rewind_data && s->mkv_rewind_size>0 &&
+       s->upstream_pos==s->mkv_rewind_start+s->mkv_rewind_size &&
+       s->file_cursor>=s->mkv_rewind_start &&
+       s->file_cursor<s->upstream_pos){
+        int offset=(int)(s->file_cursor-s->mkv_rewind_start);
+        int available=s->mkv_rewind_size-offset;
+        int take=bytes<available?bytes:available;
+        memcpy(dst,s->mkv_rewind_data+offset,(size_t)take);
+        s->file_cursor+=take;
+        LOGI("NOVA_MKV_HEAD_REWIND_V1: replay=%d pos=%" PRId64
+             " headEnd=%" PRId64 " avoidedGet=1",
+             take,s->file_cursor,s->upstream_pos);
+        return take;
+    }
     if(s->file_cursor<0 || s->file_cursor>s->upstream_size)
         return AVERROR(EINVAL);
     if(s->file_cursor==s->upstream_size)return AVERROR_EOF;
@@ -1505,6 +1574,7 @@ static int nova_mkv_single_get_read(nova_session *s, uint8_t *dst, int bytes)
         }
         int got=nova_file_java_read(s,dst,bytes);
         if(got>0){
+            nova_mkv_head_rewind_store(s,at,dst,got);
             s->file_cursor=at+got;
             s->upstream_pos=at+got;
             __atomic_add_fetch(&s->startup_wire_bytes,(uint64_t)got,__ATOMIC_RELAXED);
@@ -1656,6 +1726,8 @@ static void session_free(nova_session *s)
     nova_iso_stop_pump(s);
     s->stopping=1;
     nova_mkv_tail_join(s);
+    free(s->mkv_rewind_data);
+    s->mkv_rewind_data=NULL;
     pthread_mutex_lock(&g_lock);
     if (g_opening_session == s)
         g_opening_session = NULL;
@@ -1819,6 +1891,10 @@ static nova_session *session_create_file(JNIEnv *env,const char *url,
     s->file_http_mode=1;
     s->multi_http_ready=1;
     s->resolver_vm=g_java_vm;
+    /* Failure to allocate disables only the optimization, never playback. */
+    s->mkv_rewind_data=malloc(NOVA_MKV_HEAD_REWIND_BYTES);
+    s->mkv_rewind_start=0;
+    s->mkv_rewind_size=0;
     s->upstream_pos=-1;
     s->upstream_size=-1;
     pthread_mutex_init(&s->io_lock,NULL);
@@ -2534,6 +2610,31 @@ static int nova_is_mkv_origin_url(const char *url)
     return end-url>=4 && strncasecmp(end-4,".mkv",4)==0;
 }
 
+/* NOVA_MKV_REAL_CONTAINER_V1: verify an EBML Matroska/WebM DocType
+ * against actual bytes of the already-opened WebDAV AVIO. A filename suffix
+ * alone cannot classify a container. Keep MP4/TS untouched. */
+static int nova_is_actual_mkv_header(nova_session *s)
+{
+    if(!s || !s->upstream || s->mode!=NOVA_MODE_FILE ||
+       s->upstream_pos!=0)return 0;
+    uint8_t head[256]={0};
+    int got=avio_read(s->upstream,head,sizeof(head));
+    int64_t reset=avio_seek(s->upstream,0,SEEK_SET);
+    s->upstream_pos=reset;
+    if(reset!=0 || got<16 ||
+       head[0]!=0x1a || head[1]!=0x45 ||
+       head[2]!=0xdf || head[3]!=0xa3)return 0;
+    for(int i=4;i+3<got;++i){
+        if(head[i]!=0x42 || head[i+1]!=0x82 ||
+           !(head[i+2]&0x80))continue;
+        int n=head[i+2]&0x7f;
+        if(i+3+n>got)continue;
+        if((n==8 && !memcmp(head+i+3,"matroska",8)) ||
+           (n==4 && !memcmp(head+i+3,"webm",4)))return 1;
+    }
+    return 0;
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
         JNIEnv *env, jclass cls, jstring jurl, jstring jheaders, jboolean jiso,
@@ -2553,11 +2654,21 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
         ? (*env)->GetStringUTFChars(env,jorigin_url,NULL) : NULL;
     const char *original_auth=jorigin_auth
         ? (*env)->GetStringUTFChars(env,jorigin_auth,NULL) : NULL;
-    const int mkv=(!jiso && origin && nova_is_mkv_origin_url(origin));
+    int mkv=(!jiso && origin && nova_is_mkv_origin_url(origin));
     nova_session *fresh=mkv ?
         session_create_file(env,origin,original_auth ? original_auth : "") :
         session_create(env,url,headers ? headers : "",jiso ? 1 : 0,
                        origin,original_auth);
+    /* Only a genuinely mislabelled EBML file uses a second open. */
+    if(fresh && !jiso && !mkv && origin && *origin &&
+       nova_is_actual_mkv_header(fresh)){
+        LOGI("NOVA_MKV_REAL_CONTAINER_V1: detected=1 urlMkv=0"
+             " promote_java=1");
+        session_free(fresh);
+        fresh=session_create_file(env,origin,
+                                  original_auth ? original_auth : "");
+        mkv=fresh && fresh->file_http_mode;
+    }
     if(fresh && !jiso && origin && !mkv &&
        *origin && strcmp(origin,url)!=0){
             fresh->origin_url=strdup(origin);

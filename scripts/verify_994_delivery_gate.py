@@ -61,7 +61,7 @@ def check(apk: Path, report_dir: Path) -> dict:
     ui = validated(report_dir / "994-startup-ui-runtime.json",
                    "percent spinner visual/runtime", digest)
     assert ui.get("integer_buffer_percent_0_to_100") is True
-    assert ui.get("refresh_interval_ms") == 500
+    assert ui.get("refresh_interval_ms") == 200
     assert ui.get("native_resident_over_resume_threshold") is True
     assert ui.get("loading_text_and_spinner_exit_after_first_resume") is True
     assert ui.get("title_hides_independently") is True
@@ -70,7 +70,7 @@ def check(apk: Path, report_dir: Path) -> dict:
     )
     return {"status": "PASS", "apk_sha256": digest,
             "goals": ["ISO-parallel", "MKV-within-100ms-of-993", "ISO-no-rebase",
-                      "early-dual-lane", "500ms-percent-loading-overlay"]}
+                      "early-dual-lane", "200ms-percent-loading-overlay"]}
 
 
 def main():

@@ -47,7 +47,7 @@ def check(apk, log, reports):
     if not any(t.start()<hidden.start() for t in ticks):
         raise RuntimeError("Percent text was never updated before hide")
     # Timing is sourced from actual displayed UI ticks. A short playback can
-    # legitimately exit before a second 500ms tick; never synthesize one.
+    # legitimately exit before a second 200ms tick; never synthesize one.
     intervals=[]
     for line in live.splitlines():
         if "NOVA_994_UI_TICK:" in line:
@@ -55,14 +55,14 @@ def check(apk, log, reports):
             if m:
                 h,mi,se,ms=map(int,m.groups())
                 intervals.append(((h*60+mi)*60+se)*1000+ms)
-    if len(intervals)>1 and any(abs((z-a)-500)>220 for a,z in zip(intervals,intervals[1:])):
-        raise RuntimeError("Observed UI tick spacing differs from 500ms refresh cadence")
+    if len(intervals)>1 and any(abs((z-a)-200)>180 for a,z in zip(intervals,intervals[1:])):
+        raise RuntimeError("Observed UI tick spacing differs from 200ms refresh cadence")
     # Rendering-specific events validate actual UI. The interval constant is
     # also independently compiled into the signed app and checked in CI.
     report={
       "status":"PASS","apk_sha256":digest,
       "integer_buffer_percent_0_to_100":True,
-      "refresh_interval_ms":500,
+      "refresh_interval_ms":200,
       "native_resident_over_resume_threshold":True,
       "loading_text_and_spinner_exit_after_first_resume":True,
       "title_hides_independently":True,

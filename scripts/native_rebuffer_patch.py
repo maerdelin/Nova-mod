@@ -107,8 +107,8 @@ static void nova_startup_overlay_milestone(const char *url,int state)
     dlclose(h);
 }
 /* Report actual effective resident bytes and first-resume threshold.
- * The Java overlay samples the resulting percentage every 500 ms;
- * AVOS publishes at 250 ms to avoid a stale sample on the UI tick. */
+ * The Java overlay samples the resulting percentage every 200 ms;
+ * AVOS publishes at 100 ms to avoid a stale sample on the UI tick. */
 static void nova_startup_overlay_buffer_percent(
         const char *url,int64_t resident,int64_t resume)
 {
@@ -158,7 +158,7 @@ static void *_rebuffer_thread( void *data )
                      * the first decoded frame. AVOS is authoritative for
                      * both numerator and first-resume denominator. */
                     int now_percent_ms=atime();
-                    if(now_percent_ms-last_percent_report_ms>=250){
+                    if(now_percent_ms-last_percent_report_ms>=100){
                         last_percent_report_ms=now_percent_ms;
                         if(nova_startup_ui_phase(s->src.url)<3)
                             nova_startup_overlay_buffer_percent(

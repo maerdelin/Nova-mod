@@ -137,7 +137,7 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     :reschedule
     iget-object v0, p0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mView:Landroid/view/View;
     if-eqz v0, :done
-    const-wide/16 v1, 0x1f4
+    const-wide/16 v1, 0xc8
     invoke-virtual {v0, p0, v1, v2}, Landroid/view/View;->postDelayed(Ljava/lang/Runnable;J)Z
     goto :done
     :finish
@@ -242,7 +242,7 @@ def patch(root: Path):
     target=proxy.parent/"NovaStartupOverlay.smali"
     if target.exists():raise RuntimeError("994 overlay already installed")
     target.write_text(OVERLAY)
-    print("NOVA_STARTUP_994_UI_PATCH=PASS retained loading text; centered 500ms integer buffer percent; native resume")
+    print("NOVA_STARTUP_994_UI_PATCH=PASS retained loading text; centered 200ms integer buffer percent; native resume")
 
 if __name__=="__main__":
     import argparse
