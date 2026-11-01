@@ -17,6 +17,13 @@ class XLock(unittest.TestCase):
   self.assertIn("if(locked_early>0)",N)
   self.assertIn('android:text="0%"',U)
   self.assertIn("nativeStartupPercent()I",U)
+ def test_iso_preprobe_reads_verified_query_not_stripped_raw_url(self):
+  # Real #1035 log: RAW opened novatransport://1/main.m2ts without query,
+  # while the authoritative TS policy later consumed STREAM.src_query.
+  self.assertIn('NOVA_ISO_PREPROBE_QUERY_SOURCE_V1',N)
+  self.assertRegex(N,r'nova_startup_iso_known_resume\(\s*s->src_query\s*,')
+  self.assertNotRegex(N,r'nova_startup_iso_known_resume\(\s*url\s*,')
+  self.assertIn('strstr(s->src_query, "&nova_iso=1&")',N)
  def test_lock_is_immutable_across_probe_and_producer(self):
   self.assertIn("__atomic_compare_exchange_n(",N)
   self.assertIn("startup_resume_fixed_bytes,&expected,resume,0",N)

@@ -928,7 +928,8 @@ static void nova_raw_stats(NOVA_RAW_PREFETCH *raw,
     pthread_mutex_unlock(&raw->mutex);
 }
 
-/* ISO title size + duration are carried in the verified transport URL.
+/* ISO title size + duration live in STREAM.src_query. The RAW AVIO URL
+ * has already been stripped of its query by the stream source layer.
  * This is the earliest valid X (before FFmpeg probe). Unknown MKV/MP4 X
  * is NOT substituted with a fake 64MiB percentage denominator. */
 static uint64_t nova_startup_iso_query_u64(const char *url,const char *key)
@@ -1056,8 +1057,11 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
     raw->enabled = 1;
     uint64_t iso_early_x=0;
+    /* NOVA_ISO_PREPROBE_QUERY_SOURCE_V1: unlike RAW url, src_query still
+     * carries the verified ISO title size and duration; old signed #1035
+     * confirmed RAW url=novatransport://1/main.m2ts WITHOUT these keys. */
     int iso_early_resume=nova_startup_iso_known_resume(
-        url,raw->capacity_bytes,&iso_early_x);
+        s->src_query,raw->capacity_bytes,&iso_early_x);
     if(iso_early_resume>0){
         int no_x=0;
         if(__atomic_compare_exchange_n(

@@ -45,6 +45,11 @@ def check(apk, log, reports):
     xlock=re.search(r"NOVA_STARTUP_X_LOCK_V1: source=(?:iso-title-metadata|ffmpeg-probe) x=(\d+) resume=(\d+)",live)
     if not xlock or not lock or int(xlock.group(2))!=int(lock.group(2)):
         raise RuntimeError("No real-X first threshold lock with consistent UI denominator")
+    if xlock.group(1) == "iso-title-metadata" and (
+        not probe or xlock.start() >= probe.start()):
+        raise RuntimeError("ISO X was not locked from verified title metadata BEFORE FFmpeg probe")
+    if xlock.group(1) != "iso-title-metadata":
+        raise RuntimeError("ISO test used post-probe X; stripped RAW URL likely lost s->src_query metadata")
     offered=[int(m.group(1)) for m in re.finditer(r"NOVA_(?:EARLY_PERCENT_V2|STARTUP_BUFFER_PERCENT_V1):[^\n]*resume=(\d+)",live)]
     if not offered or any(x!=int(lock.group(2)) for x in offered):
         raise RuntimeError("Percent denominator changed during startup")
