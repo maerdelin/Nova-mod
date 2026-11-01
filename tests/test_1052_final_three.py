@@ -48,7 +48,9 @@ int main(void) {
         self.assertIn("metric=unique_contiguous_prefix",C)
         self.assertIn("AVOS reports live RAW+packet buffering",C)
     def test_iso_early_verified_pump_and_tail_range(self):
-        self.assertIn("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1",C)
+        # #1053 intentionally RESTORES #1049 verified-then-pump order.
+        self.assertIn("NOVA_1053_ISO_PUMP_GUARD_V1",C)
+        self.assertNotIn("NOVA_1052_ISO_EARLY_MOVIE_PUMP_V1",C)
         self.assertIn("if((m2ts||ts188) && rewind==0",C)
         self.assertIn("nova_iso_stop_pump(s);",C)
         self.assertIn("NOVA_1052_ISO_META_FETCH_V1",C)

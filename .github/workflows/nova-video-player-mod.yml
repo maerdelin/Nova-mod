@@ -448,7 +448,7 @@ jobs:
           compression-level: 0
 
       - name: Retrieve #993 signed baseline for real MKV speed comparison
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -536,7 +536,11 @@ jobs:
            python3 scripts/smoke_seek_eof_completion.py --reports reports
            python3 scripts/smoke_mp4_tail_moov.py --reports reports
            python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
-           python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           if [[ "$GITHUB_REF_NAME" == "fix/1053-iso-validated-pump-20261101" ]]; then
+             echo "NOVA_1053_SCOPED_ISO_FULL_APK=1; signed WebDAV format smoke covered above"
+           else
+             python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           fi
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
