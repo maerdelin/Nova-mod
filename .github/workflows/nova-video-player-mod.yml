@@ -430,7 +430,7 @@ jobs:
           (cd dist && sha256sum Nova_Video_Player_mod_SIGNED.apk > SHA256SUMS.txt)
 
       - name: Upload runnable direct-transport test APK
-        if: github.ref != 'refs/heads/build/994-all-five-validation-20261031' && github.ref != 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
+        if: github.ref != 'refs/heads/build/994-all-five-validation-20261031' && github.ref != 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' && github.ref != 'refs/heads/fix/1035-all-formats-first-x-locked-20261101'
         uses: actions/upload-artifact@v4
         with:
           name: Nova-direct-transport-runnable-${{ github.run_number }}
@@ -442,7 +442,7 @@ jobs:
           compression-level: 0
 
       - name: Retrieve #993 signed baseline for real MKV speed comparison
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -580,7 +580,7 @@ jobs:
       # 994: the signed APK exists inside this CI job, but is not a
       # deliverable until five goal-specific runtime artifacts match its SHA.
       - name: Verify all five 994 goals before publishing installable APK
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101'
         shell: bash
         run: |
           set -euo pipefail
