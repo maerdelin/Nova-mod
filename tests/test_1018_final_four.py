@@ -20,7 +20,7 @@ class FinalFourSourceGuards(unittest.TestCase):
         self.assertIn("last_percent_report_ms>=100",N)
         self.assertIn("pst->buffer_used +",N)
         self.assertIn("(int64_t)pst->buffer2_used",N)
-        self.assertIn("(int64_t)s->rebuffer_resume_bytes",N)
+        self.assertIn("(int64_t)startup_resume",N)
         self.assertIn("const-wide/16 v1, 0xc8",U)
         self.assertIn("abs((z-a)-200)>180",S)
         self.assertIn('ui.get("refresh_interval_ms") == 200',G)
