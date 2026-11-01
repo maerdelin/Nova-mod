@@ -12,10 +12,12 @@ permissions:
 
 concurrency:
   group: nova-video-player-mod-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' }}
 
 jobs:
   build:
+    env:
+      NOVA_1054_EXACT_1053_BASELINE: ${{ github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' && 'v6.6.2' || 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -114,7 +116,7 @@ jobs:
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo | sudo tee /usr/local/bin/repo >/dev/null
           sudo chmod a+x /usr/local/bin/repo
 
-      - name: Resolve and download official latest stable APK
+      - name: Resolve verified official APK (1054 exact-1053 baseline; others latest)
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
