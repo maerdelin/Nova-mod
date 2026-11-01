@@ -69,7 +69,7 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
 
 .method public static armEarly(Landroid/view/View;I)V
     .locals 3
-    if-nez p0, :early_done
+    if-eqz p0, :early_done
     if-nez p1, :early_done
     # Only the actual spinner root may own this updater.
     const-string v0, "nova_buffer_percent"
