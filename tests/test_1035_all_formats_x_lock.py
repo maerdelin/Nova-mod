@@ -32,6 +32,8 @@ class XLock(unittest.TestCase):
   self.assertIn("(int64_t)pst->buffer2_used",N)
  def test_ui_is_armed_at_spinner(self):
   self.assertIn("armEarly(Landroid/view/View;I)V",U)
+  self.assertIn("if-eqz p0, :early_done",U)
+  self.assertNotIn("if-nez p0, :early_done",U)
   self.assertIn("nativeStartupResidentBytes()J",U)
   self.assertIn('const-string v3, "<1%"',U)
 if __name__=="__main__":
