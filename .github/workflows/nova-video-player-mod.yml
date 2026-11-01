@@ -47,7 +47,7 @@ jobs:
           # Isolate pinned host-only build tools; do not alter APK dependencies.
           if ! command -v meson >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
             echo 'CI preflight: provision pinned Meson and FFmpeg without apt'
-            python3 -m venv .nova-ci-deps
+           python3 -m venv .nova-ci-deps
             timeout 180s .nova-ci-deps/bin/python -m pip install --disable-pip-version-check --no-input --no-cache-dir 'meson==1.7.0' 'imageio-ffmpeg==0.6.0'
             mkdir -p .nova-ci-bin
             ln -s "$PWD/.nova-ci-deps/bin/meson" .nova-ci-bin/meson
@@ -95,6 +95,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_startup_fourfix.py -v
           python3 -m unittest discover -s tests -p test_994_source_guards.py -v
           python3 -m unittest discover -s tests -p test_994_percent_native.py -v
+           python3 -m unittest discover -s tests -p test_1035_all_formats_x_lock.py -v
            python3 -m unittest discover -s tests -p test_1018_final_four.py -v
           python3 -m py_compile scripts/startup_loading_994_patch.py
           python3 -m py_compile scripts/mkv_bbc_cue_seek_patch.py scripts/iso_track_metadata_patch.py scripts/smoke_noniso_single_get_android.py
@@ -509,27 +510,27 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
-            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # The actual signed player's WebDAV MKV weak-network test below
             # verifies one-use signed redirects, first frame, Range and Seek.
             # A standalone app_process on Android 11 was OOM-killed twice.
-            python3 scripts/smoke_direct_webdav.py --reports reports
-            python3 scripts/smoke_literange4_concurrency.py --reports reports
-            python3 scripts/smoke_literange4_http403.py --reports reports
-            python3 scripts/smoke_literange4_http429.py --reports reports
-            python3 scripts/smoke_literange4_http403_repeat.py --reports reports
-            python3 scripts/smoke_literange4_keepalive.py --reports reports
-            python3 scripts/smoke_weaknet_webdav_formats.py --reports reports
-            python3 scripts/smoke_startup_mkv_canonical_first.py --reports reports
-            python3 scripts/smoke_iso_parallel_994.py --iso fixture/iso994.iso --apk dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/994-iso-device
-            python3 scripts/smoke_994_ui_runtime.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --iso-log reports/994-iso-device/994-iso-logcat.txt --reports reports
+           python3 scripts/smoke_direct_webdav.py --reports reports
+           python3 scripts/smoke_literange4_concurrency.py --reports reports
+           python3 scripts/smoke_literange4_http403.py --reports reports
+           python3 scripts/smoke_literange4_http429.py --reports reports
+           python3 scripts/smoke_literange4_http403_repeat.py --reports reports
+           python3 scripts/smoke_literange4_keepalive.py --reports reports
+           python3 scripts/smoke_weaknet_webdav_formats.py --reports reports
+           python3 scripts/smoke_startup_mkv_canonical_first.py --reports reports
+           python3 scripts/smoke_iso_parallel_994.py --iso fixture/iso994.iso --apk dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/994-iso-device
+           python3 scripts/smoke_994_ui_runtime.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --iso-log reports/994-iso-device/994-iso-logcat.txt --reports reports
             # Check remaining independent playback regressions before the noisy
             # comparative MKV benchmark so a speed variance cannot hide faults.
-            python3 scripts/smoke_playback_completion.py --reports reports
-            python3 scripts/smoke_seek_eof_completion.py --reports reports
-            python3 scripts/smoke_mp4_tail_moov.py --reports reports
-            python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
-            python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           python3 scripts/smoke_playback_completion.py --reports reports
+           python3 scripts/smoke_seek_eof_completion.py --reports reports
+           python3 scripts/smoke_mp4_tail_moov.py --reports reports
+           python3 scripts/smoke_mp4_raw_seek_race.py --reports reports
+           python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
@@ -544,7 +545,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
-            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
+           python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
              # Signed APK ART probe: zero remote resume PUT; normal upload still works.
              python3 scripts/smoke_webdav_resume_local_only.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 

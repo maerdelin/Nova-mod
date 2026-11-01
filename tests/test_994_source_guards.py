@@ -25,7 +25,7 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("nova_iso_stop_pump(s);\n        /* ISO scan finished",C)
         self.assertIn("NOVA_STARTUP_BUFFER_PREARM_V1",AVOS)
         self.assertIn("NOVA_FIRST_RENDER_HOLD_V1",AVOS)
-        self.assertIn("s->rebuffer_resume_bytes :",AVOS)
+        self.assertIn("startup_resume :",AVOS)
         self.assertIn("s->rebuffer_low_bytes)",AVOS)
 
     def test_02_mkv_real_byte_warmup_and_seek_integrity(self):
@@ -75,17 +75,19 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn('android:layout_width="52.0dp"',UI)
         self.assertIn('const-wide/16 v1, 0xc8', UI)  # 200 milliseconds
         self.assertIn("nova_transport_report_startup_buffer",C)
-        self.assertIn("resident_bytes>=resume_bytes?100",C)
-        self.assertIn("(int)((resident_bytes*100)/resume_bytes)",C)
+        self.assertIn("resident_bytes>=locked?100",C)
+        self.assertIn("(int)((resident_bytes*100)/locked)",C)
         self.assertIn("s->startup_buffer_percent,percent",C)
         self.assertIn("nova_startup_overlay_buffer_percent",AVOS)
         unfreeze=AVOS.index("stream_un_pause( s, 0 );")
         complete=AVOS.index("nova_startup_overlay_milestone(s->src.url,3);",unfreeze)
         self.assertLess(unfreeze,complete)  # overlay exits after true resume
         self.assertIn("ready && !active && !s->paused ? 3 : 2",AVOS)
-        self.assertIn("(int64_t)s->rebuffer_resume_bytes",AVOS)
+        self.assertIn("(int64_t)startup_resume",AVOS)
         self.assertIn("pst->buffer_used +",AVOS)
         self.assertIn("(int64_t)pst->buffer2_used",AVOS)
+        self.assertIn("NOVA_STARTUP_DENOM_LOCK_V1",C)
+        self.assertIn("startup_resume_fixed_bytes",AVOS)
         self.assertIn("apply_994_startup_ui(root)",APPLY)
         self.assertIn("NOVA_STARTUP_UI_PHASE_V1",C)
         self.assertIn("nova_startup_overlay_milestone",AVOS)

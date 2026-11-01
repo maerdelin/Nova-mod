@@ -306,6 +306,14 @@ static void *_rebuffer_thread( void *data )
                     int resident = resident64 > INT_MAX ? INT_MAX : (int)resident64;
                     int raw_used = pst->buffer2_used;
                     int packet_used = pst->buffer_used;
+                    /* Before X there is no UI denominator. Afterwards the
+                     * first-resume threshold is immutable, and playback must
+                     * hold/resume at exactly the threshold shown in the UI. */
+                    int startup_phase=nova_startup_ui_phase(s->src.url);
+                    int startup_resume=__atomic_load_n(
+                        &s->startup_resume_fixed_bytes,__ATOMIC_ACQUIRE);
+                    int effective_resume=startup_phase<3 && startup_resume>0 ?
+                        startup_resume : s->rebuffer_resume_bytes;
                     int parsed_eof = _nova_rebuffer_eof( s );
                     int source_eof = __atomic_load_n(
                         &s->raw_prefetch_eof, __ATOMIC_ACQUIRE );
@@ -319,10 +327,10 @@ static void *_rebuffer_thread( void *data )
                     int now_percent_ms=atime();
                     if(now_percent_ms-last_percent_report_ms>=100){
                         last_percent_report_ms=now_percent_ms;
-                        if(nova_startup_ui_phase(s->src.url)<3)
+                        if(startup_phase<3 && startup_resume>0)
                             nova_startup_overlay_buffer_percent(
                                 s->src.url,(int64_t)resident,
-                                (int64_t)s->rebuffer_resume_bytes);
+                                (int64_t)startup_resume);
                     }
 
                     /* Before the first resume, retain the already-submitted
@@ -341,7 +349,7 @@ static void *_rebuffer_thread( void *data )
                          * rebuffer hold is active; phase 3 is emitted only
                          * AFTER stream_un_pause below. Fast-start playback
                          * that never needed a hold can complete immediately. */
-                        int ready=(resident>=s->rebuffer_resume_bytes ||
+                        int ready=(resident>=effective_resume ||
                                    source_eof || parsed_eof || s->stream_end);
                         nova_startup_overlay_milestone(s->src.url,
                             ready && !active && !s->paused ? 3 : 2);
@@ -362,8 +370,7 @@ static void *_rebuffer_thread( void *data )
                             !s->paused && !s->stream_end &&
                             s->video_error == VE_NO_ERROR &&
                             !parsed_eof && !source_eof &&
-                            resident < (nova_startup_ui_phase(s->src.url)<3 ?
-                                s->rebuffer_resume_bytes :
+                            resident < (startup_phase<3 ? effective_resume :
                                 s->rebuffer_low_bytes) ) {
                             __atomic_store_n(
                                 &s->rebuffering, 1, __ATOMIC_RELEASE );
@@ -405,7 +412,7 @@ static void *_rebuffer_thread( void *data )
 
                         if( source_eof || parsed_eof || s->stream_end ||
                             s->video_error != VE_NO_ERROR ||
-                            resident >= s->rebuffer_resume_bytes ) {
+                            resident >= effective_resume ) {
                             const char *reason =
                                 s->video_error != VE_NO_ERROR ? "error" :
                                 (source_eof || parsed_eof || s->stream_end) ?
@@ -701,7 +708,8 @@ static void *nova_raw_thread(void *opaque)
                 now_us-raw->early_percent_last_us>=200000;
             if(report_early)raw->early_percent_last_us=now_us;
             int64_t resident_early=raw->used_bytes;
-            int64_t resume_early=raw->s->rebuffer_resume_bytes;
+            int64_t resume_early=__atomic_load_n(
+                &raw->s->startup_resume_fixed_bytes,__ATOMIC_ACQUIRE);
             pthread_cond_broadcast(&raw->can_read);
             pthread_mutex_unlock(&raw->mutex);
             if(report_early && resume_early>0)
@@ -920,6 +928,43 @@ static void nova_raw_stats(NOVA_RAW_PREFETCH *raw,
     pthread_mutex_unlock(&raw->mutex);
 }
 
+/* ISO title size + duration are carried in the verified transport URL.
+ * This is the earliest valid X (before FFmpeg probe). Unknown MKV/MP4 X
+ * is NOT substituted with a fake 64MiB percentage denominator. */
+static uint64_t nova_startup_iso_query_u64(const char *url,const char *key)
+{
+    if(!url || !strstr(url,"&nova_iso=1&"))return 0;
+    const char *p=strstr(url,key);
+    if(!p)return 0;
+    p+=strlen(key);
+    if(*p<'0' || *p>'9')return 0;
+    char *end=NULL;
+    unsigned long long v=strtoull(p,&end,10);
+    if(end==p || (*end!='&' && *end!='\0'))return 0;
+    return (uint64_t)v;
+}
+static int nova_startup_iso_known_resume(const char *url,int64_t raw_cap,
+                                         uint64_t *out_x)
+{
+    *out_x=0;
+    uint64_t bytes=nova_startup_iso_query_u64(url,"&nova_iso_title_size=");
+    uint64_t us=nova_startup_iso_query_u64(url,"&nova_iso_duration_us=");
+    if(!bytes || us<10ULL*1000000ULL || us>24ULL*3600ULL*1000000ULL)
+        return 0; /* No valid X yet: show 0%, do not lock anything. */
+    const uint64_t max_x=(uint64_t)(INT_MAX/5);
+    uint64_t whole=bytes/us,remain=bytes%us;
+    uint64_t x=whole>max_x/1000000ULL?max_x:
+        whole*1000000ULL+(remain*1000000ULL)/us;
+    if(x>max_x)x=max_x;
+    if(x<8192ULL)return 0;
+    uint64_t desired=3ULL*x;
+    uint64_t cap=(uint64_t)(raw_cap>0?raw_cap:NOVA_RAW_FALLBACK_CAP_BYTES);
+    if(desired>cap)desired=cap;
+    if(desired==0 || desired>INT_MAX)return 0;
+    *out_x=x;
+    return (int)desired;
+}
+
 static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
                          AVFormatContext *fmt, const char *url,
                          AVDictionary **options)
@@ -1010,8 +1055,25 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
     fmt->pb = raw->consumer;
     fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
     raw->enabled = 1;
+    uint64_t iso_early_x=0;
+    int iso_early_resume=nova_startup_iso_known_resume(
+        url,raw->capacity_bytes,&iso_early_x);
+    if(iso_early_resume>0){
+        int no_x=0;
+        if(__atomic_compare_exchange_n(
+                &s->startup_resume_fixed_bytes,&no_x,iso_early_resume,0,
+                __ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)){
+            serprintf("NOVA_STARTUP_X_LOCK_V1: source=iso-title-metadata x=%llu resume=%d\n",
+                (unsigned long long)iso_early_x,iso_early_resume);
+        }
+    }
+    int locked_early=__atomic_load_n(
+        &s->startup_resume_fixed_bytes,__ATOMIC_ACQUIRE);
+    /* The video engine may need a temporary safety fallback before X;
+     * it must NOT enter the user-visible percent calculation. */
     s->rebuffer_low_bytes = NOVA_RAW_FALLBACK_LOW_BYTES;
-    s->rebuffer_resume_bytes = NOVA_RAW_FALLBACK_RESUME_BYTES;
+    s->rebuffer_resume_bytes = locked_early>0 ?
+        locked_early : NOVA_RAW_FALLBACK_RESUME_BYTES;
     s->rebuffer_capacity_bytes = NOVA_RAW_FALLBACK_CAP_BYTES;
     __atomic_store_n(&s->raw_prefetch_enabled, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s->raw_prefetch_eof, 0, __ATOMIC_RELEASE);
@@ -1022,6 +1084,10 @@ static int nova_raw_open(NOVA_RAW_PREFETCH *raw, STREAM *s,
               s->rebuffer_low_bytes,s->rebuffer_resume_bytes,
               s->rebuffer_capacity_bytes);
 
+    /* At known X publish zero baseline immediately, before first RAW byte.
+     * Unknown X publishes no denominator; JNI keeps returning initial 0%. */
+    if(locked_early>0)
+        nova_startup_overlay_raw_percent(s->src.url,0,locked_early);
     ret = pthread_create(&raw->thread, NULL, nova_raw_thread, raw);
     if( ret ) {
         ret = AVERROR(ret);
@@ -1276,7 +1342,26 @@ DYNAMIC_POLICY = r'''
             clamped = 1;
         }
 
+        /* First reliable X for MKV/MP4/other metadata-dependent media.
+         * Lock in THIS call, not at the following 100ms UI/stat poll. */
+        if(nova_x>0 && resume>0){
+            int expected=0;
+            if(__atomic_compare_exchange_n(
+                    &s->startup_resume_fixed_bytes,&expected,resume,0,
+                    __ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))
+                serprintf("NOVA_STARTUP_X_LOCK_V1: source=ffmpeg-probe x=%llu resume=%d\n",
+                    (unsigned long long)nova_x,resume);
+        }
         nova_raw_set_policy(&ff_p->raw, low, resume);
+        int startup_known=__atomic_load_n(
+            &s->startup_resume_fixed_bytes,__ATOMIC_ACQUIRE);
+        if(startup_known>0){
+            int raw_now=0,cap_now=0;
+            nova_raw_stats(&ff_p->raw,&raw_now,&cap_now);
+            /* Publish actual live RAW bytes as soon as the first X exists.
+             * Packet+RAW statistics take over when queues are initialized. */
+            nova_startup_overlay_raw_percent(s->src.url,raw_now,startup_known);
+        }
         serprintf(
             "NOVA_RAW_FIXED128_POLICY: mode=%s size=%llu duration_ms=%d x_bytes_per_sec=%llu requested_low=%llu requested_resume=%llu low=%d resume=%d capacity=%d packet_handoff=%d max_resident=%d clamped=%d\n",
             nova_x > 0 ? "average" : "fallback",
@@ -1343,6 +1428,7 @@ def patch_stream_h(path: Path) -> None:
         "\tvolatile int\tstartup_first_sink_logged;\n"
         "\tint\t\trebuffer_low_bytes;\n"
         "\tint\t\trebuffer_resume_bytes;\n"
+        "\tvolatile int\tstartup_resume_fixed_bytes;\n"
         "\tint\t\trebuffer_capacity_bytes;\n"
         r"\2",
         "STREAM tail raw buffering fields",

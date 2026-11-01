@@ -315,6 +315,7 @@ typedef struct nova_session {
     /* NOVA_EARLY_PERCENT_V2: always the live, not cumulative, buffer. */
     volatile int64_t startup_resident_bytes;
     volatile int64_t startup_resume_bytes;
+    volatile int startup_resume_mismatch_reported;
     volatile int startup_authoritative_seen;
     volatile uint64_t startup_wire_bytes;
     int64_t startup_speed_sample_ms;
@@ -2492,6 +2493,27 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeStartupResid
     return n>0 ? (jlong)n : 0;
 }
 
+/* First valid startup threshold wins for this session. The first-RAW
+ * publisher and the later AVOS packet+RAW authority MUST use this SAME
+ * denominator until the spinner finishes. It is never reset at probe_done. */
+static int64_t nova_startup_fixed_denominator(nova_session *s,int64_t offered)
+{
+    if(offered<=0)return 0;
+    int64_t zero=0;
+    if(__atomic_compare_exchange_n(&s->startup_resume_bytes,&zero,offered,0,
+            __ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))
+        LOGI("NOVA_STARTUP_DENOM_LOCK_V1: generation=%" PRIu64
+             " resume=%" PRId64,s->generation,offered);
+    int64_t locked=__atomic_load_n(&s->startup_resume_bytes,__ATOMIC_ACQUIRE);
+    if(locked!=offered &&
+       !__atomic_exchange_n(&s->startup_resume_mismatch_reported,1,
+                            __ATOMIC_ACQ_REL))
+        LOGE("NOVA_STARTUP_DENOM_MISMATCH_V1: generation=%" PRIu64
+             " locked=%" PRId64 " offered=%" PRId64,
+             s->generation,locked,offered);
+    return locked;
+}
+
 /* First verified RAW bytes are published directly by the RAW producer
  * during FFmpeg probe, not waiting for parser stats or first frame.
  * The AVOS source replaces these provisional stats when ready. */
@@ -2506,13 +2528,13 @@ void nova_transport_report_startup_raw(uint64_t generation,
     if(phase<3 &&
        !__atomic_load_n(&s->startup_authoritative_seen,__ATOMIC_ACQUIRE)){
         if(resident<0)resident=0;
-        int p=resident>=resume?100:(int)((resident*100)/resume);
+        int64_t locked=nova_startup_fixed_denominator(s,resume);
+        int p=resident>=locked?100:(int)((resident*100)/locked);
         __atomic_store_n(&s->startup_resident_bytes,resident,__ATOMIC_RELEASE);
-        __atomic_store_n(&s->startup_resume_bytes,resume,__ATOMIC_RELEASE);
         __atomic_store_n(&s->startup_buffer_percent,p,__ATOMIC_RELEASE);
         LOGI("NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=%" PRIu64
              " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
-             generation,resident,resume,p);
+             generation,resident,locked,p);
     }
     session_release(s);
 }
@@ -2527,18 +2549,18 @@ void nova_transport_report_startup_buffer(uint64_t generation,
     if(resume_bytes<=0)return;
     nova_session *s=session_acquire(generation);
     if(!s)return;
+    int64_t locked=nova_startup_fixed_denominator(s,resume_bytes);
     int percent=resident_bytes<=0?0:
-        resident_bytes>=resume_bytes?100:
-        (int)((resident_bytes*100)/resume_bytes);
+        resident_bytes>=locked?100:
+        (int)((resident_bytes*100)/locked);
     if(percent<0)percent=0;
     if(percent>100)percent=100;
     __atomic_store_n(&s->startup_resident_bytes,resident_bytes,__ATOMIC_RELEASE);
-    __atomic_store_n(&s->startup_resume_bytes,resume_bytes,__ATOMIC_RELEASE);
     __atomic_store_n(&s->startup_buffer_percent,percent,__ATOMIC_RELEASE);
     __atomic_store_n(&s->startup_authoritative_seen,1,__ATOMIC_RELEASE);
     LOGI("NOVA_STARTUP_BUFFER_PERCENT_V1: generation=%" PRIu64
          " resident=%" PRId64 " resume=%" PRId64 " percent=%d",
-         generation,resident_bytes,resume_bytes,percent);
+         generation,resident_bytes,locked,percent);
     session_release(s);
 }
 

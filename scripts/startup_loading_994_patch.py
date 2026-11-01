@@ -71,6 +71,11 @@ OVERLAY = r'''.class public final Lcom/archos/mediacenter/video/player/NovaStart
     .locals 3
     if-nez p0, :early_done
     if-nez p1, :early_done
+    # Only the actual spinner root may own this updater.
+    const-string v0, "nova_buffer_percent"
+    invoke-virtual {p0, v0}, Landroid/view/View;->findViewWithTag(Ljava/lang/Object;)Landroid/view/View;
+    move-result-object v0
+    if-eqz v0, :early_done
     sget-object v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->sCurrent:Lcom/archos/mediacenter/video/player/NovaStartupOverlay;
     if-eqz v0, :early_new
     iget-object v1, v0, Lcom/archos/mediacenter/video/player/NovaStartupOverlay;->mView:Landroid/view/View;
