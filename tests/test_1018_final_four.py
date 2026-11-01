@@ -22,7 +22,11 @@ class FinalFourSourceGuards(unittest.TestCase):
         self.assertIn("(int64_t)pst->buffer2_used",N)
         self.assertIn("(int64_t)startup_resume",N)
         self.assertIn("const-wide/16 v1, 0xc8",U)
-        self.assertIn("abs((z-a)-200)>180",S)
+        self.assertIn("median_tick_interval_ms",S)
+        self.assertIn("within_150_350ms_ratio",S)
+        self.assertIn("outlier_tick_intervals_ms",S)
+        self.assertIn("180<=median_delta<=260",S)
+        self.assertIn("rate<0.90 or max_gap>1000",S)
         self.assertIn('ui.get("refresh_interval_ms") == 200',G)
         self.assertNotIn("nativeStartupBytes()J",U)
     def test_mkv_container_not_suffix_only(self):
