@@ -84,6 +84,9 @@ static int64_t avio_seek(mock_io *io, int64_t offset, int whence) {
     ++io->seeks;
     return io->pos;
 }
+/* 1052: mock the monotonic timing helper used only for UDF fetch logs.
+ * Keep the extracted production metadata algorithm compiled as-is. */
+static int64_t nova_iso_uptime_ms(void) { return 1000; }
 static int read_exact(mock_io *io, uint8_t *dst, int bytes) {
     if (io->fail_reads > 0) {
         --io->fail_reads;
