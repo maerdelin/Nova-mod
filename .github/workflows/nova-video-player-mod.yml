@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
@@ -217,6 +217,9 @@ jobs:
           python3 scripts/startup_boot_raw_diag.py --native native-src/native/avos
           python3 scripts/startup_onepass_speed_patch.py --native native-src/native/avos
           python3 scripts/startup_staged_decode_patch.py --native native-src/native/avos
+          grep -Fq 'NOVA_60FPS_SYSTEM_FORENSICS_V2' native-src/native/avos/Source/stream.c
+          grep -Fq 'nova_60fps_note_late' native-src/native/avos/Source/codec_sfdec2.c
+          grep -Fq 'nova_startup_overlay_raw_percent' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_FIRST_RENDER_HOLD_V1' native-src/native/avos/Source/stream_video.c
           grep -Fq 'NOVA_STAGED_DECODE_64K_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_STARTUP_ONEPASS_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
@@ -301,6 +304,8 @@ jobs:
               grep -aq "$marker" "$transport" || { echo "::error::994 native missing: $marker ($abi)"; exit 1; }
             done
             grep -aq NOVA_STARTUP_BUFFER_PREARM_V1 "$avos" || { echo "::error::994 buffering arm missing $abi"; exit 1; }
+            grep -aq NOVA_60FPS_SYSTEM_FORENSICS_V2 "$avos" || { echo "::error::60fps deep system sampler missing $abi"; exit 1; }
+            grep -aq NOVA_EARLY_PERCENT_V2 "$transport" || { echo "::error::first-byte progress missing $abi"; exit 1; }
           done
           grep -Fq 'NOVA_ISO_META_STAIR_V1' iso/nova_transport.c
           grep -Fq 'NOVA_ISO_EARLY_W2_V1' iso/nova_literange4.inc
@@ -423,7 +428,7 @@ jobs:
           (cd dist && sha256sum Nova_Video_Player_mod_SIGNED.apk > SHA256SUMS.txt)
 
       - name: Upload runnable direct-transport test APK
-        if: github.ref != 'refs/heads/build/994-all-five-validation-20261031'
+        if: github.ref != 'refs/heads/build/994-all-five-validation-20261031' && github.ref != 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
         uses: actions/upload-artifact@v4
         with:
           name: Nova-direct-transport-runnable-${{ github.run_number }}
@@ -435,7 +440,7 @@ jobs:
           compression-level: 0
 
       - name: Retrieve #993 signed baseline for real MKV speed comparison
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -573,7 +578,7 @@ jobs:
       # 994: the signed APK exists inside this CI job, but is not a
       # deliverable until five goal-specific runtime artifacts match its SHA.
       - name: Verify all five 994 goals before publishing installable APK
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101'
         shell: bash
         run: |
           set -euo pipefail

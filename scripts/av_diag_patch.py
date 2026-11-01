@@ -326,6 +326,8 @@ def patch_hw(root):
 '''
     late = '\t\t\t\tp->dropped++;\n\t\t\t\tDBGSI serprintf("android_sync: late frame drop'
     late_add = r'''                if (s) {
+                     extern void nova_60fps_note_late(void);
+                     nova_60fps_note_late();
                     int n = __atomic_add_fetch(&s->nova_diag_drop_late, 1, __ATOMIC_RELAXED);
                     if (n <= 3 || n % 120 == 0)
                         serprintf("NOVA_AVDIAG_DROP: reason=late fPts=%d latenessMs=%lld totalLate=%d audioPts=%d epoch=%d\n",
