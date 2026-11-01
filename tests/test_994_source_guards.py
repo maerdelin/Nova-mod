@@ -25,7 +25,7 @@ class FiveGoalGuards(unittest.TestCase):
         self.assertIn("nova_iso_stop_pump(s);\n        /* ISO scan finished",C)
         self.assertIn("NOVA_STARTUP_BUFFER_PREARM_V1",AVOS)
         self.assertIn("NOVA_FIRST_RENDER_HOLD_V1",AVOS)
-        self.assertIn("startup_resume :",AVOS)
+        self.assertIn("startup_phase<3 ? effective_resume :",AVOS)
         self.assertIn("s->rebuffer_low_bytes)",AVOS)
 
     def test_02_mkv_real_byte_warmup_and_seek_integrity(self):
