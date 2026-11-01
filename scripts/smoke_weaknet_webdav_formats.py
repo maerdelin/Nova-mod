@@ -236,6 +236,16 @@ def test_one(fmt, root, report_dir):
             pts_match = re.search(r"pts=(-?\d+)", frame_lines[0])
             if not pts_match or int(pts_match.group(1)) != 0:
                 raise RuntimeError("MKV time-zero keyframe lost: " + frame_lines[0])
+        # Real APK evidence that MKV and MP4 lock actual X at probe,
+        # not the provisional 64MiB; verify early/authoritative denominator.
+        xlocks=re.findall(r"NOVA_STARTUP_X_LOCK_V1: source=ffmpeg-probe x=(\d+) resume=(\d+)",startup)
+        if not xlocks or int(xlocks[0][0])<=0 or int(xlocks[0][1])<=0:
+            raise RuntimeError(fmt+" first valid bitrate X was never locked")
+        denoms=re.findall(r"NOVA_STARTUP_DENOM_LOCK_V1: generation=\d+ resume=(\d+)",startup)
+        if not denoms or int(denoms[0])!=int(xlocks[0][1]):
+            raise RuntimeError(fmt+" first real-X denominator was not published to transport")
+        if "NOVA_STARTUP_DENOM_MISMATCH_V1" in startup:
+            raise RuntimeError(fmt+" changed locked startup denominator")
         print("NOVA_STARTUP_SOURCE_ONLY_ART=PASS " + fmt + " no startup timeline Seek")
         with lock:
             snapshot = list(requests)

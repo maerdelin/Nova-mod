@@ -31,7 +31,7 @@ def check(apk, log, reports):
     # All state checks must occur in chronological order after native startup.
     ticks=list(re.finditer(r"NOVA_994_UI_TICK:\s*(\d+)%",live))
     percents=[int(x.group(1)) for x in ticks]
-    if not ticks or any(v<0 or v>100 for v in percents):
+    if len(ticks)<3 or any(v<0 or v>100 for v in percents):
         raise RuntimeError("No valid integer percent rendered in the Android TextView")
     b=re.search(r"NOVA_STARTUP_BUFFER_PERCENT_V1: generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live)
     if not b or int(b.group(2))<=0:
@@ -41,6 +41,13 @@ def check(apk, log, reports):
     native_early=re.search(
         r"NOVA_EARLY_PERCENT_V2: stage=raw_preprobe generation=\d+ resident=(\d+) resume=(\d+) percent=(\d+)",live)
     probe=re.search(r"NOVA_STARTUP_TRACE probe_done",live)
+    lock=re.search(r"NOVA_STARTUP_DENOM_LOCK_V1: generation=(\d+) resume=(\d+)",live)
+    xlock=re.search(r"NOVA_STARTUP_X_LOCK_V1: source=(?:iso-title-metadata|ffmpeg-probe) x=(\d+) resume=(\d+)",live)
+    if not xlock or not lock or int(xlock.group(2))!=int(lock.group(2)):
+        raise RuntimeError("No real-X first threshold lock with consistent UI denominator")
+    offered=[int(m.group(1)) for m in re.finditer(r"NOVA_(?:EARLY_PERCENT_V2|STARTUP_BUFFER_PERCENT_V1):[^\n]*resume=(\d+)",live)]
+    if not offered or any(x!=int(lock.group(2)) for x in offered):
+        raise RuntimeError("Percent denominator changed during startup")
     if not native_early or not probe or not native_early.start()<probe.start():
         raise RuntimeError("Early RAW resident percentage not published before FFmpeg probe_done")
     if int(native_early.group(1))<=0 or int(native_early.group(2))<=0:
@@ -53,8 +60,10 @@ def check(apk, log, reports):
     frame=re.search(r"NOVA_STARTUP_TRACE first_frame_sink",live)
     if not phase or not hidden or not frame or not phase.start()<hidden.start():
         raise RuntimeError("Loading UI did not hide after native first resume")
-    if not any(t.start()<hidden.start() for t in ticks):
-        raise RuntimeError("Percent text was never updated before hide")
+    if len([t for t in ticks if t.start()<hidden.start()])<3:
+        raise RuntimeError("Insufficient real spinner frames before hide; 1035 one 100%-tick MUST fail")
+    if not any(0<v<100 for v in percents):
+        raise RuntimeError("Only 0 or 100: missing intermediate live buffering percentage")
     # Timing is sourced from actual displayed UI ticks. A short playback can
     # legitimately exit before a second 200ms tick; never synthesize one.
     intervals=[]

@@ -19,7 +19,7 @@ import time
 from smoke_direct_webdav import adb, logs, wait_for, PACKAGE, PLAYER
 
 
-def serve_iso(iso: Path):
+def serve_iso(iso: Path, throttle_kibps=500):
     size = iso.stat().st_size
     requests = []
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -71,6 +71,8 @@ def serve_iso(iso: Path):
                             break
                         self.wfile.write(chunk)
                         left -= len(chunk)
+                        if throttle_kibps:
+                            time.sleep(len(chunk)/(1024.0*throttle_kibps))
             except (OSError, BrokenPipeError, ConnectionResetError):
                 pass
             self.close_connection = True
@@ -109,6 +111,7 @@ def main():
                     marker in t
                     and "OPEN_READY mode=iso" in t[t.rfind(marker):]
                     and "NOVA_STARTUP_TRACE first_frame_sink" in t[t.rfind(marker):]
+                    and "NOVA_994_UI_HIDE: after-native-resume" in t[t.rfind(marker):]
                 ),
                 100,"Blu-ray ISO real first frame")
         finally:
