@@ -64,7 +64,10 @@ class Iso1073(unittest.TestCase):
             src.mkdir(parents=True)
             (src/"stream_parser_ffmpeg.c").write_text(
                 '#include <signal.h>\n'
-                '        int got = avio_read(raw->source, raw->ring + write_off, want);\n'
+                '        int incoming_page=-1;\n'
+                '        int got=raw->shared_pages ?\n'
+                '            raw->page_take(raw->transport_generation,&incoming_page,want) :\n'
+                '            avio_read(raw->source, raw->ring + write_off, want);\n'
                 '    int result = av_read_frame(fmt, &packet);\n'
                 '            if(result==AVERROR(ENOMEM) &&\n'
                 '               strstr(s->src_query,"nova_iso=1")){\n')
