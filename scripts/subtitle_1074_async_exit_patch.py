@@ -6,6 +6,7 @@ A single process-lifetime worker owns a bounded FIFO of retired engines.
 If worker init or queueing fails, synchronous fallback preserves correctness.
 """
 import argparse
+import re
 from pathlib import Path
 
 DECL=r'''
@@ -105,8 +106,11 @@ def replace_exact(s,a,b,description):
 def patch(root):
     reg=root/"Source/sub_engine_registry.c"
     s=reg.read_text()
-    s=replace_exact(s,"static REG_ENTRY *s_current = NULL;", "static REG_ENTRY *s_current = NULL;\n"+DECL,
-                    "static registry definitions")
+    needle=r"static REG_ENTRY\s+\*s_current\s*=\s*NULL;"
+    matches=list(re.finditer(needle,s))
+    if len(matches)!=1: raise RuntimeError(f"static registry definitions: anchor count {len(matches)}")
+    m=matches[0]
+    s=s[:m.end()]+"\n"+DECL+s[m.end():]
     # Both zero-ref paths -- never touch engine or fn after handoff.
     if s.count("if (destroy) destroy(eng);")!=1:
         raise RuntimeError("unpublished engine destruction anchor")
