@@ -260,7 +260,7 @@ def patch_demux(root):
         if parser_text.count(include_anchor) != 1:
             raise RuntimeError("Missing FFmpeg signal include anchor")
         path.write_text(parser_text.replace(include_anchor,
-                                            include_anchor+'\\n#include <sys/resource.h>',1))
+                                            include_anchor+'\n#include <sys/resource.h>',1))
     err="if (result != AVERROR_EOF) return parser_input_error(s, result, demux_result);"
     err_repl="""if (result != AVERROR_EOF) {
             __atomic_fetch_add(&s->nova_diag_demux_errors, 1, __ATOMIC_RELAXED);
