@@ -306,7 +306,7 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
             transport="work/transport-native/$abi/libnova_transport.so"
             avos="native-src/native/avos/libs/$abi/libavos.so"
-            for marker in NOVA_1073_BB_WATCHDOG_STARTED nova_transport_diag_external NOVA_1073_BB_FIRST_ANOMALY NOVA_1073_BB_FIRST_FRAME_READY; do
+            for marker in NOVA_1073_BB_WATCHDOG_STARTED nova_transport_diag_external NOVA_1073_BB_FIRST_ANOMALY NOVA_1073_ISO_FIRST_FRAME_READY; do
               if ! LC_ALL=C grep -aFq "$marker" "$transport"; then
                 echo "::error::1073 transport binary missing $marker in $abi"
                 echo "SHA=$(sha256sum "$transport")"
@@ -788,7 +788,7 @@ jobs:
           (cd dist && sha256sum -c SHA256SUMS.txt)
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
             grep -aq 'NOVA_1073_BB_WATCHDOG_STARTED' "work/transport-native/$abi/libnova_transport.so"
-            grep -aq 'NOVA_1073_BB_FIRST_FRAME_READY' "work/transport-native/$abi/libnova_transport.so"
+            grep -aq 'NOVA_1073_ISO_FIRST_FRAME_READY' "work/transport-native/$abi/libnova_transport.so"
           done
           tag="nova-1073-iso-blackbox-$GITHUB_RUN_NUMBER"
           gh release create "$tag" \
