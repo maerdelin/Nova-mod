@@ -14,7 +14,7 @@ class Test1074(unittest.TestCase):
         self.assertIn("pthread_cond_wait(&nova1074_cond",PATCH)
         self.assertIn("nova1074_retire_engine(eng,fn)",PATCH)
         self.assertIn("nova1074_retire_engine(eng,destroy)",PATCH)
-        self.assertIn("if (nova1074_count < NOVA_1074_QCAP)",PATCH)
+        self.assertIn("if(nova1074_count < NOVA_1074_QCAP)",PATCH)
         self.assertIn("fallback=sync",PATCH)
         self.assertIn("job.fn(job.eng)",PATCH)
         self.assertIn("NOVA_1074_EGL_JOIN_END",PATCH)
