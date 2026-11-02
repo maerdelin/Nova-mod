@@ -394,6 +394,10 @@ static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
         p->paused=1;
         p->pause_need_pages=extra;
         p->owner->pause_serial++;
+        if(p->owner->session->mode==NOVA_MODE_BLURAY_ISO)
+            nova_bb_event(NOVA_BB_PAUSE,
+                __atomic_load_n(&g_bb_gen,__ATOMIC_ACQUIRE),
+                p->index,p->filled);
         LOGI("NOVA_SHARED42_PAUSE_V2 slot=%d needPages=%d staged=%d"
              " slotPages=%d future=%d",p->index,extra,
              nova_lite_staged_pages(p->owner),p->page_count,
@@ -1239,7 +1243,11 @@ shared42_await_more:
         int running=0;
         uint64_t pause_before=e->pause_serial;
         int64_t call_start=nova_iso_uptime_ms();
+        if(s->mode==NOVA_MODE_BLURAY_ISO)
+            nova_bb_phase_start(NOVA_BB_CURL,s->multi_committed_cursor);
         CURLMcode rc=curl_multi_perform(e->multi,&running);
+        if(s->mode==NOVA_MODE_BLURAY_ISO)
+            nova_bb_phase_finish(NOVA_BB_CURL,rc);
         int64_t call_elapsed=nova_iso_uptime_ms()-call_start;
         if(s->mode==NOVA_MODE_BLURAY_ISO &&
            (pause_before!=e->pause_serial || call_elapsed>=250))
@@ -1286,7 +1294,11 @@ shared42_await_more:
             return AVERROR(EINTR);
         if(running>0){
             int fds=0;
+            if(s->mode==NOVA_MODE_BLURAY_ISO)
+                nova_bb_phase_start(NOVA_BB_POLL,s->multi_committed_cursor);
             rc=curl_multi_poll(e->multi,NULL,0,NOVA_LITE_POLL_MS,&fds);
+            if(s->mode==NOVA_MODE_BLURAY_ISO)
+                nova_bb_phase_finish(NOVA_BB_POLL,rc);
             if(rc!=CURLM_OK)return NOVA_MULTI_FALLBACK;
         }else{
             if(e->running==0 && s->multi_next_offset>=s->upstream_size &&
@@ -1328,6 +1340,7 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
         s->iso_startup_replay_cap=0;
         s->iso_startup_replay_size=0;
         s->iso_startup_replay_start=-1;
+        nova_bb_event(NOVA_BB_REPLAY_FREE,s->generation,released,target);
         LOGI("NOVA_ISO_1064_REPLAY_RELEASE cap=%d at=%" PRId64,
              released,target);
     }
@@ -1372,6 +1385,7 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
                 nova_multi_stop(s,"iso-head-stall",0);
                 s->lite->iso_force_fresh_launches=2;
                 int rc=nova_multi_start(s,rebase_at,2);
+                nova_bb_event(NOVA_BB_REBASE,s->generation,rebase_at,rc);
                 LOGI("NOVA_ISO_1064_EXACT_REBASE at=%" PRId64
                      " attempt=%u rc=%d",rebase_at,
                      s->lite->iso_stall_rebases,rc);
