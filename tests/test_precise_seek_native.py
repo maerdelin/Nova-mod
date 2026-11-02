@@ -205,12 +205,16 @@ static VIDEO_FRAME *frame_q_get_unlocked(QUEUE *q){return NULL;}
     def test_mkv_uses_upstream_bounded_preview_instead_of_precise_preroll(self):
         self.run_c(r'''
  s.etype=ETYPE_MKV;
- assert(!nova_precise_scope(&s,3258680)); /* WebDAV MKV: no 30s target wait */
+ strcpy(s.src.url,"novatransport://7/stream?nova_direct=1&nova_generation=7&nova_mkv=1");
+ assert(!nova_precise_scope(&s,3258680)); /* real WebDAV MKV: fast preview */
+ strcpy(s.src.url,"novatransport://7/stream?nova_direct=1&nova_generation=7");
+ assert(nova_precise_scope(&s,3258680)); /* direct TS shares ETYPE_MKV: precise */
  s.etype=0;
- assert(nova_precise_scope(&s,3258680)); /* other direct formats unchanged */
+ strcpy(s.src.url,"novatransport://7/stream?nova_direct=1&nova_mkv=1");
+ assert(nova_precise_scope(&s,3258680)); /* only MKV class with marker */
  s.etype=ETYPE_MKV;
  strcpy(s.src.url,"/sdcard/test.mkv");
- assert(!nova_precise_scope(&s,3258680)); /* never route MKV to exact path */
+ assert(!nova_precise_scope(&s,3258680)); /* local MKV outside direct scope */
  ''')
         self.assertIn(
             'int preview_shown = _stream_play_n_frames( s, 10, sc.time, old_time );',

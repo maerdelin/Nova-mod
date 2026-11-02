@@ -35,12 +35,15 @@ HELPERS = r'''
 /* NOVA_PRECISE_SEEK_V1: no playback queue, transport, or clock replacement. */
 static int nova_precise_scope(STREAM *s, int time)
 {
-    /* NOVA_MKV_FAST_PREVIEW_V1: retain the upstream 10-frame / 1-second
-     * keyframe preview, bounded refinement, and normal seek resume for MKV.
-     * Never enter the 30-second exact-frame preroll or target-frame admit gate.
-     * Do not modify the MKV Cue locator, transport, or other container paths. */
-    if (s && s->etype == ETYPE_MKV) {
-        if (time > 0 && !strncmp(s->src.url, "novatransport://", 16))
+    /* NOVA_MKV_FAST_PREVIEW_V1: The generic novatransport /stream URL is
+     * tagged ETYPE_MKV even for TS and other non-MKV formats. Only the
+     * transport's explicit nova_mkv=1 marker identifies an actual MKV.
+     * Reuse the same marker as raw->mkv_single_get to retain precise seeking
+     * for TS/MP4 and the upstream 10-frame/1-second MKV keyframe preview. */
+    if (s && s->etype == ETYPE_MKV &&
+        !strncmp(s->src.url, "novatransport://", 16) &&
+        strstr(s->src.url, "nova_mkv=1")) {
+        if (time > 0)
             serprintf("NOVA_MKV_FAST_PREVIEW_V1: requestedMs=%d policy=upstream_keyframe\n", time);
         return 0;
     }

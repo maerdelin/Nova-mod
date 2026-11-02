@@ -205,9 +205,12 @@ def main():
             text = wait_for(
                 lambda t: ("NOVA_PRECISE_SEEK_DONE_V1:" in t[t.rfind(seek_marker):]
                            or "NOVA_PRECISE_SEEK_GAP_V1:" in t[t.rfind(seek_marker):]
-                           or "Error (1001,1000)" in t[t.rfind(seek_marker):]),
-                35, "precise Seek completion or failure event")
+                           or "Error (1001,1000)" in t[t.rfind(seek_marker):]
+                    or "NOVA_MKV_FAST_PREVIEW_V1:" in t[t.rfind(seek_marker):]),
+                35, "precise Seek completion, failure, or incorrect MKV fast path")
             seek_tail = text[text.rfind(seek_marker):]
+            if "NOVA_MKV_FAST_PREVIEW_V1:" in seek_tail:
+                raise RuntimeError("MPEG-TS was incorrectly sent through MKV-only fast seek")
             if ("NOVA_PRECISE_SEEK_GAP_V1:" in seek_tail or
                     "Error (1001,1000)" in seek_tail or
                     "NOVA_PRECISE_SEEK_DONE_V1:" not in seek_tail):
