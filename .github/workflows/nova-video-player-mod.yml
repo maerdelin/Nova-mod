@@ -304,11 +304,22 @@ jobs:
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           bash scripts/build_transport_native.sh work/transport-native
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-            grep -aq 'NOVA_1073_BB_WATCHDOG_STARTED' "work/transport-native/$abi/libnova_transport.so"
-            grep -aq 'nova_transport_diag_external' "work/transport-native/$abi/libnova_transport.so"
-            grep -aq 'NOVA_1073_BB_FIRST_ANOMALY' "work/transport-native/$abi/libnova_transport.so"
-            grep -aq 'NOVA_1073_BB_FIRST_FRAME_READY' "work/transport-native/$abi/libnova_transport.so"
-            grep -aq 'nova_1073_external' "native-src/native/avos/libs/$abi/libavos.so" || grep -aq 'nova_transport_diag_external' "native-src/native/avos/libs/$abi/libavos.so"
+            transport="work/transport-native/$abi/libnova_transport.so"
+            avos="native-src/native/avos/libs/$abi/libavos.so"
+            for marker in NOVA_1073_BB_WATCHDOG_STARTED nova_transport_diag_external NOVA_1073_BB_FIRST_ANOMALY NOVA_1073_BB_FIRST_FRAME_READY; do
+              if ! LC_ALL=C grep -aFq "$marker" "$transport"; then
+                echo "::error::1073 transport binary missing $marker in $abi"
+                echo "SHA=$(sha256sum "$transport")"
+                exit 1
+              fi
+              echo "NOVA_1073_MARKER_OK abi=$abi module=transport marker=$marker"
+            done
+            if LC_ALL=C grep -aFq 'nova_1073_external' "$avos" || LC_ALL=C grep -aFq 'nova_transport_diag_external' "$avos"; then
+              echo "NOVA_1073_MARKER_OK abi=$abi module=avos bridge=1"
+            else
+              echo "::error::1073 AVOS bridge missing in $abi"
+              exit 1
+            fi
           done
           # Run681 regression: four-ABI ELF marker checks for FILE-only fix.
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
