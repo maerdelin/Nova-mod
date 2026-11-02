@@ -5,19 +5,19 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'fix/1088-mkv-fast-preview-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
 
 concurrency:
   group: nova-video-player-mod-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' }}
 
 jobs:
   build:
     env:
-      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102') && 'v6.6.2' || 'none' }}
+      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102') && 'v6.6.2' || 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -224,6 +224,7 @@ jobs:
           grep -Fq 'return stream_parser_set_audio_stream( s, audio_stream);' native-src/native/avos/Source/stream_parser_ffmpeg.c
           python3 scripts/precise_seek_patch.py --native native-src/native/avos --report reports/precise-seek.json
           NOVA_PATCHED_AVOS_ROOT="$PWD/native-src/native/avos" python3 -m unittest discover -s tests -p test_precise_seek_native.py -v
+          grep -Fq 'NOVA_MKV_FAST_PREVIEW_V1' native-src/native/avos/Source/stream_video.c
           grep -Fq 'NOVA_ISO_TRACK_APPLIED_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_MKV_BBC_CUE_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'NOVA_MKV_SEEK_SCAN_BEGIN_V2' native-src/native/avos/Source/stream_parser_ffmpeg.c
@@ -519,7 +520,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Prepare real Blu-ray ISO media for five-goal acceptance
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102'
         shell: bash
         run: |
           set -euo pipefail
@@ -569,7 +570,7 @@ jobs:
            # reactivecircus runs each script line using POSIX /bin/sh -c;
            # multiline if/else is NOT one shell invocation. Scope this
            # independent historical #993 MKV comparison with one command.
-           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
@@ -833,6 +834,38 @@ jobs:
             --title "NOVA 1074 UI exit subtitle EGL teardown - Run $GITHUB_RUN_NUMBER" \
             --prerelease \
             --notes "Isolated from validated NOVA 1073 c99b5ed9. Move last-reference subtitle EGL destroy/join from Android UI thread into process-lifetime bounded worker; retain registry ownership and JNI listener lifetime, synchronous safe fallback on worker/queue failure. Log queue, worker, EGL join and completion, preserving ISO startup memory blackbox. Android 11 and 14 clean install+2 launches verified in CI; physical-device quick-back black-screen reproduction NOT claimed."
+          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+
+      - name: Publish NOVA 1088 MKV fast keyframe preview candidate
+        if: github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for label,path in [('Android11','reports/installation.json'),
+                             ('Android14','reports/android14/installation.json')]:
+              d=json.loads(Path(path).read_text())
+              assert d['status']=='PASS',(label,d)
+              assert len(d['launches'])==2,(label,d)
+          PY
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            reg="native-src/native/avos/libs/$abi/libavos.so"
+            grep -aq 'NOVA_1074_EGL_RETIRE_ASYNC' "$reg"
+            grep -aq 'NOVA_1074_EGL_JOIN_BEGIN' "$reg"
+            grep -aq 'NOVA_1074_EGL_RETIRE_SYNC_FALLBACK' "$reg"
+            grep -aq 'NOVA_MKV_FAST_PREVIEW_V1' "$reg"
+          done
+          tag="nova-1088-mkv-fast-preview-$GITHUB_RUN_NUMBER"
+          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "NOVA 1088 fast MKV SEEK preview - Run $GITHUB_RUN_NUMBER" \
+            --prerelease \
+            --notes "Based exactly on signed Run 1088 (ee3dcc52), retaining 1074 subtitle EGL and prior ISO/WebDAV fixes. MKV seeks bypass 30-second NOVA_PRECISE_SEEK wait and restore upstream AVOS 10-frame/1-second keyframe preview; MP4/TS/ISO behavior unchanged. Faster first-frame priority can show the nearest keyframe before precise playback catches up. CI emulator tests are not a physical 4K HEVC 80GB WebDAV benchmark."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Upload diagnostics only - no intermediate APKs

@@ -24,6 +24,7 @@ typedef long long INT64;
 #define DBG if(0)
 #define THREAD_IDLE 1
 #define THREAD_RUNNING 2
+#define ETYPE_MKV 48
 static double speed=1.0;
 #define RST_TO_TS_DELTA(x,t) ((t)((x)/speed))
 #define TS_TO_RST_TIME(x,t) ((t)((x)*speed))
@@ -35,7 +36,7 @@ typedef struct {int count;} QUEUE;
 typedef struct {
  struct {char url[256];} src;
  VIDEO *video; DEC *video_dec;
- int no_duration,seek_use_target_sync,seek_epoch;
+ int no_duration,seek_use_target_sync,seek_epoch,etype;
  int nova_precise_state,nova_precise_epoch,nova_precise_target_ts;
  int nova_precise_target_rst,nova_precise_presented_ts;
  unsigned nova_precise_due_ms;
@@ -200,6 +201,21 @@ static VIDEO_FRAME *frame_q_get_unlocked(QUEUE *q){return NULL;}
  s.no_duration=0;s.seek_use_target_sync=1;assert(!nova_precise_scope(&s,5000));
  s.seek_use_target_sync=0;dec.async=0;assert(!nova_precise_scope(&s,5000));
  ''')
+
+    def test_mkv_uses_upstream_bounded_preview_instead_of_precise_preroll(self):
+        self.run_c(r'''
+ s.etype=ETYPE_MKV;
+ assert(!nova_precise_scope(&s,3258680)); /* WebDAV MKV: no 30s target wait */
+ s.etype=0;
+ assert(nova_precise_scope(&s,3258680)); /* other direct formats unchanged */
+ s.etype=ETYPE_MKV;
+ strcpy(s.src.url,"/sdcard/test.mkv");
+ assert(!nova_precise_scope(&s,3258680)); /* never route MKV to exact path */
+ ''')
+        self.assertIn(
+            'int preview_shown = _stream_play_n_frames( s, 10, sc.time, old_time );',
+            self.source)
+        self.assertIn('} else if( !s->seek_skip_initial_play ) {', self.source)
 
     def test_monotonic_clock_wrap(self):
         self.run_c(r'''

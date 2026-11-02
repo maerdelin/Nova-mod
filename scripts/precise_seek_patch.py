@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Frame-accurate completion for established direct non-ISO sfdec2 seeks.
 
+MKV is intentionally excluded: use the upstream AVOS short keyframe preview,
+not the 30-second precise decoder preroll. First visible frame takes priority.
+
 Use the existing parser, decoder, frame queues and async command worker. Decode
 from the indexed keyframe, but finish only after the first target frame is
 accepted by the renderer and its scheduled presentation time has arrived.
@@ -32,6 +35,15 @@ HELPERS = r'''
 /* NOVA_PRECISE_SEEK_V1: no playback queue, transport, or clock replacement. */
 static int nova_precise_scope(STREAM *s, int time)
 {
+    /* NOVA_MKV_FAST_PREVIEW_V1: retain the upstream 10-frame / 1-second
+     * keyframe preview, bounded refinement, and normal seek resume for MKV.
+     * Never enter the 30-second exact-frame preroll or target-frame admit gate.
+     * Do not modify the MKV Cue locator, transport, or other container paths. */
+    if (s && s->etype == ETYPE_MKV) {
+        if (time > 0 && !strncmp(s->src.url, "novatransport://", 16))
+            serprintf("NOVA_MKV_FAST_PREVIEW_V1: requestedMs=%d policy=upstream_keyframe\n", time);
+        return 0;
+    }
     if (!s || time <= 0 || s->no_duration || !s->video || !s->video->valid ||
         !s->video_dec || !s->video_dec->async || !s->video_dec->name ||
         strcmp(s->video_dec->name,"sfdec2") || s->seek_use_target_sync ||
@@ -286,7 +298,8 @@ def apply(root,report=None):
     outputs=[fn(p.read_text()) for fn,p in zip([header_text,engine_text,codec_text],paths)]
     for p,text in zip(paths,outputs):p.write_text(text)
     result={"status":"PASS","version":"NOVA_PRECISE_SEEK_V1",
-            "scope":"established nonzero direct non-ISO sfdec2 time seeks",
+            "scope":"established nonzero direct non-ISO sfdec2 time seeks excluding MKV",
+            "mkv_fast_preview":True,"mkv_precise_wait":False,
             "completion":"first frame at/after target submitted and its due time reached",
             "tolerance":"one source frame plus 2ms; unknown frame rate 50ms",
             "deadline_ms":30000,"supersedable":True,"partial_success":False,
