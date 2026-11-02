@@ -30,7 +30,9 @@
  * This is used ONLY before playback. The working RAW128 pipeline is untouched. */
 #define NOVA_ISO_META_PAGE_BYTES (8 * 1024 * 1024) /* 256K/512K/1M/2M then +1M through 8M */
 #define NOVA_ISO_META_START_BYTES (256 * 1024) /* first metadata miss */
-#define NOVA_ISO_STARTUP_REPLAY_BYTES (24 * 1024 * 1024) /* cap startup demux probe rewind; never cache full ISO */
+#define NOVA_ISO_STARTUP_REPLAY_BYTES (24 * 1024 * 1024) /* default startup rewind ceiling */
+#define NOVA_ISO_1064_REPLAY_32BIT_BYTES (8 * 1024 * 1024)
+#define NOVA_ISO_1064_LARGE_TITLE_BYTES (16ULL * 1024 * 1024 * 1024)
 #define NOVA_MKV_TAIL_WARM_BYTES (64 * 1024)
 /* Retain only the last 64 KiB of ALREADY delivered head bytes so an MKV
  * Cues tail lookup can return to the first Cluster without a new GET. */
@@ -52,6 +54,18 @@ static int64_t nova_iso_uptime_ms(void) {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+/* NOVA_ISO_1064_REPLAY_V1: 32-bit, single-clip UHD ISO previously kept
+ * a 24 MiB contiguous replay allocation beside the 128 MiB warehouse.
+ * The out-of-window rewind still uses byte-exact libbluray/HTTP rebase. */
+static int nova_iso_1064_replay_cap(uint64_t title_bytes,uint32_t clip_count,
+                                    unsigned pointer_bits)
+{
+    if(pointer_bits==32 && clip_count==1 &&
+       title_bytes>=NOVA_ISO_1064_LARGE_TITLE_BYTES)
+        return NOVA_ISO_1064_REPLAY_32BIT_BYTES;
+    return NOVA_ISO_STARTUP_REPLAY_BYTES;
+}
+
 typedef enum {
     NOVA_MODE_FILE = 0,
     NOVA_MODE_BLURAY_ISO = 1,
@@ -70,6 +84,7 @@ typedef enum {
 #define NOVA_MULTI_SLOT_READY 3
 #define NOVA_MULTI_SLOT_ERROR 4
 #define NOVA_MULTI_FALLBACK AVERROR(EAGAIN)
+#define NOVA_MULTI_ISO_STALL AVERROR(ETIMEDOUT)
 
 struct nova_session;
 typedef struct nova_multi_slot {
@@ -2020,7 +2035,12 @@ static nova_session *session_create(JNIEnv *env,const char *url,
          * still safely reseed. Never allocate proportional to a large ISO. */
         nova_iso_meta_release(s);
         s->iso_startup_replay_start=-1;
-        s->iso_startup_replay_cap=NOVA_ISO_STARTUP_REPLAY_BYTES;
+        s->iso_startup_replay_cap=nova_iso_1064_replay_cap(
+            s->output_size,s->clip_count,(unsigned)(sizeof(void *)*8));
+        LOGI("NOVA_ISO_1064_REPLAY_POLICY pointerBits=%u clips=%u title=%" PRIu64
+             " cap=%d default=%d",
+             (unsigned)(sizeof(void *)*8),s->clip_count,s->output_size,
+             s->iso_startup_replay_cap,NOVA_ISO_STARTUP_REPLAY_BYTES);
         if(s->output_size>0 &&
            s->output_size<(uint64_t)s->iso_startup_replay_cap)
             s->iso_startup_replay_cap=(int)s->output_size;
