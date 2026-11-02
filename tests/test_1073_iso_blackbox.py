@@ -68,7 +68,7 @@ class Iso1073(unittest.TestCase):
                 '        int got=raw->shared_pages ?\n'
                 '            avio_read(raw->source, raw->ring + write_off, want);\n'
                 '        int64_t nova_boot_io_ms=(av_gettime_relative()-nova_boot_io_begin)/1000;\n'
-                '    int result = av_read_frame(fmt, &packet);\n'
+                '    int result = nova_staged_replay_or_read(ff_p,fmt,&packet);\n'
                 '            if(result==AVERROR(ENOMEM) &&\n'
                 '               strstr(s->src_query,"nova_iso=1")){\n')
             (src/"stream_video.c").write_text(
