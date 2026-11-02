@@ -66,6 +66,8 @@ static int nova_iso_1064_replay_cap(uint64_t title_bytes,uint32_t clip_count,
     return NOVA_ISO_STARTUP_REPLAY_BYTES;
 }
 
+#include "nova_iso_blackbox.inc"
+
 typedef enum {
     NOVA_MODE_FILE = 0,
     NOVA_MODE_BLURAY_ISO = 1,
@@ -951,9 +953,13 @@ static int upstream_read_blocks(void *handle, void *buf, int lba, int num_blocks
     /* Metadata scanning stays on the proven demand-read/cache path.
      * After the scan, movie-data LBAs use the generic WebDAV byte source.
      * Physical LBA jumps (including seek) reseed inside that source only. */
+    nova_bb_phase_start(NOVA_BB_BD,target);
     int got = (!s->iso_meta_active && s->multi_http_ready)
         ? nova_multi_read_exact_at(s, (uint8_t *)buf, target, bytes)
         : nova_upstream_read_exact_retry(s, (uint8_t *)buf, target, bytes);
+    nova_bb_phase_finish(NOVA_BB_BD,got);
+    if(got!=bytes)nova_bb_fault(NOVA_BB_READ_FAIL,
+         __atomic_load_n(&g_bb_gen,__ATOMIC_ACQUIRE),target,got);
     return got == bytes ? num_blocks : -1;
 }
 
@@ -1884,7 +1890,9 @@ static void nova_iso_stop_pump(nova_session *s)
 {
     if(!s || !s->iso_pump_running)return;
     __atomic_store_n(&s->iso_pump_stop,1,__ATOMIC_RELEASE);
+    nova_bb_event(NOVA_BB_PUMP_JOIN,s->generation,0,0);
     pthread_join(s->iso_pump_thread,NULL);
+    nova_bb_event(NOVA_BB_PUMP_JOINED,s->generation,0,0);
     s->iso_pump_running=0;
     LOGI("NOVA_ISO_PARALLEL_V1: owner_handoff generation=%" PRIu64,
          s->multi_generation);
@@ -1892,8 +1900,9 @@ static void nova_iso_stop_pump(nova_session *s)
 
 static void session_free(nova_session *s)
 {
-    if (!s)
-        return;
+    if (!s)return;
+    nova_bb_event(NOVA_BB_CLOSE_BEGIN,s->generation,s->mode,0);
+    nova_bb_phase_start(NOVA_BB_CLOSE,s->generation);
     s->iso_pump_stop=1;
     nova_iso_stop_pump(s);
     s->stopping=1;
@@ -1906,9 +1915,12 @@ static void session_free(nova_session *s)
     s->stopping = 1;
     pthread_mutex_unlock(&g_lock);
     pthread_mutex_lock(&g_lock);
+    if(s->active_calls>0)
+        nova_bb_event(NOVA_BB_CALLS_WAIT,s->generation,s->active_calls,0);
     while (s->active_calls > 0)
         pthread_cond_wait(&s->idle, &g_lock);
     pthread_mutex_unlock(&g_lock);
+    nova_bb_event(NOVA_BB_CALLS_DRAINED,s->generation,0,0);
 
     nova_multi_destroy(s);
     pthread_mutex_lock(&s->io_lock);
@@ -1917,6 +1929,9 @@ static void session_free(nova_session *s)
         s->bd = NULL;
     }
     nova_iso_meta_release(s);
+    if(s->iso_startup_replay)
+        nova_bb_event(NOVA_BB_REPLAY_FREE,s->generation,
+                      s->iso_startup_replay_cap,0);
     free(s->iso_startup_replay);
     s->iso_startup_replay=NULL;
     if (s->upstream) {
@@ -1931,6 +1946,8 @@ static void session_free(nova_session *s)
     nova_file_release_java(s);
     nova_shared_warehouse_unref(s->warehouse);
     s->warehouse=NULL;
+    nova_bb_phase_finish(NOVA_BB_CLOSE,s->generation);
+    nova_bb_event(NOVA_BB_CLOSE_DONE,s->generation,0,0);
     free(s);
 }
 
@@ -1940,9 +1957,12 @@ static nova_session *session_create(JNIEnv *env,const char *url,
 {
     int64_t iso_start_ms = iso ? nova_iso_uptime_ms() : 0;
     int64_t stage_start_ms = iso_start_ms;
+    nova_bb_arm(iso?1:0);
     nova_session *s = calloc(1, sizeof(*s));
-    if (!s)
+    if (!s){
+        nova_bb_fault(NOVA_BB_ALLOC_FAILURE,0,sizeof(*s),errno);
         return NULL;
+    }
     s->upstream_pos = -1;
     s->upstream_size = -1;
     s->mode = iso ? NOVA_MODE_BLURAY_ISO : NOVA_MODE_FILE;
@@ -2045,7 +2065,13 @@ static nova_session *session_create(JNIEnv *env,const char *url,
            s->output_size<(uint64_t)s->iso_startup_replay_cap)
             s->iso_startup_replay_cap=(int)s->output_size;
         s->iso_startup_replay=malloc((size_t)s->iso_startup_replay_cap);
-        if(!s->iso_startup_replay)s->iso_startup_replay_cap=0;
+        if(!s->iso_startup_replay){
+            nova_bb_fault(NOVA_BB_ALLOC_FAILURE,
+                __atomic_load_n(&g_bb_gen,__ATOMIC_ACQUIRE),
+                s->iso_startup_replay_cap,errno);
+            s->iso_startup_replay_cap=0;
+        }else nova_bb_event(NOVA_BB_REPLAY_ALLOC,0,
+                   s->iso_startup_replay_cap,0);
         LOGI("NOVA_ISO_STARTUP_REPLAY_V2: ready=%d cap=%d title=%" PRIu64,
              s->iso_startup_replay!=NULL,s->iso_startup_replay_cap,
              s->output_size);
@@ -2580,7 +2606,12 @@ void nova_transport_mark_first_frame(uint64_t generation)
 {
     nova_session *s=session_acquire(generation);
     if(!s)return;
-    if(s->mode==NOVA_MODE_FILE && s->file_http_mode &&
+    if(s->mode==NOVA_MODE_BLURAY_ISO){
+        if(!__atomic_exchange_n(&s->startup_first_frame_ready,1,__ATOMIC_ACQ_REL)){
+            nova_bb_event(NOVA_BB_FIRST_FRAME,generation,1,0);
+            LOGI("NOVA_1073_ISO_FIRST_FRAME_READY generation=%" PRIu64,generation);
+        }
+    }else if(s->mode==NOVA_MODE_FILE && s->file_http_mode &&
        !__atomic_exchange_n(&s->startup_first_frame_ready,1,__ATOMIC_ACQ_REL))
         LOGI("NOVA_STARTUP_MKV_FIRST_FRAME_READY generation=%" PRIu64
              " canonicalBytes=%" PRIu64, generation,s->startup_canonical_bytes);
@@ -2985,6 +3016,9 @@ Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeOpen(
     g_opening_session = NULL;
     nova_session *old = g_session;
     fresh->generation = ++g_generation;
+    __atomic_store_n(&g_bb_gen,fresh->generation,__ATOMIC_RELEASE);
+    __atomic_store_n(&g_bb_mode,fresh->mode,__ATOMIC_RELEASE);
+    nova_bb_event(NOVA_BB_READY,fresh->generation,fresh->mode,fresh->output_size);
     g_session = fresh;
     __atomic_store_n(&fresh->startup_ui_state,1,__ATOMIC_RELEASE);
     /* Snapshot the new URI while it cannot be closed by another thread. */
