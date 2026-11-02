@@ -295,18 +295,18 @@ def test_one(fmt, root, report_dir):
                     seg=t[t.rfind(marker):]
                     return (marker in t and
                             "NOVA_MKV_FAST_PREVIEW_V1:" in seg and
-                            re.search(r"NOVA_SEEK_STAGE_V2: seq=\\d+ phase=30 .*?seek=0 seekPause=0",seg) and
-                            re.search(r"NOVA_AVDIAG_SAMPLE: .*?epoch=\\d+ .*?renderSubmit=\\d+",seg))
+                            re.search(r"NOVA_SEEK_STAGE_V2: seq=\d+ phase=30 .*?seek=0 seekPause=0",seg) and
+                            re.search(r"NOVA_AVDIAG_SAMPLE: .*?epoch=\d+ .*?renderPts=([1-9]\d*)",seg))
                 t=wait_for(accepted,timeout,label+" fast completion and render")
                 seg=t[t.rfind(marker):]
-                stages=re.findall(r"NOVA_SEEK_STAGE_V2: seq=(\\d+) phase=(10|30) wallMs=(\\d+)",seg)
+                stages=re.findall(r"NOVA_SEEK_STAGE_V2: seq=(\d+) phase=(10|30) wallMs=(\d+)",seg)
                 begin=next(((seq,int(wall)) for seq,phase,wall in stages if phase=="10"),None)
                 finish=next(((seq,int(wall)) for seq,phase,wall in stages
                              if phase=="30" and begin and seq==begin[0]),None)
                 if not begin or not finish or finish[1]-begin[1]>3000:
                     raise RuntimeError(label+" SEEK completion exceeded 3 seconds: "+repr(stages))
-                render=re.search(r"NOVA_AVDIAG_SAMPLE: .*?epoch=\\d+ .*?renderSubmit=(\\d+)",seg)
-                if not render or int(render[1])<=0:
+                render=re.search(r"NOVA_AVDIAG_SAMPLE: .*?epoch=\d+ .*?renderSubmit=(\d+).*?renderPts=([1-9]\d*)",seg)
+                if not render or int(render[1])<=0 or int(render[2])<=0:
                     raise RuntimeError(label+" did not submit a real video frame")
                 if any(x in seg for x in ("NOVA_PRECISE_SEEK_BEGIN_V1:",
                                          "NOVA_PRECISE_SEEK_TIMEOUT_V1:",
@@ -315,7 +315,7 @@ def test_one(fmt, root, report_dir):
                     raise RuntimeError(label+" unexpectedly used exact-preroll or failed")
                 fast_checks.append({"case":label,
                                     "seek_engine_ms":finish[1]-begin[1],
-                                    "render_submit":int(render[1])})
+                                    "render_submit":int(render[1]),"render_pts":int(render[2])})
                 return t
 
             seeklog=require_fast_seek(seek_marker,"long-gop-forward")
