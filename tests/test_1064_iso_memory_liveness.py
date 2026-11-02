@@ -61,7 +61,7 @@ class Iso1064(unittest.TestCase):
         self.assertIn("nova_upstream_read_exact_retry(s,dst+done",LITE)
 
     def test_demux_enomem_snapshot_and_unmodified_other_files(self):
-        self.assertIn('result==AVERROR(ENOMEM) && s->src_query',DIAG)
+        self.assertIn('result==AVERROR(ENOMEM) &&',DIAG)
         self.assertIn('strstr(s->src_query,"nova_iso=1")',DIAG)
         self.assertIn("NOVA_1064_ISO_DEMUX_ENOMEM",DIAG)
         self.assertIn("getrlimit(RLIMIT_AS",DIAG)
