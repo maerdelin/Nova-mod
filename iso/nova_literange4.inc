@@ -32,6 +32,7 @@
 #define NOVA_LITE_POLL_MS 40
 #define NOVA_LITE_UPSHIFT_GAP_MS 2000
 #define NOVA_LITE_WAIT_TRIGGER_MS 80
+#define NOVA_ISO_1064_NO_PROGRESS_MS 8000
 #define NOVA_LITE_CA_LIMIT (4 * 1024 * 1024)
 #define NOVA_LITE_URL_LIMIT 65536
 
@@ -147,6 +148,9 @@ typedef struct nova_lite_state {
     CURLcode last_curl_error;
     long last_http_status;
     unsigned successful_ranges;
+    unsigned iso_stall_rebases;
+    int iso_force_fresh_launches;
+    uint64_t pause_serial;
     long last_retry_after_sec;
     uint64_t metric_requests,metric_new_connections,metric_reused_requests;
     uint64_t metric_connect_ms,metric_tls_ms,metric_ttfb_ms;
@@ -389,6 +393,7 @@ static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
     if(!nova_lite_can_stage(p,extra)){
         p->paused=1;
         p->pause_need_pages=extra;
+        p->owner->pause_serial++;
         LOGI("NOVA_SHARED42_PAUSE_V2 slot=%d needPages=%d staged=%d"
              " slotPages=%d future=%d",p->index,extra,
              nova_lite_staged_pages(p->owner),p->page_count,
@@ -402,6 +407,7 @@ static size_t nova_lite_write(char *ptr,size_t size,size_t nmemb,void *userdata)
             for(int j=0;j<count;j++)nova_wh_page_free(w,fresh[j]);
             p->paused=1;
             p->pause_need_pages=extra;
+            p->owner->pause_serial++;
             LOGI("NOVA_SHARED42_PAUSE_ALLOC_V2 slot=%d needPages=%d",
                  p->index,extra);
             return CURL_WRITEFUNC_PAUSE;
@@ -544,6 +550,11 @@ static int nova_lite_launch(nova_lite_slot *p)
         p->headers=more;
     }
     CURL *c=p->easy;
+    int iso_fresh=s->mode==NOVA_MODE_BLURAY_ISO && e->iso_force_fresh_launches>0;
+    if(iso_fresh){
+        e->iso_force_fresh_launches--;
+        LOGI("NOVA_ISO_1064_FRESH_RANGE slot=%d at=%" PRId64,p->index,p->start);
+    }
     CURLcode opt=CURLE_OK;
 #define NOVA_CURL_SET(option,value) do { \
     CURLcode checked=curl_easy_setopt(c,option,value); \
@@ -579,7 +590,7 @@ static int nova_lite_launch(nova_lite_slot *p)
     NOVA_CURL_SET(CURLOPT_LOW_SPEED_LIMIT,1024L);
     NOVA_CURL_SET(CURLOPT_LOW_SPEED_TIME,15L);
     NOVA_CURL_SET(CURLOPT_TCP_KEEPALIVE,1L);
-    NOVA_CURL_SET(CURLOPT_FRESH_CONNECT,0L);
+    NOVA_CURL_SET(CURLOPT_FRESH_CONNECT,iso_fresh?1L:0L);
     NOVA_CURL_SET(CURLOPT_FORBID_REUSE,0L);
     NOVA_CURL_SET(CURLOPT_TCP_NODELAY,1L);
     NOVA_CURL_SET(CURLOPT_ACCEPT_ENCODING,"identity");
@@ -1123,6 +1134,11 @@ static void nova_lite_telemetry(nova_session *s,int waited_ms)
     e->last_sample_ms=now;
 }
 
+static int nova_iso_1064_stalled(int64_t now,int64_t last_progress)
+{
+    return now>=last_progress && now-last_progress>=NOVA_ISO_1064_NO_PROGRESS_MS;
+}
+
 /* Non-ISO transfers ownership of a staged page directly to RAW.
  * ISO/libbluray retains bytewise reads from the same staged page chain. */
 static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
@@ -1134,6 +1150,8 @@ static int nova_multi_read_core(nova_session *s,uint8_t *dst,int size,
     nova_lite_state *e=s->lite;
     nova_shared_warehouse *w=s->warehouse;
     int64_t began=nova_iso_uptime_ms();
+    int64_t last_progress=began;
+    int64_t previous_cursor=s->multi_committed_cursor;
     while(!s->stopping && s->multi_run){
         /* The demuxer requested a different file byte during probing.
          * Only the CURLM owner reacts; no other thread touches handles. */
@@ -1219,10 +1237,44 @@ shared42_await_more:
          * were no full staging pages left to deliver. */
         if(nova_lite_resume_paused(s)<0)return NOVA_MULTI_FALLBACK;
         int running=0;
+        uint64_t pause_before=e->pause_serial;
+        int64_t call_start=nova_iso_uptime_ms();
         CURLMcode rc=curl_multi_perform(e->multi,&running);
+        int64_t call_elapsed=nova_iso_uptime_ms()-call_start;
+        if(s->mode==NOVA_MODE_BLURAY_ISO &&
+           (pause_before!=e->pause_serial || call_elapsed>=250))
+            LOGI("NOVA_ISO_1064_PERFORM_RETURN elapsedMs=%" PRId64
+                 " pauseNew=%d curlm=%d running=%d epoch=%" PRIu64,
+                 call_elapsed,pause_before!=e->pause_serial,(int)rc,running,
+                 s->multi_generation);
         if(rc!=CURLM_OK)return NOVA_MULTI_FALLBACK;
         nova_lite_complete(s);
         int64_t tick=nova_iso_uptime_ms();
+        if(s->multi_committed_cursor!=previous_cursor){
+            previous_cursor=s->multi_committed_cursor;
+            last_progress=tick;
+        }
+        if(s->mode==NOVA_MODE_BLURAY_ISO &&
+           nova_iso_1064_stalled(tick,last_progress)){
+            int free_pages=-1;
+            if(w){
+                pthread_mutex_lock(&w->lock);
+                free_pages=w->free_count;
+                pthread_mutex_unlock(&w->lock);
+            }
+            LOGE("NOVA_ISO_1064_HEAD_STALL elapsedMs=%" PRId64
+                 " at=%" PRId64 " epoch=%" PRIu64
+                 " running=%d freePages=%d"
+                 " s0state=%d s0paused=%d s0fill=%d s0deliv=%d"
+                 " s1state=%d s1paused=%d s1fill=%d s1deliv=%d",
+                 tick-last_progress,s->multi_committed_cursor,s->multi_generation,
+                 e->running,free_pages,
+                 e->slots[0].state,e->slots[0].paused,e->slots[0].filled,
+                 e->slots[0].delivered,
+                 e->slots[1].state,e->slots[1].paused,e->slots[1].filled,
+                 e->slots[1].delivered);
+            return NOVA_MULTI_ISO_STALL;
+        }
         if(tick-e->last_starve_tick_ms>=NOVA_LITE_WAIT_TRIGGER_MS &&
            tick-began>=NOVA_LITE_WAIT_TRIGGER_MS){
             e->last_starve_tick_ms=tick;
@@ -1263,6 +1315,22 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
      * rewinds libbluray to the SAME verified physical offset. Keep W2 alive
      * and replay the first contiguous verified movie bytes. Never replay
      * outside this exact window; genuine seeks retain the old reseed path. */
+    /* Free replay only after the proven first frame and past the prefix.
+     * This function is already serialized by io_lock, including bd_read. */
+    if(s->mode==NOVA_MODE_BLURAY_ISO && s->iso_startup_replay &&
+       __atomic_load_n(&s->startup_first_frame_ready,__ATOMIC_ACQUIRE) &&
+       s->iso_startup_replay_start>=0 &&
+       s->iso_startup_replay_size>0 &&
+       target>=s->iso_startup_replay_start+s->iso_startup_replay_size){
+        int released=s->iso_startup_replay_cap;
+        free(s->iso_startup_replay);
+        s->iso_startup_replay=NULL;
+        s->iso_startup_replay_cap=0;
+        s->iso_startup_replay_size=0;
+        s->iso_startup_replay_start=-1;
+        LOGI("NOVA_ISO_1064_REPLAY_RELEASE cap=%d at=%" PRId64,
+             released,target);
+    }
     int done=0;
     if(s->mode==NOVA_MODE_BLURAY_ISO && s->iso_startup_replay &&
        s->iso_startup_replay_size>0 &&
@@ -1297,6 +1365,18 @@ static int nova_multi_read_exact_at(nova_session *s,uint8_t *dst,
         while(done<bytes && !s->stopping){
             int64_t at=s->multi_committed_cursor;
             int got=nova_multi_read(s,dst+done,bytes-done);
+            if(got==NOVA_MULTI_ISO_STALL && s->lite &&
+               s->lite->iso_stall_rebases<1 && !s->stopping){
+                int64_t rebase_at=s->multi_committed_cursor;
+                s->lite->iso_stall_rebases++;
+                nova_multi_stop(s,"iso-head-stall",0);
+                s->lite->iso_force_fresh_launches=2;
+                int rc=nova_multi_start(s,rebase_at,2);
+                LOGI("NOVA_ISO_1064_EXACT_REBASE at=%" PRId64
+                     " attempt=%u rc=%d",rebase_at,
+                     s->lite->iso_stall_rebases,rc);
+                if(rc==0)continue;
+            }
             if(got<=0)break;
             if(s->mode==NOVA_MODE_BLURAY_ISO && s->iso_startup_replay &&
                s->iso_startup_replay_size<s->iso_startup_replay_cap){
