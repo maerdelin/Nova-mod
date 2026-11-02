@@ -519,7 +519,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Prepare real Blu-ray ISO media for five-goal acceptance
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102'
         shell: bash
         run: |
           set -euo pipefail
@@ -569,7 +569,7 @@ jobs:
            # reactivecircus runs each script line using POSIX /bin/sh -c;
            # multiline if/else is NOT one shell invocation. Scope this
            # independent historical #993 MKV comparison with one command.
-           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
