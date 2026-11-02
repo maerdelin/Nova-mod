@@ -5,19 +5,19 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
 
 concurrency:
   group: nova-video-player-mod-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' }}
 
 jobs:
   build:
     env:
-      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102') && 'v6.6.2' || 'none' }}
+      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102') && 'v6.6.2' || 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -102,6 +102,8 @@ jobs:
           python3 -m unittest discover -s tests -p test_1054_warehouse_reopen.py -v
           python3 -m unittest discover -s tests -p test_1064_iso_memory_liveness.py -v
           python3 -m unittest discover -s tests -p test_1073_iso_blackbox.py -v
+          python3 -m unittest discover -s tests -p test_1074_subtitle_async_exit.py -v
+          python3 -m py_compile scripts/subtitle_1074_async_exit_patch.py
           python3 -m py_compile scripts/iso_1073_avos_patch.py
           python3 -m py_compile scripts/iso_hw_cbe_reliability_patch.py
            python3 -m unittest discover -s tests -p test_1035_all_formats_x_lock.py -v
@@ -177,6 +179,9 @@ jobs:
           echo 'NOVA_60FPS_EVIDENCE_AVOS_967_PINNED=PASS'
           cd ..
           python3 scripts/v66_subtitle_jni_patch.py --native native-src/native/avos
+          python3 scripts/subtitle_1074_async_exit_patch.py --native native-src/native/avos
+          grep -Fq 'NOVA_1074_EGL_RETIRE_ASYNC' native-src/native/avos/Source/sub_engine_registry.c
+          grep -Fq 'NOVA_1074_EGL_JOIN_BEGIN' native-src/native/avos/Source/sub_render_gl.c
           python3 scripts/native_rebuffer_patch.py native-src/native/avos --allow-unpinned-head --report reports/native-rebuffer.json
           python3 scripts/direct_transport_native_patch.py native-src/native/avos --report reports/direct-transport-native.json
           python3 scripts/shared42_native_patch.py --native native-src/native/avos
@@ -797,6 +802,37 @@ jobs:
             --title "NOVA 1073 ISO first-cause blackbox - Run $GITHUB_RUN_NUMBER" \
             --prerelease \
             --notes "Based on verified #1072; official v6.6.2 pinned. Fixed 8192-slot process-lifetime blackbox, last-120s history freeze on first anomaly, independent 1Hz resource and thread-stage monitor, ptr-map gap estimate, fd/thread/VM samples, actual ISO RAW/demux and hardware CBE allocation-event bridge; conditional /proc kernel stack and debuggerd pointer; fix ISO first-frame replay-release condition. Collect full logcat from process launch. A failure inside prebuilt FFmpeg malloc cannot reveal exact allocator site without platform backtrace; this is a forensic candidate, not a proven ISO playback root fix. Android 11/14 emulator launch gates passed; 87GiB ISO real-device repeated playback not verified."
+          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+
+      - name: Publish NOVA 1074 subtitle EGL async exit candidate
+        if: github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for label,path in [('Android11','reports/installation.json'),
+                             ('Android14','reports/android14/installation.json')]:
+              d=json.loads(Path(path).read_text())
+              assert d['status']=='PASS',(label,d)
+              assert len(d['launches'])==2,(label,d)
+          PY
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            reg="native-src/native/avos/libs/$abi/libavos.so"
+            grep -aq 'NOVA_1074_EGL_RETIRE_ASYNC' "$reg"
+            grep -aq 'NOVA_1074_EGL_JOIN_BEGIN' "$reg"
+            grep -aq 'NOVA_1074_EGL_RETIRE_SYNC_FALLBACK' "$reg"
+          done
+          tag="nova-1074-subtitle-egl-exit-$GITHUB_RUN_NUMBER"
+          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "NOVA 1074 UI exit subtitle EGL teardown - Run $GITHUB_RUN_NUMBER" \
+            --prerelease \
+            --notes "Isolated from validated NOVA 1073 c99b5ed9. Move last-reference subtitle EGL destroy/join from Android UI thread into process-lifetime bounded worker; retain registry ownership and JNI listener lifetime, synchronous safe fallback on worker/queue failure. Log queue, worker, EGL join and completion, preserving ISO startup memory blackbox. Android 11 and 14 clean install+2 launches verified in CI; physical-device quick-back black-screen reproduction NOT claimed."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Upload diagnostics only - no intermediate APKs
