@@ -13,10 +13,20 @@ class KeepAliveRangeTests(unittest.TestCase):
     def test_shared_pool_two_lanes_kept_alive(self):
         for key in ("CURLMOPT_MAXCONNECTS,4L",
                     "CURLOPT_HTTP_VERSION,CURL_HTTP_VERSION_1_1",
-                    "CURLOPT_TCP_KEEPALIVE,1L", "CURLOPT_FRESH_CONNECT,0L",
+                    "CURLOPT_TCP_KEEPALIVE,1L",
                     "CURLOPT_FORBID_REUSE,0L","curl_easy_reset(p->easy)"):
             self.assertIn(key,self.inc)
         self.assertNotIn("Connection: close",self.inc)
+        # 1064 keeps the historical reuse behavior on every ordinary GET.
+        # Only the ISO stall recovery's *two* replacement ranges are fresh.
+        if "NOVA_ISO_1064_FRESH_RANGE" in self.inc:
+            self.assertIn("s->mode==NOVA_MODE_BLURAY_ISO",self.inc)
+            self.assertIn("iso_force_fresh_launches>0",self.inc)
+            self.assertIn("CURLOPT_FRESH_CONNECT,iso_fresh?1L:0L",self.inc)
+            self.assertIn("CURLOPT_FORBID_REUSE,0L",self.inc)
+        else:
+            self.assertIn("CURLOPT_FRESH_CONNECT,0L",self.inc)
+
 
     def test_fixed_four_seconds_and_exact_ranges(self):
         self.assertIn("#define NOVA_LITE_SEGMENT_SECONDS 4",self.inc)
