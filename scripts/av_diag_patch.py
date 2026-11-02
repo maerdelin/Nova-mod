@@ -257,6 +257,41 @@ def patch_demux(root):
             __atomic_fetch_add(&s->nova_diag_demux_errors, 1, __ATOMIC_RELAXED);
             serprintf("NOVA_AVDIAG_DEMUX_ERROR: rc=%d avioError=%d seek=%d epoch=%d\\n",
                 result, fmt->pb ? fmt->pb->error : 0, s->seek, s->seek_epoch);
+            if(result==AVERROR(ENOMEM) && s->src_query &&
+               strstr(s->src_query,"nova_iso=1")){
+                unsigned long long vm=0,peak=0,rss=0,data=0,swap=0,threads=0;
+                char status_line[256];
+                FILE *status=fopen("/proc/self/status","r");
+                if(status){
+                    while(fgets(status_line,sizeof(status_line),status)){
+                        if(!strncmp(status_line,"VmSize:",7))
+                            sscanf(status_line+7,"%llu",&vm);
+                        else if(!strncmp(status_line,"VmPeak:",7))
+                            sscanf(status_line+7,"%llu",&peak);
+                        else if(!strncmp(status_line,"VmRSS:",6))
+                            sscanf(status_line+6,"%llu",&rss);
+                        else if(!strncmp(status_line,"VmData:",7))
+                            sscanf(status_line+7,"%llu",&data);
+                        else if(!strncmp(status_line,"VmSwap:",7))
+                            sscanf(status_line+7,"%llu",&swap);
+                        else if(!strncmp(status_line,"Threads:",8))
+                            sscanf(status_line+8,"%llu",&threads);
+                    }
+                    fclose(status);
+                }
+                struct rlimit iso_as={0},iso_data={0};
+                int as_rc=getrlimit(RLIMIT_AS,&iso_as);
+                int data_rc=getrlimit(RLIMIT_DATA,&iso_data);
+                serprintf("NOVA_1064_ISO_DEMUX_ENOMEM: ptrBits=%u"
+                    " VmSizeKB=%llu VmPeakKB=%llu VmRSSKB=%llu"
+                    " VmDataKB=%llu VmSwapKB=%llu threads=%llu"
+                    " rlimitAS=%llu rlimitData=%llu streams=%u pos=%lld\\n",
+                    (unsigned)(sizeof(void*)*8),vm,peak,rss,data,swap,threads,
+                    as_rc==0?(unsigned long long)iso_as.rlim_cur:0ull,
+                    data_rc==0?(unsigned long long)iso_data.rlim_cur:0ull,
+                    fmt->nb_streams,
+                    (long long)(fmt->pb?avio_tell(fmt->pb):-1));
+            }
             return parser_input_error(s, result, demux_result);
         }"""
     return patch(path, [
