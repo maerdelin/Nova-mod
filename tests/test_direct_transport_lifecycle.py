@@ -57,6 +57,19 @@ class DirectLifecycleTests(unittest.TestCase):
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* lifecycle harness mocks only the newly added observation hooks.
+ * The production close/acquire functions are still compiled verbatim. */
+#define NOVA_BB_CLOSE_BEGIN 3
+#define NOVA_BB_CLOSE_DONE 4
+#define NOVA_BB_PUMP_JOIN 5
+#define NOVA_BB_PUMP_JOINED 6
+#define NOVA_BB_CALLS_WAIT 7
+#define NOVA_BB_CALLS_DRAINED 8
+#define NOVA_BB_REPLAY_FREE 10
+#define NOVA_BB_CLOSE 5
+#define nova_bb_event(...) ((void)0)
+#define nova_bb_phase_start(...) ((void)0)
+#define nova_bb_phase_finish(...) ((void)0)
 #define NOVA_ISO_META_PAGE_COUNT 8
 typedef struct nova_iso_meta_page {
     int64_t start;
@@ -76,6 +89,8 @@ typedef struct nova_session {
     char *upstream_headers;
     void *warehouse;
     uint8_t *iso_startup_replay;
+    int iso_startup_replay_cap;
+    int mode;
     uint8_t *mkv_rewind_data; /* production session_free owns this too */
     volatile int iso_pump_stop;
     nova_iso_meta_page iso_meta_pages[NOVA_ISO_META_PAGE_COUNT];
