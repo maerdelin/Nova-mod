@@ -266,7 +266,7 @@ def patch_demux(root):
             __atomic_fetch_add(&s->nova_diag_demux_errors, 1, __ATOMIC_RELAXED);
             serprintf("NOVA_AVDIAG_DEMUX_ERROR: rc=%d avioError=%d seek=%d epoch=%d\\n",
                 result, fmt->pb ? fmt->pb->error : 0, s->seek, s->seek_epoch);
-            if(result==AVERROR(ENOMEM) && s->src_query &&
+            if(result==AVERROR(ENOMEM) &&
                strstr(s->src_query,"nova_iso=1")){
                 unsigned long long vm=0,peak=0,rss=0,data=0,swap=0,threads=0;
                 char status_line[256];
