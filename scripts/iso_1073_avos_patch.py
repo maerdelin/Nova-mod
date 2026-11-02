@@ -44,7 +44,7 @@ def main(root):
     needle='        int64_t nova_boot_io_ms=(av_gettime_relative()-nova_boot_io_begin)/1000;'
     s=once(s,needle,'        nova_1073_external(11,want,got);\n'+needle,
            "RAW end")
-    needle='    int result = av_read_frame(fmt, &packet);'
+    needle='    int result = nova_staged_replay_or_read(ff_p,fmt,&packet);'
     s=once(s,needle,
         '    nova_1073_external(40,(int64_t)(fmt->pb?avio_tell(fmt->pb):-1),0);\n'
         +needle+
