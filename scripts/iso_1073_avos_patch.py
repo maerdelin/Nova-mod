@@ -36,7 +36,12 @@ def main(root):
     ff=root/"Source/stream_parser_ffmpeg.c"
     s=ff.read_text()
     s=once(s,'#include <signal.h>',BRIDGE+'\n#include <signal.h>',"ff bridge")
-    needle='        int got = avio_read(raw->source, raw->ring + write_off, want);'
+    # shared42_native_patch has replaced raw avio_read with a conditional
+    # page_take / avio_read dispatch. Instrument its real final form.
+    needle=('        int incoming_page=-1;\n'
+            '        int got=raw->shared_pages ?\n'
+            '            raw->page_take(raw->transport_generation,&incoming_page,want) :\n'
+            '            avio_read(raw->source, raw->ring + write_off, want);')
     s=once(s,needle,
         '        nova_1073_external(10,want,0);\n'+needle+
         '\n        nova_1073_external(11,want,got);',"RAW producer")
