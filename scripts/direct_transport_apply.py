@@ -1220,6 +1220,10 @@ def main():
     result_251 = apply_251_release_seek(root)
     print('NOVA_MKV_SPINNER_RELEASE_ONLY_V3=' + result_251['status'])
 
+    # One persistent checkbox controls Java + native diagnostics.
+    from global_logs_smali_patch import smali as apply_nova_logs
+    apply_nova_logs(root)
+
     # Guard malformed torrent stdout without changing listing or playback.
     from torrent_crash_guard_patch import patch_torrent_observer
     torrent=one(root.glob("smali*/com/archos/mediacenter/video/browser/TorrentObserverService.smali"),"TorrentObserverService")
