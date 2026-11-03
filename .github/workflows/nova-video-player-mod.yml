@@ -873,7 +873,7 @@ jobs:
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Publish NOVA 1097 recovered HTTP403 MKV release-only seek APK
-        if: github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' && github.event_name == 'push'
+        if: false # 1097 blocked: 403-only classification can harm normal MKV preview; pending spinner-triggered fix
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
