@@ -189,6 +189,9 @@ extern int nova_diag_gate_on(void);
     l=l[:a]+"    if(nova_diag_gate_on()){\n"+segment+"    }\n"+l[end:]
     lite.write_text(l)
     t=t.replace("nova_diag_gate_on()", "nova_global_log_enabled()")
+    t=once(t,'static void nova_1054_pool_failure_snapshot(const char *stage,size_t requested,int failure_errno)\n{',
+           'static void nova_1054_pool_failure_snapshot(const char *stage,size_t requested,int failure_errno)\n{\n    if(!nova_global_log_enabled())return;',
+           'disable /proc VM and map diagnostics on failed allocation when OFF')
     # ON while an existing video is playing must also enable blackbox:
     # the original open-time arm may have been skipped when checkbox OFF.
     t=once(t,'int nova_transport_read(uint64_t generation, uint8_t *dst, int size)\n{',
