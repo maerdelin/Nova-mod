@@ -18,6 +18,7 @@ import tv_track_width_patch
 import tv_small_card_spacing_patch
 import webdav_resume_local_only_patch
 import v66_subtitle_loader_patch
+import fix_resumed_file_size_1119
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / 'patches/v982-granular.json'
@@ -139,6 +140,9 @@ def main():
     candidate = args.work / 'candidate'
     decode(args.apktool, args.apk, candidate)
     g.apply(candidate, patch, args.reports / 'patch-application.json')
+    # Fix the three file-size UI binders at their common 64-bit DB origin.
+    # Do not alter the legacy resume progress handling or playback/seek.
+    fix_resumed_file_size_1119.patch(candidate, args.reports / '1119-size-proof.json')
     buffer_guard_patch.apply(candidate, args.reports / 'buffer-guard.json')
     audio_route_no_rebuild_patch.apply(candidate, args.reports / 'audio-route-no-rebuild.json')
     tv_track_width_patch.apply(candidate, args.reports / 'tv-track-popup-width.json')
