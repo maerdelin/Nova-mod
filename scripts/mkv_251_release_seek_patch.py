@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""NOVA 1097: release-only DPAD seek for the exact 2,509,221,119-byte WebDAV MKV.
+"""NOVA 1097: release-only DPAD seek for MKVs with verified 403 recovery.
 
-Only the native-confirmed special MKV takes this route. Ordinary MKVs keep
-their full frame-preview seek pipeline, native reads, UI and progress. No
-format-wide toggle. Touch/slider seeks are deliberately left unchanged.
+The JNI predicate is true only after a real HTTP 403 on bounded WebDAV
+Range was followed by a successful canonical MKV read in the same session.
+Unflagged MKVs retain their existing live-frame seek preview and UI; ISO,
+MP4, TS, local media, and touch/slider seeks use the original path.
 """
 from __future__ import annotations
 import argparse
@@ -16,7 +17,7 @@ PROXY = "Lcom/archos/mediacenter/video/player/DirectTransportProxy;"
 HANDLER = "Landroid/os/Handler;"
 MSG = "Landroid/os/Message;"
 INNER = "Lcom/archos/mediacenter/video/player/PlayerController$8;"
-TAG = "NOVA_MKV_251_RELEASE_ONLY_V1"
+TAG = "NOVA_MKV_403_RELEASE_ONLY_V2"
 
 # The controller already owns an Android main-thread Handler. Message 9 is
 # outside upstream's 1..8 switch and is never sent to the normal Seek handler.
@@ -115,7 +116,7 @@ NEW_METHODS = f"""
     invoke-static {{}}, {PROXY}->isNonIsoDirectWebdav()Z
     move-result v0
     if-eqz v0, :nova251_commit_clear
-    invoke-static {{}}, {PROXY}->nativeIsSpecialMkv251()Z
+    invoke-static {{}}, {PROXY}->nativeIsMkv403Recovered()Z
     move-result v0
     if-eqz v0, :nova251_commit_clear
     invoke-direct {{p0}}, {PC}->nova251Clamp()V
@@ -159,14 +160,14 @@ def patch_controller(src: str) -> str:
                "dedicated special-MKV hold state")
 
     def modify_on_seek(method: str) -> str:
-        # Gate BOTH on native validated exact file size and actual remote
-        # key direction. Slider, normal MKV and all other formats fall through
-        # directly into their original instructions, untouched.
-        guard = f"""    # {TAG}: special 251-byte-length scoped key-hold gate.
+        # Gate on observed HTTP 403 -> verified canonical MKV GET recovery
+        # and actual DPAD direction. Original unflagged MKV/slider paths
+        # fall through unchanged to the existing instructions.
+        guard = f"""    # {TAG}: recovered-403 MKV scoped key-hold gate.
     invoke-static {{}}, {PROXY}->isNonIsoDirectWebdav()Z
     move-result v0
     if-eqz v0, :nova251_original_seek
-    invoke-static {{}}, {PROXY}->nativeIsSpecialMkv251()Z
+    invoke-static {{}}, {PROXY}->nativeIsMkv403Recovered()Z
     move-result v0
     if-eqz v0, :nova251_original_seek
     iget v0, p0, {PC}->mSeekKeyDirection:I
@@ -214,8 +215,8 @@ def patch(root: Path) -> dict:
     proxies = list(root.glob("smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali"))
     if len(players) != 1 or len(handlers) != 1 or len(proxies) != 1:
         raise RuntimeError("1097 player/controller/proxy cardinality mismatch")
-    if ".method public static native nativeIsSpecialMkv251()Z" not in proxies[0].read_text():
-        raise RuntimeError("exact-source JNI identity not wired")
+    if ".method public static native nativeIsMkv403Recovered()Z" not in proxies[0].read_text():
+        raise RuntimeError("recovered-403 MKV JNI predicate not wired")
     a = patch_controller(players[0].read_text())
     b = patch_handler(handlers[0].read_text())
     # Fail closed before overwriting either class.
@@ -227,8 +228,8 @@ def patch(root: Path) -> dict:
         raise RuntimeError("1097 handler missing scoped branch")
     players[0].write_text(a)
     handlers[0].write_text(b)
-    return {"status":"PASS", "tag":TAG, "size_bytes":2509221119,
-            "scope":"native-confirmed exact WebDAV MKV and DPAD hold",
+    return {"status":"PASS", "tag":TAG, "classifier":"verified WebDAV MKV 403 followed by valid canonical read",
+            "scope":"per-session native-confirmed recovered-403 MKV DPAD hold",
             "native_requests_during_hold":0,
             "seek_requests_after_keyup":1,
             "untouched":["ordinary MKV preview","ISO","MP4","touch seek"]}
