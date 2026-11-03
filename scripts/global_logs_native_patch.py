@@ -172,7 +172,7 @@ def native(root:Path,transport:Path,blackbox:Path):
     # Transport logger and blackbox use the same process-wide native session.
     t=transport.read_text()
     t=once(t,'#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)\n#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)',
-      '''/* NOVA_1133_ZERO_IDLE_DIAG_V1: all app telemetry requires ADB START. */
+      '''/* NOVA_GLOBAL_LOGS_TOGGLE_V1: Logs setting gates app telemetry. */
 extern int nova_diag_gate_on(void);
 #define LOGI(...) do { if(nova_diag_gate_on()) __android_log_print(ANDROID_LOG_INFO,TAG,__VA_ARGS__); } while(0)
 #define LOGE(...) do { if(nova_diag_gate_on()) __android_log_print(ANDROID_LOG_ERROR,TAG,__VA_ARGS__); } while(0)''',
@@ -186,9 +186,11 @@ extern int nova_diag_gate_on(void);
     segment=l[a:end]
     if "received,delivered);" not in segment:
         raise RuntimeError("60fps IO evidence delimiters changed")
-    l=l[:a]+"    if(nova_diag_gate_on()){\n"+segment+"    }\n"+l[end:]
+    l=l[:a]+"    if(nova_global_log_enabled()){\n"+segment+"    }\n"+l[end:]
     lite.write_text(l)
     t=t.replace("nova_diag_gate_on()", "nova_global_log_enabled()")
+    t=t.replace("extern int nova_diag_gate_on(void);",
+                "extern int nova_global_log_enabled(void);")
     t=once(t,'static void nova_1054_pool_failure_snapshot(const char *stage,size_t requested,int failure_errno)\n{',
            'static void nova_1054_pool_failure_snapshot(const char *stage,size_t requested,int failure_errno)\n{\n    if(!nova_global_log_enabled())return;',
            'disable /proc VM and map diagnostics on failed allocation when OFF')
