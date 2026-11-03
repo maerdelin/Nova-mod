@@ -32,7 +32,7 @@ jobs:
               print('NOVA_1097_FILE',pattern,'count',len(matches))
               for p in matches[:12]:
                   src=p.read_text()
-                  methods=re.findall(r'(?ms)^\\.method [^\\n]+\\n.*?^\\.end method',src)
+                  methods=re.findall(r'(?ms)^\.method [^\n]+\n.*?^\.end method',src)
                   selected=[m for m in methods if any(x in m.splitlines()[0].lower() for x in ('onkey(', 'onseek(', 'onseekanddraggingcomplete','isseekpressed','seekto(', 'onstoptrackingtouch','onstarttrackingtouch', 'onkeydown','onkeyup','sendfadeout'))]
                   for m in selected[:14]:
                       lines=m.splitlines()
