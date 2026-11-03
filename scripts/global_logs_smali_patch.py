@@ -67,9 +67,9 @@ GATE_SMALI=r'''
     invoke-virtual {v3}, Ljava/io/RandomAccessFile;->getChannel()Ljava/nio/channels/FileChannel;
     move-result-object v0
     sget-object v1, Ljava/nio/channels/FileChannel$MapMode;->READ_WRITE:Ljava/nio/channels/FileChannel$MapMode;
-    const-wide/16 v4, 0x0
-    const-wide/16 v6, 0x1
-    invoke-virtual {v0, v1, v4, v5, v6, v7}, Ljava/nio/channels/FileChannel;->map(Ljava/nio/channels/FileChannel$MapMode;JJ)Ljava/nio/MappedByteBuffer;
+    const-wide/16 v2, 0x0
+    const-wide/16 v4, 0x1
+    invoke-virtual/range {v0 .. v5}, Ljava/nio/channels/FileChannel;->map(Ljava/nio/channels/FileChannel$MapMode;JJ)Ljava/nio/MappedByteBuffer;
     move-result-object v0
     sput-object v0, Lcom/archos/mediacenter/video/NovaGlobalLogs;->flag:Ljava/nio/MappedByteBuffer;
     invoke-virtual {v3}, Ljava/io/RandomAccessFile;->close()V
