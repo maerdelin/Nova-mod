@@ -133,27 +133,26 @@ def patch_parser(text):
         "    if(nova_mkv_seek && ret >= 0) {\n"
         "        int64_t nova_position_us =\n",
         "reject false success from interrupted Matroska index scan")
-    # On the one confirmed intermittent-403 MKV, a later successful
-    # av_seek_frame may have established a fresh 206 Range after an
-    # earlier failed Matroska index relocation. Let the bounded packet
-    # scan VERIFY a real video timestamp rather than rejecting solely
-    # because a previous 403 latched the operation. Other MKVs keep the
-    # strict existing safety guard.
+    # For remote MKV with an earlier interrupted index relocation, a
+    # later successful av_seek_frame may have established a fresh valid
+    # byte-range. Do not trust that result blindly: allow a bounded
+    # packet scan to VERIFY real video timestamps. The source must use
+    # the verified remote Matroska single-GET path, not a file length.
     text = once(text,
         "    if(nova_mkv_seek && ret >= 0 && nova_mkv_seek_guard_failed(&ff_p->raw)) {\n",
-        "    /* NOVA_MKV_251_RECOVERED_INDEX_V1: only the exact 2.51GB MKV.\n"
-        "     * This does NOT mark the seek complete; packet scanning must\n"
-        "     * find a valid packet before AVOS can present the position. */\n"
+        "    /* NOVA_MKV_403_RECOVERED_INDEX_V1: any remote Matroska stream.\n"
+        "     * A successful indexed relocation is not yet a valid frame;\n"
+        "     * verify packets under the original seek deadline and cap. */\n"
         "    if(nova_mkv_seek && ret >= 0 &&\n"
-        "       ff_p->raw.source_size == 2509221119LL &&\n"
+        "       ff_p->raw.mkv_single_get &&\n"
         "       __atomic_load_n(&ff_p->raw.mkv_seek_failed,__ATOMIC_ACQUIRE) &&\n"
         "       ff_p->raw.mkv_seek_deadline_us > av_gettime_relative() &&\n"
         "       ff_p->raw.mkv_seek_bytes <= 64ULL*1024*1024) {\n"
-        "        serprintf(\"NOVA_MKV_251_RECOVERED_INDEX_V1: targetMs=%d indexed=1 verifyPackets=1\\n\",time);\n"
+        "        serprintf(\"NOVA_MKV_403_RECOVERED_INDEX_V1: targetMs=%d indexed=1 verifyPackets=1\\n\",time);\n"
         "        __atomic_store_n(&ff_p->raw.mkv_seek_failed,0,__ATOMIC_RELEASE);\n"
         "    }\n"
         "    if(nova_mkv_seek && ret >= 0 && nova_mkv_seek_guard_failed(&ff_p->raw)) {\n",
-        "allow packet validation after recovered 403 for exact MKV only")
+        "allow bounded packet validation for recovered remote MKV index")
     text = once(text,
         "        ff_p->raw.mkv_seek_started_us = av_gettime_relative();\n"
         "        ff_p->raw.mkv_seek_bytes = 0;\n",
