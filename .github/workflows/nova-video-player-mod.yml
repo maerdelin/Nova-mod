@@ -449,8 +449,8 @@ jobs:
           ! grep -R -Fq 'nova_diag_gate_on' iso/nova_literange4.inc iso/nova_transport.c iso/nova_iso_blackbox.inc
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' native-src/native/avos/Source/log_android.c
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-            grep -aq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' "native-src/native/avos/libs/$abi/libavos.so"
-            grep -aq 'nova_global_log_enabled' "work/transport-native/$abi/libnova_transport.so"
+            "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "native-src/native/avos/libs/$abi/libavos.so" | grep -F ' nova_global_log_enabled'
+            "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "work/transport-native/$abi/libnova_transport.so" | grep -F ' nova_global_log_enabled'
           done
           echo NOVA_GLOBAL_LOGS_APK_PRECHECK=PASS
 
