@@ -85,8 +85,8 @@ def native(root:Path,transport:Path,blackbox:Path):
     header=root/"Include/log.h"
     h=header.read_text()
     shared=root/"Include/nova_global_flag.h"
-    if not shared.exists():
-        raise RuntimeError("Missing NOVA shared gate header")
+    shared.write_text(Path("iso/nova_global_flag.h").read_text())
+    (root/"Include/nova_global_gate_impl.inc").write_text(GATE_C.read_text())
     guard=GATE_HELPER+r'''
 /* AVOS log arguments must not be evaluated in OFF state. */
 #if defined(CONFIG_ANDROID) && defined(DEBUG_MSG) && !defined(NOVA_DIAG_LOG_IMPL)
@@ -96,7 +96,7 @@ def native(root:Path,transport:Path,blackbox:Path):
 '''
     header.write_text(once(h,"#endif // _LOG_H_",guard+"\n#endif // _LOG_H_","AVOS log gate"))
     writer=root/"Source/log_android.c"
-    writer.write_text(AVOS_LOG)
+    writer.write_text('#include "../Include/nova_global_gate_impl.inc"\n'+AVOS_LOG)
     # 50ms existing controller is business; only optional sampler guarded.
     video=root/"Source/stream_video.c"
     v=guard_owned_snippets(video.read_text())
@@ -188,6 +188,7 @@ extern int nova_diag_gate_on(void);
         raise RuntimeError("60fps IO evidence delimiters changed")
     l=l[:a]+"    if(nova_diag_gate_on()){\n"+segment+"    }\n"+l[end:]
     lite.write_text(l)
+    t=t.replace("nova_diag_gate_on()", "nova_global_log_enabled()")
     transport.write_text(t)
     b=blackbox.read_text()
     b=once(b,'    while(1){\n        struct timespec delay={.tv_sec=1,.tv_nsec=0};',
@@ -236,6 +237,7 @@ static void nova_bb_arm(int mode)
     b=once(b,'void nova_transport_diag_external(int kind,int64_t amount,int rc)\n{\n',
            'void nova_transport_diag_external(int kind,int64_t amount,int rc)\n{\n    if(!nova_diag_gate_on())return;\n',
            'AVOS bridge OFF')
+    b=b.replace("nova_diag_gate_on()", "nova_global_log_enabled()")
     blackbox.write_text(b)
     # Global gate is in a separate compilation unit shared by transport.
     if not GATE_C.is_file():raise RuntimeError("Global gate native C missing")
