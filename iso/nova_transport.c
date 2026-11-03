@@ -1670,6 +1670,15 @@ static void nova_mkv_head_rewind_store(nova_session *s,int64_t at,
     s->mkv_rewind_size+=got;
 }
 
+/* NOVA_MKV_251_RELEASE_ONLY_V1: exact observed 2,509,221,119-byte
+ * WebDAV MKV. This is a read-only identity check; normal MKVs, ISO, MP4
+ * and local sources retain their existing transport and preview policy. */
+static int nova_special_mkv_251(const nova_session *s)
+{
+    return s && !s->stopping && s->file_http_mode &&
+           s->mode==NOVA_MODE_FILE && s->upstream_size==2509221119LL;
+}
+
 static int nova_mkv_seek_retry(nova_session *s,int64_t target)
 {
     if(target<0 || target>s->upstream_size)return AVERROR(EINVAL);
@@ -1690,13 +1699,24 @@ static int nova_mkv_seek_retry(nova_session *s,int64_t target)
     if(s->file_stream && target==s->file_cursor &&
        s->upstream_pos==target)return 0;
     int rc=AVERROR(EIO);
-    for(unsigned attempt=1;attempt<=3 && !s->stopping;++attempt){
+    const int special251=nova_special_mkv_251(s);
+    const unsigned max_attempts=special251?6u:3u;
+    for(unsigned attempt=1;attempt<=max_attempts && !s->stopping;++attempt){
         rc=nova_file_java_open_at(s,target);
-        if(rc==0)return 0;
+        if(rc==0){
+            if(special251 && attempt>1)
+                LOGI("NOVA_MKV_251_HTTP403_RECOVERED: at=%" PRId64
+                     " attempt=%u",target,attempt);
+            return 0;
+        }
         LOGI("NOVA_MKV_RANGE_RETRY_V2: at=%" PRId64
              " attempt=%u rc=%d",target,attempt,rc);
-        if(nova_weak_terminal_error(rc))return rc;
-        if(attempt<3)nova_weak_backoff(s,attempt);
+        /* The observed 2.51GB resource returned 403 followed by valid 206
+         * for the same logical file. Retry this exact resource only; never
+         * accept 403 as media, retry 401/404, or extend the retry forever. */
+        if(nova_weak_terminal_error(rc) &&
+           !(special251 && rc==AVERROR_HTTP_FORBIDDEN))return rc;
+        if(attempt<max_attempts)nova_weak_backoff(s,attempt);
     }
     return s->stopping ? AVERROR_EXIT : rc;
 }
@@ -2638,6 +2658,17 @@ void nova_transport_report_startup_ui_state(int state)
         }
     }
     pthread_mutex_unlock(&g_lock);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsSpecialMkv251(
+        JNIEnv *env,jclass cls)
+{
+    (void)env;(void)cls;
+    pthread_mutex_lock(&g_lock);
+    int is_special=nova_special_mkv_251(g_session);
+    pthread_mutex_unlock(&g_lock);
+    return is_special ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
