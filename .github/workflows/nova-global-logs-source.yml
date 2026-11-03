@@ -18,7 +18,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/global_logs_smali_patch.py scripts/global_logs_native_patch.py scripts/strict_idle_hotpaths_1133.py
           mkdir -p out
-          tar -czf out/nova-global-source.tar.gz scripts iso tests tools .github/workflows
+          tar -czf out/nova-global-source.tar.gz scripts iso tests .github/workflows
           bash scripts/global_logs_source_preflight.sh
           sha256sum out/*.tar.gz > out/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
