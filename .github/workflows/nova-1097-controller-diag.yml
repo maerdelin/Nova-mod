@@ -1,0 +1,42 @@
+name: NOVA 1097 inspect controller seek call graph
+on:
+  push:
+    branches: ['fix/1097-mkv-403-release-only-seek-20261103']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NOVA_1054_EXACT_1053_BASELINE: v6.6.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain exact original 6.6.2 APK and decode player controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools inputs
+          curl -fL --retry 2 --connect-timeout 15 --max-time 60 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
+          python3 scripts/check_upstream.py download --apk inputs/official.apk --metadata inputs/upstream.json
+          java -Xmx4g -jar tools/apktool.jar d --no-debug-info -f inputs/official.apk -o work/decoded
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          root=Path('work/decoded')
+          patterns=['PlayerController.smali','PlayerController$*.smali','PlayerActivity.smali','Player.smali']
+          for pattern in patterns:
+              matches=list(root.glob('smali*/com/archos/mediacenter/video/player/'+pattern))
+              print('NOVA_1097_FILE',pattern,'count',len(matches))
+              for p in matches[:12]:
+                  src=p.read_text()
+                  methods=re.findall(r'(?ms)^\\.method [^\\n]+\\n.*?^\\.end method',src)
+                  selected=[m for m in methods if any(x in m.splitlines()[0].lower() for x in ('onkey(', 'onseek(', 'onseekanddraggingcomplete','isseekpressed','seekto(', 'onstoptrackingtouch','onstarttrackingtouch', 'onkeydown','onkeyup','sendfadeout'))]
+                  for m in selected[:14]:
+                      lines=m.splitlines()
+                      print('NOVA_1097_METHOD',p.name,lines[0], 'lines',len(lines))
+                      for line in lines[:420]:print('  '+line)
+                      if len(lines)>420:print('  ...TRUNCATED...')
+          PY
