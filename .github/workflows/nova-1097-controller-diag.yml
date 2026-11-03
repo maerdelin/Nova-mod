@@ -54,10 +54,12 @@ jobs:
           .super Ljava/lang/Object;
           .method public static native isNonIsoDirectWebdav()Z
           .end method
-          .method public static native nativeIsMkv403Recovered()Z
+          .method public static native nativeIsWebdavMkv()Z
           .end method
           SMALI
           python3 scripts/mkv_251_release_seek_patch.py --decoded work/decoded
+          grep -Fq 'nova251OnSeekSpinner' work/decoded/smali*/com/archos/mediacenter/video/player/PlayerController.smali
+          grep -Fq 'nova251_activity_suppressed' work/decoded/smali*/com/archos/mediacenter/video/player/PlayerActivity\$1.smali
           grep -Fq 'nova251BeginHold' work/decoded/smali*/com/archos/mediacenter/video/player/PlayerController.smali
           grep -Fq 'nova251HoldTick' 'work/decoded/smali_classes3/com/archos/mediacenter/video/player/PlayerController$8.smali' || grep -R -Fq 'nova251HoldTick' work/decoded/smali*/com/archos/mediacenter/video/player/PlayerController\$8.smali
           java -Xmx4g -jar tools/apktool.jar b work/decoded -o work/1097-verified-smali.apk
