@@ -1,7 +1,7 @@
-"""NOVA 1097: exact-MKV hold-only seek regression guards.
+"""NOVA 1097: recovered-403 MKV hold-only seek regression guards.
 
 Ordinary Matroska must retain existing mid-hold frame preview and seekTo calls.
-The special 2,509,221,119-byte video moves only its UI target until key-up.
+An MKV with verified HTTP403 -> canonical read recovery updates only its UI until key-up.
 """
 import unittest
 from pathlib import Path
@@ -13,18 +13,22 @@ def text(path):
     return (ROOT/path).read_text()
 
 
-class Special251Only(unittest.TestCase):
-    def test_special_identity_is_exact_byte_size_and_live_webdav_mkv(self):
+class RecoveredMkv403Only(unittest.TestCase):
+    def test_classifier_is_verified_403_and_canonical_read_not_size(self):
         src = text("iso/nova_transport.c")
         self.assertIn("s->file_http_mode &&", src)
-        self.assertIn("s->mode==NOVA_MODE_FILE && s->upstream_size==2509221119LL", src)
-        self.assertIn("Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsSpecialMkv251", src)
+        self.assertIn("mkv_http403_canonical_recovered", src)
+        self.assertIn("s->multi_backoff_status==403",src)
+        self.assertIn("nova_multi_record_verified_single(s,ret)",src)
+        self.assertNotIn("2509221119",src)
+        self.assertIn("nova_mkv_403_recovered",src)
+        self.assertIn("Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsMkv403Recovered", src)
 
     def test_all_other_mkv_preserve_original_seek_and_three_retries(self):
         native = text("iso/nova_transport.c")
         patch = text("scripts/mkv_251_release_seek_patch.py")
-        self.assertIn("max_attempts=special251?6u:3u", native)
-        self.assertIn("!(special251 && rc==AVERROR_HTTP_FORBIDDEN)", native)
+        self.assertIn("max_attempts=recovery403?6u:3u", native)
+        self.assertIn("!(recovery403 && rc==AVERROR_HTTP_FORBIDDEN)", native)
         self.assertIn("if-eqz v0, :nova251_original_seek", patch)
         self.assertIn('src = edit_method(src, "onSeek(IZ)V", modify_on_seek)', patch)
         self.assertIn("invoke-direct {{p0, p1}}, {PC}->nova251BeginHold(I)V", patch)
@@ -44,14 +48,24 @@ class Special251Only(unittest.TestCase):
         self.assertIn("if-ltz v0, :nova251_commit_clear", commit)
         self.assertNotIn("if-gez v0, :nova251_commit_clear", commit)
         self.assertEqual(commit.count("->seekTo(I)V"), 1)
-        self.assertIn("nativeIsSpecialMkv251()Z", commit)
+        self.assertIn("nativeIsMkv403Recovered()Z", commit)
         self.assertIn("    invoke-direct {{p0}}, {PC}->nova251Commit()V", patch)
         self.assertIn('once(method, original,',patch)
 
+    def test_other_formats_still_fall_through_to_unmodified_seek(self):
+        native = text("iso/nova_transport.c")
+        patch = text("scripts/mkv_251_release_seek_patch.py")
+        self.assertIn("s->mode==NOVA_MODE_FILE", native)
+        self.assertIn("if-eqz v0, :nova251_original_seek",patch)
+        self.assertIn('src = edit_method(src, "onSeek(IZ)V", modify_on_seek)',patch)
+        self.assertIn("mSeekKeyDirection:I",patch)
+        self.assertNotIn("2509221119",patch)
+
     def test_special_recovered_index_still_needs_packet_verification(self):
         patch = text("scripts/startup_bbc_seek_fix_patch.py")
-        self.assertIn("NOVA_MKV_251_RECOVERED_INDEX_V1", patch)
-        self.assertIn("ff_p->raw.source_size == 2509221119LL",patch)
+        self.assertIn("NOVA_MKV_403_RECOVERED_INDEX_V1", patch)
+        self.assertIn("ff_p->raw.mkv_single_get",patch)
+        self.assertNotIn("2509221119",patch)
         self.assertIn("ff_p->raw.mkv_seek_deadline_us > av_gettime_relative()", patch)
         self.assertIn("if(nova_mkv_seek && ret >= 0 && nova_mkv_seek_guard_failed(&ff_p->raw))",patch)
 
