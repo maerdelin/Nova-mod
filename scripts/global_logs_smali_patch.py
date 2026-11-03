@@ -113,6 +113,13 @@ GATE_SMALI=r'''
     invoke-virtual {v0}, Ljava/nio/MappedByteBuffer;->force()Ljava/nio/MappedByteBuffer;
     :try_end_0
     .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :nova_write_failed
+    # The output is gated through the same Log.i wrapper. This lets Android
+    # runtime validation observe OFF->ON after the real Settings callback.
+    # When OFF, wrapper returns without writing any logcat line.
+    const-string v0, "NOVA_GLOBAL_LOGS_TEST"
+    const-string v1, "ON_AFTER_APPLY"
+    invoke-static {v0, v1}, Lcom/archos/mediacenter/video/NovaGlobalLogs;->i(Ljava/lang/String;Ljava/lang/String;)I
+    move-result v0
     return-void
     :nova_write_failed
     move-exception v0
@@ -271,6 +278,9 @@ def smali(root:Path):
         if n: p.write_text(text)
         num+=n
     if num<100:raise RuntimeError(f"Only {num} Android Log callsites: expected >=100")
+    # Required by the device-side UI smoke probe in update(Z), irrespective
+    # of the upstream APK's existing Android Log.i signatures.
+    signatures.add(("i", "Ljava/lang/String;Ljava/lang/String;", "I"))
 
     # Put new file inside an already-existing small DEX, avoiding early-app
     # startup and main multidex method-ref limits.
