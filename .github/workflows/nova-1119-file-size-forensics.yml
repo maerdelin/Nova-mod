@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 jobs:
   diagnose:
+    env:
+      NOVA_1054_EXACT_1053_BASELINE: v6.6.2
     runs-on: ubuntu-24.04
     timeout-minutes: 16
     steps:
@@ -70,6 +72,27 @@ jobs:
                           print('NOVA_SIZE_PATCH_LINE',line)
           print('NOVA_SIZE_PROOF_COMPLETE')
           PY
+      - name: Test size fix against original 6.6.2, assemble three display modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_1119_resumed_file_size.py -v
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys,json
+          sys.path.insert(0,'scripts')
+          import granular
+          from fix_resumed_file_size_1119 import patch
+          root=Path('work/decoded')
+          spec=json.loads(Path('patches/v982-granular.json').read_text())
+          granular.apply(root,spec,Path('reports/1119/granular.json'))
+          result=patch(root,Path('reports/1119/candidate.json'))
+          assert result['status']=='PASS'
+          print('NOVA_1119_ORIGINAL_662_ALL_THREE_UI='+'PASS')
+          PY
+          java -Xmx4g -jar tools/apktool.jar b work/decoded -o work/1119-size-validated.apk > reports/1119/assemble.log
+          test -s work/1119-size-validated.apk
+          echo 'NOVA_1119_ORIGINAL_662_APKTOOL_ASSEMBLY=PASS'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
