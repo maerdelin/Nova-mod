@@ -54,7 +54,7 @@ jobs:
           .super Ljava/lang/Object;
           .method public static native isNonIsoDirectWebdav()Z
           .end method
-          .method public static native nativeIsSpecialMkv251()Z
+          .method public static native nativeIsMkv403Recovered()Z
           .end method
           SMALI
           python3 scripts/mkv_251_release_seek_patch.py --decoded work/decoded
