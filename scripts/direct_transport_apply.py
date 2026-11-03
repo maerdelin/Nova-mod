@@ -1214,6 +1214,12 @@ def main():
     from startup_loading_994_patch import patch as apply_994_startup_ui
     apply_994_startup_ui(root)
 
+    # Exact 2.51GB WebDAV MKV only: hold previews time, not network data.
+    # Ordinary MKV frame renders and all other sources remain unchanged.
+    from mkv_251_release_seek_patch import patch as apply_251_release_seek
+    result_251 = apply_251_release_seek(root)
+    print('NOVA_MKV_251_RELEASE_ONLY_V1=' + result_251['status'])
+
     # Guard malformed torrent stdout without changing listing or playback.
     from torrent_crash_guard_patch import patch_torrent_observer
     torrent=one(root.glob("smali*/com/archos/mediacenter/video/browser/TorrentObserverService.smali"),"TorrentObserverService")
