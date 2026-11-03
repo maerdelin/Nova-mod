@@ -119,7 +119,7 @@ EOF
   "$cc" -shared -fPIC -O2 -fvisibility=hidden \
     -I"$SRC/src" -I"$SRC/src/libbluray" -I"$ff/include" \
     -I"$curl_src/include" -I"$ssl/include" \
-    "$ROOT/iso/nova_transport.c" "$curl_a" "$ssl/lib/libssl.a" "$ssl/lib/libcrypto.a" \
+    "$ROOT/iso/nova_transport.c" "$ROOT/iso/nova_global_gate.c" "$curl_a" "$ssl/lib/libssl.a" "$ssl/lib/libcrypto.a" \
     -Wl,--start-group "$bluray" "$udf" -Wl,--end-group \
     -L"$ff/lib" -lavformat -lavutil \
     -llog -ldl -lm -lz -latomic \
