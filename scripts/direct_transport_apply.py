@@ -460,9 +460,9 @@ PROXY_RESOLVE = r'''
 .method public static native nativeClose()V
 .end method
 
-# NOVA_MKV_251_RELEASE_ONLY_V1: exact-session transport identity;
+# NOVA_MKV_403_RELEASE_ONLY_V2: recovered-403 MKV session classification;
 # no network I/O, no MIME guessing, no effect on ordinary MKVs.
-.method public static native nativeIsSpecialMkv251()Z
+.method public static native nativeIsMkv403Recovered()Z
 .end method
 '''
 
@@ -1214,11 +1214,11 @@ def main():
     from startup_loading_994_patch import patch as apply_994_startup_ui
     apply_994_startup_ui(root)
 
-    # Exact 2.51GB WebDAV MKV only: hold previews time, not network data.
+    # A WebDAV MKV with observed, verified 403 recovery previews target time only.
     # Ordinary MKV frame renders and all other sources remain unchanged.
     from mkv_251_release_seek_patch import patch as apply_251_release_seek
     result_251 = apply_251_release_seek(root)
-    print('NOVA_MKV_251_RELEASE_ONLY_V1=' + result_251['status'])
+    print('NOVA_MKV_403_RELEASE_ONLY_V2=' + result_251['status'])
 
     # Guard malformed torrent stdout without changing listing or playback.
     from torrent_crash_guard_patch import patch_torrent_observer
