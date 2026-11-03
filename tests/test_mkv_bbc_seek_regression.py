@@ -24,12 +24,13 @@ class BbcMkvRegression(unittest.TestCase):
         self.assertIn('total<=0 || last>=total',n)
         self.assertIn('sameOrigin(Ljava/net/URL;Ljava/net/URL;)',java)
         self.assertIn('NOVA_MKV_RANGE_RETRY_V2',n)
-        # All normal MKVs retain terminal HTTP/permission errors. Only the
-        # exact observed 2.51GB file may retry a transient 403 (never 401/404).
+        # Only MKV sessions that recovered a verified HTTP403 -> canonical
+        # read may retry a later 403. A filename or byte length is not enough.
         self.assertIn('if(nova_weak_terminal_error(rc) &&',n)
-        self.assertIn('!(special251 && rc==AVERROR_HTTP_FORBIDDEN)',n)
-        self.assertIn('const unsigned max_attempts=special251?6u:3u;',n)
-        self.assertIn('s->upstream_size==2509221119LL',n)
+        self.assertIn('!(recovery403 && rc==AVERROR_HTTP_FORBIDDEN)',n)
+        self.assertIn('const unsigned max_attempts=recovery403?6u:3u;',n)
+        self.assertIn('mkv_http403_canonical_recovered',n)
+        self.assertNotIn('2509221119',n)
 
     def test_run680_iso_seek_fragment_is_unchanged(self):
         n=src("iso/nova_transport.c")
