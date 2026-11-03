@@ -189,6 +189,11 @@ extern int nova_diag_gate_on(void);
     l=l[:a]+"    if(nova_diag_gate_on()){\n"+segment+"    }\n"+l[end:]
     lite.write_text(l)
     t=t.replace("nova_diag_gate_on()", "nova_global_log_enabled()")
+    # ON while an existing video is playing must also enable blackbox:
+    # the original open-time arm may have been skipped when checkbox OFF.
+    t=once(t,'int nova_transport_read(uint64_t generation, uint8_t *dst, int size)\n{',
+        'int nova_transport_read(uint64_t generation, uint8_t *dst, int size)\n{\n    if(nova_global_log_enabled() &&\n       (!__atomic_load_n(&g_bb_armed,__ATOMIC_ACQUIRE) ||\n        !__atomic_load_n(&g_bb_watch_started,__ATOMIC_ACQUIRE)))\n        nova_bb_on_diag_start();',
+        'reactivate blackbox when user enables Logs mid-playback')
     transport.write_text(t)
     b=blackbox.read_text()
     b=once(b,'    while(1){\n        struct timespec delay={.tv_sec=1,.tv_nsec=0};',
