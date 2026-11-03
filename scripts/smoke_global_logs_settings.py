@@ -27,14 +27,15 @@ def dump():
     return ET.fromstring(xml[xml.index("<?xml"):])
 
 def locate(root):
-    for parent in root.iter():
-        children=list(parent)
-        for node in children:
-            if node.get("text")=="日志":
-                checkboxes=[x for x in parent.iter() if x.get("checkable")=="true"]
-                if not checkboxes:
-                    checkboxes=[x for x in root.iter() if x.get("checkable")=="true"]
-                return node,checkboxes
+    parents={child:parent for parent in root.iter() for child in parent}
+    for node in root.iter():
+        if node.get("text")!="日志":continue
+        cursor=node
+        while cursor in parents:
+            cursor=parents[cursor]
+            checkboxes=[x for x in cursor.iter() if x.get("checkable")=="true"]
+            if checkboxes:return node,checkboxes
+        return node,[]
     return None,[]
 
 def click_bounds(node):
