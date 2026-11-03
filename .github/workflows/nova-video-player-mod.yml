@@ -242,7 +242,7 @@ jobs:
           python3 scripts/global_logs_native_patch.py --native native-src/native/avos --transport iso/nova_transport.c
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' native-src/native/avos/Include/log.h
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' iso/nova_transport.c
-          grep -Fq 'nova_global_log_enabled' native-src/native/avos/Source/log_android.c
+          grep -Fq 'nova_global_log_enabled' native-src/native/avos/Include/nova_global_gate_impl.inc
           grep -Fq 'NOVA_1052_ISO_HW_CBE_V1' native-src/native/avos/Source/stream_video.c
           grep -Fq 'NOVA_1052_ISO_HW_ONLY_V1' native-src/native/avos/Source/stream_video.c
           grep -Fq 'NOVA_60FPS_SYSTEM_FORENSICS_V2' native-src/native/avos/Source/stream_video.c
