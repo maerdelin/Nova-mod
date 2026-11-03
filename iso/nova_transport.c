@@ -370,6 +370,10 @@ typedef struct nova_session {
      * NOVA_MULTI_SCOPE_V3 exposes the same DirectRangeHttp byte source to
      * every WebDAV format after open, including ISO movie-data LBAs. */
     int file_http_mode;
+    /* NOVA_MKV_403_RECOVERY_CLASSIFIED_V1: set only after a real bounded
+     * Range HTTP403 is followed by a verified canonical single-GET read.
+     * Sticky per MKV playback generation; never keyed by file length. */
+    volatile int mkv_http403_canonical_recovered;
     /* NOVA_STARTUP_ONEPASS_V1: observational scoped pre-probe cancellation. */
     volatile int startup_probe_complete;
     volatile int startup_read_preempt;
@@ -1293,6 +1297,17 @@ static void nova_multi_record_verified_single(nova_session *s,int bytes)
 {
     if(!s || bytes<=0 || !s->multi_http403_failures ||
        s->multi_seek_guard)return;
+    /* A 403 is only evidence of intermittent throttling AFTER data
+     * successfully arrived through the original WebDAV resource. Before
+     * that success, an auth failure is not a recoverable MKV property.
+     * file_http_mode is used only for verified Matroska WebDAV transport. */
+    if(s->file_http_mode && s->mode==NOVA_MODE_FILE &&
+       s->multi_backoff_status==403 &&
+       !__atomic_load_n(&s->mkv_http403_canonical_recovered,__ATOMIC_ACQUIRE)){
+        __atomic_store_n(&s->mkv_http403_canonical_recovered,1,__ATOMIC_RELEASE);
+        LOGI("NOVA_MKV_403_RECOVERY_CLASSIFIED_V1: generation=%" PRIu64
+             " canonical206=1 range403=1",s->generation);
+    }
     uint64_t cap=NOVA_MULTI_SINGLE_PROBE_BYTES;
     uint64_t add=(uint64_t)bytes;
     if(s->multi_range_single_bytes<cap){
@@ -1670,13 +1685,15 @@ static void nova_mkv_head_rewind_store(nova_session *s,int64_t at,
     s->mkv_rewind_size+=got;
 }
 
-/* NOVA_MKV_251_RELEASE_ONLY_V1: exact observed 2,509,221,119-byte
- * WebDAV MKV. This is a read-only identity check; normal MKVs, ISO, MP4
- * and local sources retain their existing transport and preview policy. */
-static int nova_special_mkv_251(const nova_session *s)
+/* NOVA_MKV_403_RECOVERY_CLASSIFIED_V1: scope the release-only DPAD path
+ * to WebDAV Matroska with an OBSERVED recovered Range403. Ordinary MKV,
+ * MP4, TS, ISO and local sources keep their original hold-frame preview.
+ * Deliberately no byte-size or filename whitelist. */
+static int nova_mkv_403_recovered(const nova_session *s)
 {
     return s && !s->stopping && s->file_http_mode &&
-           s->mode==NOVA_MODE_FILE && s->upstream_size==2509221119LL;
+           s->mode==NOVA_MODE_FILE &&
+           __atomic_load_n(&s->mkv_http403_canonical_recovered,__ATOMIC_ACQUIRE);
 }
 
 static int nova_mkv_seek_retry(nova_session *s,int64_t target)
@@ -1699,23 +1716,23 @@ static int nova_mkv_seek_retry(nova_session *s,int64_t target)
     if(s->file_stream && target==s->file_cursor &&
        s->upstream_pos==target)return 0;
     int rc=AVERROR(EIO);
-    const int special251=nova_special_mkv_251(s);
-    const unsigned max_attempts=special251?6u:3u;
+    const int recovery403=nova_mkv_403_recovered(s);
+    const unsigned max_attempts=recovery403?6u:3u;
     for(unsigned attempt=1;attempt<=max_attempts && !s->stopping;++attempt){
         rc=nova_file_java_open_at(s,target);
         if(rc==0){
-            if(special251 && attempt>1)
-                LOGI("NOVA_MKV_251_HTTP403_RECOVERED: at=%" PRId64
+            if(recovery403 && attempt>1)
+                LOGI("NOVA_MKV_403_SEEK_RECOVERED: at=%" PRId64
                      " attempt=%u",target,attempt);
             return 0;
         }
         LOGI("NOVA_MKV_RANGE_RETRY_V2: at=%" PRId64
              " attempt=%u rc=%d",target,attempt,rc);
-        /* The observed 2.51GB resource returned 403 followed by valid 206
-         * for the same logical file. Retry this exact resource only; never
-         * accept 403 as media, retry 401/404, or extend the retry forever. */
+        /* For a verified MKV session with previously recovered 403 only:
+         * retry a later 403 up to six times with the existing backoff.
+         * Never accept a denial as media; 401/404 remain terminal. */
         if(nova_weak_terminal_error(rc) &&
-           !(special251 && rc==AVERROR_HTTP_FORBIDDEN))return rc;
+           !(recovery403 && rc==AVERROR_HTTP_FORBIDDEN))return rc;
         if(attempt<max_attempts)nova_weak_backoff(s,attempt);
     }
     return s->stopping ? AVERROR_EXIT : rc;
@@ -2661,12 +2678,12 @@ void nova_transport_report_startup_ui_state(int state)
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsSpecialMkv251(
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsMkv403Recovered(
         JNIEnv *env,jclass cls)
 {
     (void)env;(void)cls;
     pthread_mutex_lock(&g_lock);
-    int is_special=nova_special_mkv_251(g_session);
+    int is_special=nova_mkv_403_recovered(g_session);
     pthread_mutex_unlock(&g_lock);
     return is_special ? JNI_TRUE : JNI_FALSE;
 }
