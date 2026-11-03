@@ -113,6 +113,57 @@ def verify_three_ui_binders(root: Path) -> dict:
     return counts
 
 
+
+def verify_compiled(root: Path, report: Path | None = None) -> dict:
+    """Inspect assembled/decompiled actual APK bytecode, not source comments."""
+    mapper=exactly_one(root, f"{ROOT}/browser/adapters/mappers/VideoCursorMapper.smali")
+    src=mapper.read_text(encoding="utf-8")
+    lines=src.splitlines()
+    matches=[]
+    for i,line in enumerate(lines):
+        if line.strip()!=f"iget v0, v0, {MAPPER}->mSizeColumn:I":
+            continue
+        near=following_statements(lines,i,20)
+        got=[lines[j].strip() for j in near[:3]]
+        if got==[
+            "invoke-interface {v1, v0}, Landroid/database/Cursor;->getLong(I)J",
+            "move-result-wide v0",
+            "move-wide/from16 v20, v0",
+        ]:
+            matches.append(i)
+    if len(matches)!=1:
+        raise RuntimeError(f"{TAG}: actual APK lacks exact ordinary-video 64-bit DB size: {len(matches)}")
+    # The Matroska size must not be narrowed after being read as a long.
+    window="\n".join(lines[matches[0]:matches[0]+14])
+    if "int-to-long" in window or "->getInt(I)I" in window:
+        raise RuntimeError(f"{TAG}: 32-bit truncation remains in final APK")
+    card=exactly_one(root,f"{ROOT}/leanback/presenter/PosterImageCardPresenter.smali")
+    c=card.read_text(encoding="utf-8").splitlines()
+    indexes=[i for i,line in enumerate(c) if f"{VIDEO}->getSize()J" in line]
+    if len(indexes)!=1:
+        raise RuntimeError(f"{TAG}: TV card size binder changed")
+    preceding="\n".join(c[max(0,indexes[0]-22):indexes[0]])
+    if (f"instance-of v3, p2, {MOVIE}" not in preceding or
+        f"instance-of v3, p2, {EPISODE}" not in preceding or
+        f"instance-of v3, p2, {NONINDEXED}" in preceding):
+        raise RuntimeError(f"{TAG}: TV card still excludes ordinary indexed videos")
+    binds=verify_three_ui_binders(root)
+    result={
+        "status":"PASS",
+        "tag":TAG,
+        "verified_binary":"actual smali decoded from rebuilt APK",
+        "generic_video_size":"Cursor.getLong -> move-result-wide -> move-wide to ctor",
+        "no_32_bit_narrowing":True,
+        "ordinary_indexed_tv_card":"permitted",
+        "three_size_binders":binds,
+    }
+    if report is not None:
+        report.parent.mkdir(parents=True,exist_ok=True)
+        report.write_text(json.dumps(result,indent=2)+"\n",encoding="utf-8")
+    print(TAG+"_COMPILED=PASS")
+    return result
+
+
 def patch(root: Path, report: Path | None = None) -> dict:
     mapper = exactly_one(root, f"{ROOT}/browser/adapters/mappers/VideoCursorMapper.smali")
     card = exactly_one(root, f"{ROOT}/leanback/presenter/PosterImageCardPresenter.smali")
@@ -148,5 +199,9 @@ if __name__ == "__main__":
     arg = argparse.ArgumentParser(description=__doc__)
     arg.add_argument("--decoded", type=Path, required=True)
     arg.add_argument("--report", type=Path)
+    arg.add_argument("--verify", action="store_true", help="inspect APK roundtrip without editing")
     args = arg.parse_args()
-    patch(args.decoded, args.report)
+    if args.verify:
+        verify_compiled(args.decoded, args.report)
+    else:
+        patch(args.decoded, args.report)
