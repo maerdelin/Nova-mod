@@ -120,7 +120,7 @@ NEW_METHODS = f"""
     if-eqz v0, :nova251_commit_clear
     invoke-direct {{p0}}, {PC}->nova251Clamp()V
     iget v0, p0, {PC}->mNextSeek:I
-    if-gez v0, :nova251_commit_clear
+    if-ltz v0, :nova251_commit_clear
     sget-object v1, {PLAYER}->sPlayer:{PLAYER}
     if-eqz v1, :nova251_commit_clear
     # Exactly one native SEEK after key UP. Any HTTP 403 retries happen here.
