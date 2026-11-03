@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'fix/1088-mkv-fast-preview-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/1097-mkv-403-release-only-seek-20261103', 'fix/1119-progress-size-all-three-20261103', 'feat/always-new-global-logs-toggle-20261103', 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'fix/1088-mkv-fast-preview-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/1097-mkv-403-release-only-seek-20261103', 'fix/1119-progress-size-all-three-20261103', 'feat/always-new-global-logs-toggle-20261103', 'fix/global-logs-complete-gating-20261103', 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     env:
-      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103') && 'v6.6.2' || 'none' }}
+      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103')) && 'v6.6.2' || 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -62,6 +62,8 @@ jobs:
           meson --version
           ffmpeg -version | head -n 1
           mkdir -p inputs dist tools work reports
+          python3 -m py_compile scripts/global_logs_native_coverage_patch.py scripts/audit_global_logs_smali.py scripts/smoke_global_logs_native_off.py
+          python3 -m unittest discover -s tests -p test_global_logs_hardening.py -v
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
@@ -240,6 +242,7 @@ jobs:
           python3 scripts/iso_hw_cbe_reliability_patch.py --native native-src/native/avos
           python3 scripts/iso_1073_avos_patch.py --native native-src/native/avos
           python3 scripts/global_logs_native_patch.py --native native-src/native/avos --transport iso/nova_transport.c
+          python3 scripts/global_logs_native_coverage_patch.py --native native-src/native/avos --transport iso/nova_transport.c
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' native-src/native/avos/Include/log.h
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' iso/nova_transport.c
           grep -Fq 'nova_global_log_enabled' native-src/native/avos/Include/nova_global_gate_impl.inc
@@ -436,20 +439,23 @@ jobs:
           grep -Fq 'NOVA_STARTUP_ZERO_NO_REQUEST_V1' "${startup_service[0]}"
           grep -Fq 'NOVA_RESUME_ZERO_NO_REQUEST_V1' "${resume_ctx[0]}"
 
-      - name: Verify Always-new Logs checkbox and native gate in final APK
-        if: github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103'
+      - name: Verify complete Java, JNI, Logback and native gate in assembled APK
+        if: github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103'
         shell: bash
         run: |
           set -euo pipefail
           test -s work/direct-final/res/xml/preferences_video.xml
+          python3 scripts/audit_global_logs_smali.py --apktool-root work/direct-final
           grep -Fq 'android:title="日志" android:key="nova_logs_enabled" android:defaultValue="true"' work/direct-final/res/xml/preferences_video.xml
           grep -R -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' work/direct-final/smali*/com/archos/mediacenter/video/NovaGlobalLogs.smali
           grep -Fq 'NovaGlobalLogs;->init' work/direct-final/smali*/com/archos/mediacenter/video/CustomApplication.smali
           grep -Fq 'NovaGlobalLogs;->update' work/direct-final/smali*/com/archos/mediacenter/video/utils/VideoPreferencesCommon.smali
           ! grep -R -Fq 'nova_diag_gate_on' iso/nova_literange4.inc iso/nova_transport.c iso/nova_iso_blackbox.inc
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' native-src/native/avos/Source/log_android.c
+          grep -Fq 'NOVA_GLOBAL_LOGS_JNI_GUARD_V2' native-src/native/avos/jni/libavosjni/libavos.h
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
             "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "native-src/native/avos/libs/$abi/libavos.so" | grep -F ' nova_global_log_enabled'
+            "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "native-src/native/avos/libs/$abi/libavosjni.so" | grep -F ' nova_global_log_enabled'
             "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "work/transport-native/$abi/libnova_transport.so" | grep -F ' nova_global_log_enabled'
           done
           echo NOVA_GLOBAL_LOGS_APK_PRECHECK=PASS
@@ -588,6 +594,7 @@ jobs:
           script: |
            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
            python3 scripts/smoke_global_logs_settings.py --reports reports
+           python3 scripts/smoke_global_logs_native_off.py --reports reports
             # The actual signed player's WebDAV MKV weak-network test below
             # verifies one-use signed redirects, first frame, Range and Seek.
             # A standalone app_process on Android 11 was OOM-killed twice.
@@ -610,7 +617,7 @@ jobs:
            # reactivecircus runs each script line using POSIX /bin/sh -c;
            # multiline if/else is NOT one shell invocation. Scope this
            # independent historical #993 MKV comparison with one command.
-           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/1119-progress-size-all-three-20261103" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/1119-progress-size-all-three-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
@@ -626,6 +633,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: |
            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
+           python3 scripts/smoke_global_logs_settings.py --reports reports/android14
              # Signed APK ART probe: zero remote resume PUT; normal upload still works.
              python3 scripts/smoke_webdav_resume_local_only.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports/android14
 
@@ -635,7 +643,7 @@ jobs:
         run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
 
       - name: Publish Always-new Logs checkbox signed APK (only after Android 11/14 pass)
-        if: github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103') && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -647,17 +655,20 @@ jobs:
           for label,path in [('Android11','reports/installation.json'),('Android14','reports/android14/installation.json')]:
               report=json.loads(Path(path).read_text())
               assert report['status']=='PASS',(label,report)
-          screen=json.loads(Path('reports/global-logs-settings.json').read_text())
-          assert screen['status']=='PASS',screen
-          assert 'unchecked by actual Settings tap' in screen['tested']
-          assert 'rechecked by actual Settings tap' in screen['tested']
+          for label,path in [('Android11','reports/global-logs-settings.json'),('Android14','reports/android14/global-logs-settings.json')]:
+              screen=json.loads(Path(path).read_text())
+              assert screen['status']=='PASS' and screen['java_gate']=='PASS',(label,screen)
+              assert 'ON->OFF suppresses Log.i in actual callback' in screen['tested'],(label,screen)
+              assert 'OFF->ON restores real gated Java Log.i' in screen['tested'],(label,screen)
+          native=json.loads(Path('reports/global-logs-native-off.json').read_text())
+          assert native['status']=='PASS' and native['native_off']=='PASS',native
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
           tag="nova-alwaysnew-global-logs-$GITHUB_RUN_NUMBER"
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "NOVA Always-new Global Logs Toggle - Run $GITHUB_RUN_NUMBER" \
-            --notes "Built directly from Always-new. Settings > About > 日志 checkbox below Licenses, initially checked; shared process flag gates Java and native AVOS/transport/60fps/blackbox diagnostics, retaining adb logcat all-buffer desktop export. Android11/14 emulator smoke and UI toggle required before publication. Android OS logs are separate. Physical TV / device performance still needs verification."
+            --notes "Built directly from Always-new. Settings > About > 日志 checkbox below Licenses, initially checked; shared byte gates Java/Logback, JNI, AVOS, EGL and Transport diagnostics. Local source + C gate tests, Android11 real silent playback, Android11/14 actual checkbox/Java logcat and other playback checks required before publication. Android OS logs are separate. Physical TV / device performance still needs verification."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Persist extracted granular specification on the test branch
