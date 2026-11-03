@@ -220,7 +220,7 @@ jobs:
           python3 scripts/mkv_bbc_cue_seek_patch.py --native native-src/native/avos
           python3 scripts/iso_track_metadata_patch.py --native native-src/native/avos
           python3 scripts/startup_bbc_seek_fix_patch.py --native native-src/native/avos --report reports/startup-bbc-seek-fix.json
-          grep -Fq 'NOVA_MKV_251_RECOVERED_INDEX_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'NOVA_MKV_403_RECOVERED_INDEX_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           NOVA_PATCHED_AVOS_ROOT="$PWD/native-src/native/avos" python3 -m unittest discover -s tests -p test_startup_bbc_seek_native.py -v
           grep -Fq 'NOVA_STARTUP_AUDIO_NO_TIMELINE_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c
           grep -Fq 'return stream_parser_set_audio_stream( s, audio_stream);' native-src/native/avos/Source/stream_parser_ffmpeg.c
@@ -412,8 +412,8 @@ jobs:
             --native-root work/transport-native \
             --work work
           test -s work/direct-final/smali_classes*/com/archos/mediacenter/video/player/NovaStartupOverlay.smali
-          grep -R -Fq 'NOVA_MKV_251_RELEASE_ONLY_V1' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerController.smali
-          grep -R -Fq 'nativeIsSpecialMkv251()Z' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
+          grep -R -Fq 'NOVA_MKV_403_RELEASE_ONLY_V2' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerController.smali
+          grep -R -Fq 'nativeIsMkv403Recovered()Z' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
           grep -R -Fq 'NovaStartupOverlay;->onPrepared' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerActivity.smali
           grep -Fq 'android:tag="nova_buffer_percent"' work/direct-final/res/layout/player.xml
           grep -R -Fq 'nativeStartupPercent()I' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
@@ -524,7 +524,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Prepare real Blu-ray ISO media for five-goal acceptance
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103'
         shell: bash
         run: |
           set -euo pipefail
@@ -574,7 +574,7 @@ jobs:
            # reactivecircus runs each script line using POSIX /bin/sh -c;
            # multiline if/else is NOT one shell invocation. Scope this
            # independent historical #993 MKV comparison with one command.
-           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
@@ -872,7 +872,7 @@ jobs:
             --notes "Based exactly on signed Run 1088 (ee3dcc52), retaining 1074 subtitle EGL and prior ISO/WebDAV fixes. MKV seeks bypass 30-second NOVA_PRECISE_SEEK wait and restore upstream AVOS 10-frame/1-second keyframe preview; MP4/TS/ISO behavior unchanged. Faster first-frame priority can show the nearest keyframe before precise playback catches up. CI emulator tests are not a physical 4K HEVC 80GB WebDAV benchmark."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
-      - name: Publish NOVA 1097 exact 2.51GB release-only seek APK
+      - name: Publish NOVA 1097 recovered HTTP403 MKV release-only seek APK
         if: github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' && github.event_name == 'push'
         shell: bash
         env:
@@ -890,15 +890,15 @@ jobs:
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
           for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-            grep -aq 'NOVA_MKV_251_RECOVERED_INDEX_V1' "native-src/native/avos/libs/$abi/libavos.so"
-            grep -aq 'NOVA_MKV_251_HTTP403_RECOVERED' "work/transport-native/$abi/libnova_transport.so"
+            grep -aq 'NOVA_MKV_403_RECOVERED_INDEX_V1' "native-src/native/avos/libs/$abi/libavos.so"
+            grep -aq 'NOVA_MKV_403_SEEK_RECOVERED' "work/transport-native/$abi/libnova_transport.so"
           done
-          tag="nova-1097-251mkv-release-only-$GITHUB_RUN_NUMBER"
+          tag="nova-1097-mkv403-release-only-$GITHUB_RUN_NUMBER"
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1097 exact 2.51 GB MKV release-only SEEK - Run $GITHUB_RUN_NUMBER" \
+            --title "NOVA 1097 recovered HTTP403 MKV release-only SEEK - Run $GITHUB_RUN_NUMBER" \
             --prerelease \
-            --notes "Scoped strictly to the observed 2,509,221,119-byte WebDAV MKV: while left/right DPAD is held, update seek target/progress only, no native seek, no seek-generated loading circle. On key release submit one final seek with bounded recoverable 403 retry and verify the actual video packet after a recovered index. Normal MKVs retain existing continuous frame rendering and all native seek behavior; ISO, MP4 and local files unchanged. Signed Android 11/14 emulator installation and launch verification required. User's actual 2.51 GB host / 403 response is NOT reproducible in CI and requires device acceptance."
+            --notes "Scoped to WebDAV Matroska sessions with an observed bounded-range HTTP403 followed by verified canonical successful read: while left/right DPAD is held, update seek target/progress only, no native seek, no seek-generated loading circle. On key release submit one final seek with bounded recoverable 403 retry and verify the actual video packet after a recovered index. Normal MKVs retain existing continuous frame rendering and all native seek behavior; ISO, MP4 and local files unchanged. Signed Android 11/14 emulator installation and launch verification required. User's actual 2.51 GB host / 403 response is NOT reproducible in CI and requires device acceptance."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Upload diagnostics only - no intermediate APKs
