@@ -169,6 +169,49 @@ def wrappers(sigs):
     return '\n'.join(out)
 
 
+
+def gate_logback(root:Path):
+    """Stop SLF4J/Logback event creation and appender work while OFF.
+
+    This is not only an output filter: the three Logback filterAndLog()
+    functions are exited before event creation, and is*Enabled methods
+    become false in the OFF state so callers skip constructing arguments.
+    """
+    candidates=list(root.glob("smali*/ch/qos/logback/classic/Logger.smali"))
+    if len(candidates)!=1:
+        raise RuntimeError("Logback Logger not uniquely located")
+    file=candidates[0]
+    src=file.read_text()
+    regex=re.compile(r'(?ms)^\.method [^\n]+\n.*?^\.end method')
+    count=0
+    def patch_method(m):
+        nonlocal count
+        text=m.group(0)
+        name=text.splitlines()[0]
+        is_filter=" filterAndLog_" in name
+        is_call=" callAppenders(" in name
+        is_enabled=bool(re.search(r' is(?:Trace|Debug|Info|Warn|Error)Enabled\(',name))
+        if not (is_filter or is_call or is_enabled):
+            return text
+        # Insert after any method annotations. No instruction may precede
+        # a .annotation block in a well-formed method.
+        pos=text.rfind(".end annotation")
+        body_start=pos+len(".end annotation") if pos>=0 else text.index("\n",text.index(".locals"))+1
+        code_match=re.search(r'(?m)^    (?!\.|#)(?:iget-|sget-|const|invoke-|move-|new-|if-|return)',text[body_start:])
+        if not code_match:raise RuntimeError("Logback no first opcode: "+name)
+        index=body_start+code_match.start()
+        guard=(f"    invoke-static {{}}, {CLASS}->enabled()Z\n"
+               "    move-result v0\n"
+               "    if-nez v0, :nova_global_logback_on\n"
+               +("    const/4 v0, 0x0\n    return v0\n" if is_enabled else "    return-void\n")
+               +"    :nova_global_logback_on\n")
+        count+=1
+        return text[:index]+guard+text[index:]
+    src=regex.sub(patch_method,src)
+    if count < 18:raise RuntimeError("Expected Logback 3 writers + enabled variants, found "+str(count))
+    file.write_text(src)
+    return count
+
 def smali(root:Path):
     prefs=root/'res/xml/preferences_video.xml'
     s=prefs.read_text()
@@ -213,8 +256,13 @@ def smali(root:Path):
         text=p.read_text(errors='ignore')
         matches=list(pat.finditer(text))
         if not matches:continue
-        for m in matches:signatures.add((m.group(1),m.group(2),m.group(3)))
-        text,n=pat.subn(lambda m:CLASS+'->'+m.group(1)+'('+m.group(2)+')'+m.group(3),text)
+        for m in matches:
+            # getStackTraceString is an exception-formatting utility, not a
+            # logging output; preserve its business semantics when OFF.
+            if m.group(1)!="getStackTraceString":
+                signatures.add((m.group(1),m.group(2),m.group(3)))
+        text,n=pat.subn(lambda m: (CLASS+'->'+m.group(1)+'('+m.group(2)+')'+m.group(3))
+                         if m.group(1)!="getStackTraceString" else m.group(0),text)
         if n: p.write_text(text)
         num+=n
     if num<100:raise RuntimeError(f"Only {num} Android Log callsites: expected >=100")
@@ -226,7 +274,8 @@ def smali(root:Path):
     dest=out/'NovaGlobalLogs.smali'
     if dest.exists():raise RuntimeError("NovaGlobalLogs already present")
     dest.write_text(GATE_SMALI+wrappers(signatures))
-    print(f'{MARK}=PASS UI after licenses; AndroidLogCallsites={num}; overloads={len(signatures)}')
+    logback_count=gate_logback(root)
+    print(f'{MARK}=PASS UI after licenses; AndroidLogCallsites={num}; overloads={len(signatures)}; LogbackGates={logback_count}')
 
 
 def main():
