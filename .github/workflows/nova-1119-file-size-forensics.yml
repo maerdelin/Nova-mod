@@ -38,10 +38,10 @@ jobs:
                       continue
                   src=f.read_text()
                   print('NOVA_SIZE_PATH',f)
-                  methods=re.findall(r'(?ms)^\\.method [^\\n]+\\n.*?^\\.end method',src)
+                  methods=['.method '+t.split('.end method',1)[0]+'.end method' for t in src.split('.method ')[1:] if '.end method' in t]
                   for m in methods:
                       h=m.splitlines()[0]
-                      if any(sig in h for sig in sigs) or (name=='VideoCursorMapper.smali' and 'bind(' in h):
+                      if any(sig.split('(')[0]+'(' in h for sig in sigs) or (name=='VideoCursorMapper.smali' and 'bind' in h):
                           print('NOVA_SIZE_METHOD_START',h)
                           for i,line in enumerate(m.splitlines()):
                               if name=='VideoCursorMapper.smali':
