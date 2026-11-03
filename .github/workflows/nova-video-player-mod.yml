@@ -412,8 +412,9 @@ jobs:
             --native-root work/transport-native \
             --work work
           test -s work/direct-final/smali_classes*/com/archos/mediacenter/video/player/NovaStartupOverlay.smali
-          grep -R -Fq 'NOVA_MKV_403_RELEASE_ONLY_V2' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerController.smali
-          grep -R -Fq 'nativeIsMkv403Recovered()Z' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
+          grep -R -Fq 'NOVA_MKV_SPINNER_RELEASE_ONLY_V3' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerController.smali
+          grep -R -Fq 'nativeIsWebdavMkv()Z' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
+          grep -R -Fq 'nova251_activity_suppressed' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerActivity\$1.smali
           grep -R -Fq 'NovaStartupOverlay;->onPrepared' work/direct-final/smali*/com/archos/mediacenter/video/player/PlayerActivity.smali
           grep -Fq 'android:tag="nova_buffer_percent"' work/direct-final/res/layout/player.xml
           grep -R -Fq 'nativeStartupPercent()I' work/direct-final/smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali
@@ -872,8 +873,8 @@ jobs:
             --notes "Based exactly on signed Run 1088 (ee3dcc52), retaining 1074 subtitle EGL and prior ISO/WebDAV fixes. MKV seeks bypass 30-second NOVA_PRECISE_SEEK wait and restore upstream AVOS 10-frame/1-second keyframe preview; MP4/TS/ISO behavior unchanged. Faster first-frame priority can show the nearest keyframe before precise playback catches up. CI emulator tests are not a physical 4K HEVC 80GB WebDAV benchmark."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
-      - name: Publish NOVA 1097 recovered HTTP403 MKV release-only seek APK
-        if: false # 1097 blocked: 403-only classification can harm normal MKV preview; pending spinner-triggered fix
+      - name: Publish NOVA 1097 spinner-triggered MKV release-only seek APK
+        if: github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' && github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -893,12 +894,12 @@ jobs:
             grep -aq 'NOVA_MKV_403_RECOVERED_INDEX_V1' "native-src/native/avos/libs/$abi/libavos.so"
             grep -aq 'NOVA_MKV_403_SEEK_RECOVERED' "work/transport-native/$abi/libnova_transport.so"
           done
-          tag="nova-1097-mkv403-release-only-$GITHUB_RUN_NUMBER"
+          tag="nova-1097-spinner-seek-$GITHUB_RUN_NUMBER"
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1097 recovered HTTP403 MKV release-only SEEK - Run $GITHUB_RUN_NUMBER" \
+            --title "NOVA 1097 actual-spinner-triggered MKV DPAD SEEK fallback - Run $GITHUB_RUN_NUMBER" \
             --prerelease \
-            --notes "Scoped to WebDAV Matroska sessions with an observed bounded-range HTTP403 followed by verified canonical successful read: while left/right DPAD is held, update seek target/progress only, no native seek, no seek-generated loading circle. On key release submit one final seek with bounded recoverable 403 retry and verify the actual video packet after a recovered index. Normal MKVs retain existing continuous frame rendering and all native seek behavior; ISO, MP4 and local files unchanged. Signed Android 11/14 emulator installation and launch verification required. User's actual 2.51 GB host / 403 response is NOT reproducible in CI and requires device acceptance."
+            --notes "Actual PlayerActivity progress SHOW event during a held DPAD MKV seek activates target-only updates, immediately hides the spinner, suppresses further repeated seeks while held, and submits one final seek on key-up. MKVs without that UI event preserve existing live-frame preview; file length and HTTP403 never classify UI behavior. MP4, TS, ISO, local files and slider seeks unchanged. Signed Android 11/14 emulator install and smoke tests required. The user's problematic compilation MKV is not available in CI and requires device acceptance."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Upload diagnostics only - no intermediate APKs
