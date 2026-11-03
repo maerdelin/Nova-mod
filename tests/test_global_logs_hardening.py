@@ -104,6 +104,56 @@ class NativeGateTest(unittest.TestCase):
         subprocess.run([str(exe)], check=True)
 
 
+class SharedGateTest(unittest.TestCase):
+    def test_native_mmap_failure_recovers_and_toggle_is_two_way(self):
+        """Build actual C source with only the Android file path redirected to a tmp test file."""
+        actual = (ROOT / 'iso/nova_global_gate.c').read_text()
+        self.assertIn('pthread_mutex_trylock', actual)
+        self.assertIn('nova_logs_retry_after_ms', actual)
+        self.assertNotIn('pthread_create', actual)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            target = root / 'shared.bin'
+            source = actual.replace(
+                '"/data/user/%u/org.courville.nova/files/nova_logs_enabled.bin",\n        user_id',
+                f'"{target.as_posix()}",\n        user_id'
+            ).replace(
+                'unsigned user_id = (unsigned)getuid()/100000u;',
+                'unsigned user_id = (unsigned)getuid()/100000u;\n    (void)user_id;'
+            )
+            (root / 'gate.c').write_text(source)
+            program = r"""
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <time.h>
+int nova_global_log_enabled(void);
+int main(int argc,char **argv) {
+    if(argc!=2)return 99;
+    if(nova_global_log_enabled()!=0)return 1;
+    int fd=open(argv[1],O_RDWR|O_CREAT|O_TRUNC,0600);
+    if(fd<0 || ftruncate(fd,1))return 2;
+    void *p=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
+    if(p==MAP_FAILED)return 3;
+    ((volatile unsigned char*)p)[0]=1;
+    struct timespec delay={1,100000000};
+    nanosleep(&delay,0);
+    if(nova_global_log_enabled()!=1)return 4;
+    ((volatile unsigned char*)p)[0]=0;
+    if(nova_global_log_enabled()!=0)return 5;
+    ((volatile unsigned char*)p)[0]=1;
+    if(nova_global_log_enabled()!=1)return 6;
+    munmap(p,4096);close(fd);return 0;
+}
+"""
+            (root / 'test.c').write_text(program)
+            binary = root / 'test_shared_gate'
+            subprocess.run(['cc','-std=gnu11','-pthread','-Wall','-Wextra','-Werror',
+                            str(root/'gate.c'),str(root/'test.c'),'-o',str(binary)],
+                           capture_output=True,text=True,check=True)
+            subprocess.run([str(binary),str(target)],check=True)
+
+
 class EmulatorScriptTest(unittest.TestCase):
     def test_320_by_640_swipe_and_landscape(self):
         for output in ('Physical size: 320x640', 'Physical size: 1920x1080',
