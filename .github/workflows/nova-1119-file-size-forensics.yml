@@ -52,6 +52,12 @@ jobs:
                               else:
                                   if any(x in line for x in ['getSize','mSize','return-wide','const-wide','Video;-><init>','invoke-direct']):
                                       print('NOVA_SIZE_CODE',i,line)
+                          if name=='VideoCursorMapper.smali' and 'bind(' in h:
+                              ml=m.splitlines()
+                              for i,line in enumerate(ml):
+                                  if 'mSizeColumn' in line:
+                                      for j in range(max(0,i-8),min(len(ml),i+20)):
+                                          print('NOVA_SIZE_CURSOR_CONTEXT',j,ml[j])
                           print('NOVA_SIZE_METHOD_END',h)
           print('NOVA_SIZE_PATCH_METHODS')
           patch=json.loads(Path('patches/v982-granular.json').read_text())
