@@ -1,0 +1,28 @@
+name: NOVA Global Logs local-source preflight export
+on:
+  push:
+    branches:
+      - feat/always-new-global-logs-toggle-20261103
+  workflow_dispatch:
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export exact source and replay native patches only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/global_logs_smali_patch.py scripts/global_logs_native_patch.py scripts/strict_idle_hotpaths_1133.py
+          mkdir -p out
+          tar -czf out/nova-global-source.tar.gz scripts iso tests tools .github/workflows
+          bash scripts/global_logs_source_preflight.sh
+          sha256sum out/*.tar.gz > out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-global-logs-source-${{ github.run_number }}
+          path: out/
+          retention-days: 3
