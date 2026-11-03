@@ -2678,14 +2678,20 @@ void nova_transport_report_startup_ui_state(int state)
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsMkv403Recovered(
+/* NOVA_MKV_SPINNER_SEEK_V1: format-only JNI identity for the player UI.
+ * The UI activates release-only DPAD seek ONLY when the actual loading
+ * view attempts to appear while the seek key is held. A 403 or file size
+ * by itself must NEVER change ordinary Matroska preview behavior. */
+Java_com_archos_mediacenter_video_player_DirectTransportProxy_nativeIsWebdavMkv(
         JNIEnv *env,jclass cls)
 {
     (void)env;(void)cls;
     pthread_mutex_lock(&g_lock);
-    int is_special=nova_mkv_403_recovered(g_session);
+    nova_session *s=g_session;
+    int is_mkv=s && !s->stopping && s->mode==NOVA_MODE_FILE &&
+               s->file_http_mode;
     pthread_mutex_unlock(&g_lock);
-    return is_special ? JNI_TRUE : JNI_FALSE;
+    return is_mkv ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
