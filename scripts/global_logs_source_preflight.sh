@@ -40,6 +40,7 @@ python3 scripts/startup_staged_decode_patch.py --native "$n"
 python3 scripts/iso_hw_cbe_reliability_patch.py --native "$n"
 python3 scripts/iso_1073_avos_patch.py --native "$n"
 python3 scripts/global_logs_native_patch.py --native "$n" --transport iso/nova_transport.c
+python3 scripts/global_logs_native_coverage_patch.py --native "$n" --transport iso/nova_transport.c
 for f in "$n/Include/log.h" "$n/Source/log_android.c" "$n/Source/stream_video.c" "$n/Source/codec_sfdec2.c" "$n/Source/stream_parser_ffmpeg.c" iso/nova_transport.c iso/nova_global_gate.c iso/nova_iso_blackbox.inc; do test -s "$f"; done
 mkdir -p out/native-source
 tar -czf out/native-source/avos-patched-source.tar.gz -C native-src/native avos/Include/log.h avos/Include/nova_global_flag.h avos/Include/nova_global_gate_impl.inc avos/Source/log_android.c avos/Source/stream_video.c avos/Source/stream_parser_ffmpeg.c avos/Source/codec_sfdec2.c avos/Source/stream_sink_audio.c
