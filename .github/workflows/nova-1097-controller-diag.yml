@@ -40,3 +40,26 @@ jobs:
                       for line in lines[:1400]:print('  '+line)
                       if len(lines)>1400:print('  ...TRUNCATED...')
           PY
+
+      - name: Validate exact-size DPAD-only patch against real official 6.6.2 controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/mkv_251_release_seek_patch.py scripts/startup_bbc_seek_fix_patch.py
+          # Stub ONLY for isolated smali verification; the production build
+          # gets the real JNI-backed DirectTransportProxy from direct_transport_apply.py.
+          mkdir -p work/decoded/smali_classes4/com/archos/mediacenter/video/player
+          cat > work/decoded/smali_classes4/com/archos/mediacenter/video/player/DirectTransportProxy.smali <<'SMALI'
+          .class public final Lcom/archos/mediacenter/video/player/DirectTransportProxy;
+          .super Ljava/lang/Object;
+          .method public static native isNonIsoDirectWebdav()Z
+          .end method
+          .method public static native nativeIsSpecialMkv251()Z
+          .end method
+          SMALI
+          python3 scripts/mkv_251_release_seek_patch.py --decoded work/decoded
+          grep -Fq 'nova251BeginHold' work/decoded/smali*/com/archos/mediacenter/video/player/PlayerController.smali
+          grep -Fq 'nova251HoldTick' 'work/decoded/smali_classes3/com/archos/mediacenter/video/player/PlayerController$8.smali' || grep -R -Fq 'nova251HoldTick' work/decoded/smali*/com/archos/mediacenter/video/player/PlayerController\$8.smali
+          java -Xmx4g -jar tools/apktool.jar b work/decoded -o work/1097-verified-smali.apk
+          test -s work/1097-verified-smali.apk
+          echo 'NOVA_1097_ORIGINAL_CONTROLLER_APKTOOL_BUILD=PASS'
