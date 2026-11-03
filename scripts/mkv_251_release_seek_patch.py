@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""NOVA 1097: release-only DPAD seek for MKVs with verified 403 recovery.
+"""NOVA 1097: switch to release-only DPAD Seek only on actual Seek spinner.
 
-The JNI predicate is true only after a real HTTP 403 on bounded WebDAV
-Range was followed by a successful canonical MKV read in the same session.
-Unflagged MKVs retain their existing live-frame seek preview and UI; ISO,
-MP4, TS, local media, and touch/slider seeks use the original path.
+Ordinary MKVs keep their original repeated keyframe previews, regardless of
+file size or HTTP403 history. The already-decoded PlayerActivity loading-view
+Handler triggers a one-way per-held-key fallback ONLY when it tries to show a
+spinner while a WebDAV Matroska DPAD seek is actively held. Hide the spinner,
+suppress further repeated native seeks, and submit final pointer on key-up.
+No changes to MP4/TS/ISO, local videos or slider/touch seeking.
 """
 from __future__ import annotations
 import argparse
@@ -17,12 +19,52 @@ PROXY = "Lcom/archos/mediacenter/video/player/DirectTransportProxy;"
 HANDLER = "Landroid/os/Handler;"
 MSG = "Landroid/os/Message;"
 INNER = "Lcom/archos/mediacenter/video/player/PlayerController$8;"
-TAG = "NOVA_MKV_403_RELEASE_ONLY_V2"
+TAG = "NOVA_MKV_SPINNER_RELEASE_ONLY_V3"
 
 # The controller already owns an Android main-thread Handler. Message 9 is
 # outside upstream's 1..8 switch and is never sent to the normal Seek handler.
 # While held it ONLY updates target/progress; it cannot pause, seek, or read.
 NEW_METHODS = f"""
+.method public nova251OnSeekSpinner()Z
+    .locals 3
+    # Called ONLY from the Activity loading-view SHOW message.
+    # No file size, HTTP status, or permanent per-video whitelist.
+    iget-boolean v0, p0, {PC}->mIsStopped:Z
+    if-nez v0, :nova251_not_seek_spinner
+    iget v0, p0, {PC}->mSeekKeyDirection:I
+    if-eqz v0, :nova251_not_seek_spinner
+    invoke-static {{}}, {PROXY}->isNonIsoDirectWebdav()Z
+    move-result v0
+    if-eqz v0, :nova251_not_seek_spinner
+    invoke-static {{}}, {PROXY}->nativeIsWebdavMkv()Z
+    move-result v0
+    if-eqz v0, :nova251_not_seek_spinner
+    iget-boolean v0, p0, {PC}->mNova251Hold:Z
+    if-nez v0, :nova251_already_spinner_held
+    const/4 v0, 0x1
+    iput-boolean v0, p0, {PC}->mNova251Hold:Z
+    # Preserve mNextSeek from the last real preview. Never reset it
+    # to -1 when the fallback is activated in the MIDDLE of a seek.
+    iget-object v1, p0, {PC}->mHandler:{HANDLER}
+    if-eqz v1, :nova251_spinner_arm
+    const/4 v2, 0x2
+    invoke-virtual {{v1, v2}}, {HANDLER}->removeMessages(I)V
+    const/4 v2, 0x3
+    invoke-virtual {{v1, v2}}, {HANDLER}->removeMessages(I)V
+    :nova251_spinner_arm
+    invoke-direct {{p0}}, {PC}->nova251ArmTick()V
+    const-string v1, "NovaSeek251"
+    const-string v2, "{TAG}: spinner while DPAD held; hide, target-only until release"
+    invoke-static {{v1, v2}}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+    move-result v1
+    :nova251_already_spinner_held
+    const/4 v0, 0x1
+    return v0
+    :nova251_not_seek_spinner
+    const/4 v0, 0x0
+    return v0
+.end method
+
 .method private nova251ArmTick()V
     .locals 4
     iget-object v0, p0, {PC}->mHandler:{HANDLER}
@@ -116,7 +158,7 @@ NEW_METHODS = f"""
     invoke-static {{}}, {PROXY}->isNonIsoDirectWebdav()Z
     move-result v0
     if-eqz v0, :nova251_commit_clear
-    invoke-static {{}}, {PROXY}->nativeIsMkv403Recovered()Z
+    invoke-static {{}}, {PROXY}->nativeIsWebdavMkv()Z
     move-result v0
     if-eqz v0, :nova251_commit_clear
     invoke-direct {{p0}}, {PC}->nova251Clamp()V
@@ -160,15 +202,11 @@ def patch_controller(src: str) -> str:
                "dedicated special-MKV hold state")
 
     def modify_on_seek(method: str) -> str:
-        # Gate on observed HTTP 403 -> verified canonical MKV GET recovery
-        # and actual DPAD direction. Original unflagged MKV/slider paths
-        # fall through unchanged to the existing instructions.
-        guard = f"""    # {TAG}: recovered-403 MKV scoped key-hold gate.
-    invoke-static {{}}, {PROXY}->isNonIsoDirectWebdav()Z
-    move-result v0
-    if-eqz v0, :nova251_original_seek
-    invoke-static {{}}, {PROXY}->nativeIsMkv403Recovered()Z
-    move-result v0
+        # Before a spinner event, ALL MKVs take the original onSeek path.
+        # After the actual loading view event while DPAD is held, only the
+        # current key-hold uses UI targets; never issue another seek until UP.
+        guard = f"""    # {TAG}: only the spinner-activated DPAD hold can bypass preview.
+    iget-boolean v0, p0, {PC}->mNova251Hold:Z
     if-eqz v0, :nova251_original_seek
     iget v0, p0, {PC}->mSeekKeyDirection:I
     if-eqz v0, :nova251_original_seek
@@ -209,16 +247,62 @@ def patch_handler(src: str) -> str:
                        lambda method: entry(method, call))
 
 
+ACTIVITY = "Lcom/archos/mediacenter/video/player/PlayerActivity;"
+ACTIVITY_HANDLER = "Lcom/archos/mediacenter/video/player/PlayerActivity$1;"
+
+def patch_activity_spinner_handler(src: str) -> str:
+    # Official 6.6.2 PlayerActivity$1 what=1 actually shows mProgressView.
+    # Gate on both the DPAD-held controller state and genuine WebDAV MKV;
+    # ordinary startup, nonseek buffering, ISO/MP4 and all other messages
+    # fall through byte-for-byte to upstream Handler code.
+    def hook(method: str) -> str:
+        required = (
+            "    .locals 8",
+            "    packed-switch v1, :pswitch_data_0",
+            f"invoke-static {{p1}}, {ACTIVITY}->z({ACTIVITY})Landroid/view/View;",
+        )
+        # Handler references the progress-view accessor through its own
+        # generated register; require the unique accessor descriptor.
+        if ".locals 8" not in method or ".packed-switch 0x1" not in method or (
+            f"{ACTIVITY}->z({ACTIVITY})Landroid/view/View;" not in method
+        ):
+            raise RuntimeError("1097 actual PlayerActivity progress-show Handler changed")
+        guard = f"""    # {TAG}: actual progress SHOW event before it reaches the view.
+    iget v0, p1, {MSG}->what:I
+    const/4 v1, 0x1
+    if-ne v0, v1, :nova251_activity_original
+    iget-object v0, p0, {ACTIVITY_HANDLER}->this$0:{ACTIVITY}
+    invoke-static {{v0}}, {ACTIVITY}->w({ACTIVITY}){PC}
+    move-result-object v0
+    if-eqz v0, :nova251_activity_original
+    invoke-virtual {{v0}}, {PC}->nova251OnSeekSpinner()Z
+    move-result v1
+    if-eqz v1, :nova251_activity_original
+    iget-object v0, p0, {ACTIVITY_HANDLER}->this$0:{ACTIVITY}
+    invoke-static {{v0}}, {ACTIVITY}->z({ACTIVITY})Landroid/view/View;
+    move-result-object v0
+    if-eqz v0, :nova251_activity_suppressed
+    const/16 v1, 0x8
+    invoke-virtual {{v0, v1}}, Landroid/view/View;->setVisibility(I)V
+    :nova251_activity_suppressed
+    return-void
+    :nova251_activity_original"""
+        return entry(method, guard)
+    return edit_method(src, "handleMessage(Landroid/os/Message;)V", hook)
+
+
 def patch(root: Path) -> dict:
     players = list(root.glob("smali*/com/archos/mediacenter/video/player/PlayerController.smali"))
     handlers = list(root.glob("smali*/com/archos/mediacenter/video/player/PlayerController$8.smali"))
     proxies = list(root.glob("smali*/com/archos/mediacenter/video/player/DirectTransportProxy.smali"))
-    if len(players) != 1 or len(handlers) != 1 or len(proxies) != 1:
+    activity_handlers = list(root.glob("smali*/com/archos/mediacenter/video/player/PlayerActivity$1.smali"))
+    if len(players) != 1 or len(handlers) != 1 or len(proxies) != 1 or len(activity_handlers)!=1:
         raise RuntimeError("1097 player/controller/proxy cardinality mismatch")
-    if ".method public static native nativeIsMkv403Recovered()Z" not in proxies[0].read_text():
-        raise RuntimeError("recovered-403 MKV JNI predicate not wired")
+    if ".method public static native nativeIsWebdavMkv()Z" not in proxies[0].read_text():
+        raise RuntimeError("verified WebDAV MKV JNI format check not wired")
     a = patch_controller(players[0].read_text())
     b = patch_handler(handlers[0].read_text())
+    c = patch_activity_spinner_handler(activity_handlers[0].read_text())
     # Fail closed before overwriting either class.
     for token in ("nova251BeginHold", "nova251Commit", "nova251HoldTick",
                   "nova251_original_seek", "mNova251Hold"):
@@ -226,13 +310,16 @@ def patch(root: Path) -> dict:
             raise RuntimeError("1097 controller missing "+token)
     if "nova251_original_message" not in b:
         raise RuntimeError("1097 handler missing scoped branch")
+    if "nova251_activity_suppressed" not in c:
+        raise RuntimeError("1097 activity spinner guard missing")
     players[0].write_text(a)
     handlers[0].write_text(b)
-    return {"status":"PASS", "tag":TAG, "classifier":"verified WebDAV MKV 403 followed by valid canonical read",
-            "scope":"per-session native-confirmed recovered-403 MKV DPAD hold",
-            "native_requests_during_hold":0,
-            "seek_requests_after_keyup":1,
-            "untouched":["ordinary MKV preview","ISO","MP4","touch seek"]}
+    activity_handlers[0].write_text(c)
+    return {"status":"PASS", "tag":TAG, "classifier":"actual PlayerActivity progress SHOW while MKV DPAD held",
+            "scope":"current MKV seek hold only; no file size or HTTP-status trigger",
+            "native_requests_after_spinner_while_held":0,
+            "seek_requests_on_keyup":1,
+            "untouched":["normal MKV preview until UI spinner","ISO","MP4","touch seek"]}
 
 
 def main():
