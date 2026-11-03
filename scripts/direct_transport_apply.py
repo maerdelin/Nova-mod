@@ -459,6 +459,11 @@ PROXY_RESOLVE = r'''
 .end method
 .method public static native nativeClose()V
 .end method
+
+# NOVA_MKV_251_RELEASE_ONLY_V1: exact-session transport identity;
+# no network I/O, no MIME guessing, no effect on ordinary MKVs.
+.method public static native nativeIsSpecialMkv251()Z
+.end method
 '''
 
 
