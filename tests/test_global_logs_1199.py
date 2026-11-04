@@ -2,7 +2,10 @@
 """NOVA 1199 targeted OFF source-collection safety regression tests."""
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -95,6 +98,55 @@ class SourceGates1199(unittest.TestCase):
         self.assertIn("int64_t nova_boot_seek_lock_begin=nova_diag_on()?",out)
         self.assertIn("start=nova_diag_on()?av_gettime_relative():0;",out)
         self.assertEqual(out.count('serprintf("FFMPEG: cannot find stream info'),2)
+
+    def test_ffmpeg_log_sync_compiled_off_on_and_reinit(self):
+        # Compile the EXACT C helper embedded in the source patch.
+        # This catches stale cached toggle flags after av_log_set_level()
+        # is called by FFmpeg initialization again while user Logs is OFF.
+        patch=(ROOT/"scripts/global_logs_1199_patch.py").read_text()
+        match=re.search(r'helper = """(.*?)"""',patch,re.S)
+        self.assertIsNotNone(match)
+        helper=match.group(1)
+        self.assertIn("av_log_get_level()",helper)
+        header=("""
+#include <pthread.h>
+#include <stdio.h>
+#define AV_LOG_DEBUG 48
+#define AV_LOG_INFO 32
+#define AV_LOG_QUIET -8
+static int enabled=0, log_debug=0, level=AV_LOG_DEBUG, updates=0;
+static int nova_diag_on(void){return enabled;}
+static int av_log_get_level(void){return level;}
+static void av_log_set_level(int value){level=value;updates++;}
+""")
+        checks=("""
+int main(void){
+    nova_ffmpeg_log_sync();
+    if(level!=AV_LOG_QUIET || updates!=1)return 1;
+    nova_ffmpeg_log_sync();
+    if(updates!=1)return 2;
+    level=AV_LOG_DEBUG; /* FFmpeg open reset while OFF */
+    nova_ffmpeg_log_sync();
+    if(level!=AV_LOG_QUIET || updates!=2)return 3;
+    enabled=1;nova_ffmpeg_log_sync();
+    if(level!=AV_LOG_INFO || updates!=3)return 4;
+    log_debug=1;nova_ffmpeg_log_sync();
+    if(level!=AV_LOG_DEBUG || updates!=4)return 5;
+    enabled=0;nova_ffmpeg_log_sync();
+    if(level!=AV_LOG_QUIET || updates!=5)return 6;
+    return 0;
+}
+""")
+        with tempfile.TemporaryDirectory() as d:
+            src=Path(d)/"ffmpeg_gate.c"
+            exe=Path(d)/"ffmpeg_gate"
+            src.write_text(header+helper+checks)
+            result=subprocess.run(["cc","-std=c11","-Wall","-Wextra",
+                                   "-Werror","-pthread",str(src),"-o",str(exe)],
+                                  capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            result=subprocess.run([str(exe)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
 
     def test_system_sampler_off_stops_cpu_frequency_io(self):
         source="long freqs[8];\n        for(int i=0;i<8;i++){"
