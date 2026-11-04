@@ -19,7 +19,7 @@ from shared42_pool_audit_v2_patch import AUDIT
 class SourceGates1199(unittest.TestCase):
     def test_java_trace_all_eight_producers_gate_before_collection(self):
         result=smali.patch_trace(TRACE_SMALI)
-        self.assertEqual(result.count("NovaGlobalLogs;->enabled()Z"),8)
+        self.assertEqual(result.count("NovaGlobalLogs;->enabled()Z"),9)
         for signature in smali.GUARDED:
             begin=result.index(".method public static "+("synchronized " if signature=="nextHttp()I" else "")+signature)
             end=result.index(".end method",begin)
@@ -31,6 +31,11 @@ class SourceGates1199(unittest.TestCase):
                                   "->sSession:I","->sHttpId:I")
                                  if token in method),default=len(method)))
         self.assertIn(".method public static end()V",result)
+        end=result.split(".method public static end()V",1)[1].split(".end method",1)[0]
+        self.assertLess(end.index("NovaGlobalLogs;->enabled()Z"),end.index("UI_SPINNER_HIDE"))
+        self.assertIn("if-eqz v0, :nova_1200_end_reset",end)
+        self.assertIn(":nova_1200_end_reset",end)
+        self.assertIn("->sActive:Z",end)
         with self.assertRaises(RuntimeError):
             smali.patch_trace(result)
 
@@ -80,11 +85,20 @@ class SourceGates1199(unittest.TestCase):
         )
         out=native.parser_source(src)
         self.assertIn("av_log_set_level(enabled?(log_debug?AV_LOG_DEBUG:AV_LOG_INFO):AV_LOG_QUIET)",out)
+        self.assertIn("pthread_mutex_lock(&nova_ffmpeg_log_gate_mutex)",out)
+        self.assertLess(out.index("av_log_set_level(enabled?"),out.index("__atomic_store_n(&nova_ffmpeg_log_was_enabled"))
         self.assertIn("if(!nova_diag_on())return;",out)
         self.assertIn("nova_ffmpeg_log_sync();",out)
         self.assertIn("int64_t nova_boot_seek_lock_begin=nova_diag_on()?",out)
         self.assertIn("start=nova_diag_on()?av_gettime_relative():0;",out)
         self.assertEqual(out.count('serprintf("FFMPEG: cannot find stream info'),2)
+
+    def test_system_sampler_off_stops_cpu_frequency_io(self):
+        source="long freqs[8];\n        for(int i=0;i<8;i++){"
+        output=native.replace(source,"long freqs[8];\n        for(int i=0;i<8;i++){",
+                              "long freqs[8]={-1,-1,-1,-1,-1,-1,-1,-1};\n"
+                              "        for(int i=0;i<8 && nova_diag_on();i++){","cpu cancellation")
+        self.assertIn("for(int i=0;i<8 && nova_diag_on();i++)",output)
 
     def test_strict_source_anchor_drift_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError,"expected"):
