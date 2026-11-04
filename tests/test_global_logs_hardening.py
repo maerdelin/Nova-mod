@@ -190,5 +190,38 @@ class EmulatorScriptTest(unittest.TestCase):
         self.assertIn('signatures.add(("i", "Ljava/lang/String;Ljava/lang/String;", "I"))', source)
 
 
+class SmaliGateAuditTest(unittest.TestCase):
+    def test_torrent_log_insertion_precedes_final_java_gate(self):
+        code = (ROOT / 'scripts/direct_transport_apply.py').read_text()
+        self.assertLess(
+            code.index('torrent.write_text(patch_torrent_observer(torrent.read_text()))'),
+            code.index('apply_nova_logs(root)'),
+            'All Java and Smali mutations must happen before global Log interception',
+        )
+        torrent = (ROOT / 'scripts/torrent_crash_guard_patch.py').read_text()
+        self.assertIn('Landroid/util/Log;->w', torrent)
+
+    def test_logback_zero_local_void_methods_allocate_new_register(self):
+        smali = load('global_logs_smali_patch')
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'smali/ch/qos/logback/classic'
+            folder.mkdir(parents=True)
+            methods = [
+                f'.method public callAppenders({"I" * i})V\\n'
+                f'    .locals 0\\n'
+                f'    return-void\\n'
+                f'.end method\\n'
+                for i in range(1, 19)
+            ]
+            f = folder / 'Logger.smali'
+            f.write_text('.class public Lch/qos/logback/classic/Logger;\\n'
+                         '.super Ljava/lang/Object;\\n' + ''.join(methods))
+            self.assertEqual(smali.gate_logback(Path(d)), 18)
+            patched = f.read_text()
+            self.assertEqual(patched.count('.locals 1'), 18)
+            self.assertNotIn('.locals 0', patched)
+            self.assertEqual(patched.count('NovaGlobalLogs;->enabled()Z'), 18)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
