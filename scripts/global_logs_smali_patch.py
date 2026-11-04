@@ -201,9 +201,10 @@ def gate_logback(root:Path):
         is_enabled=bool(re.search(r' is(?:Trace|Debug|Info|Warn|Error)Enabled\(',name))
         if not (is_filter or is_call or is_enabled):
             return text
-        # Marker overloads have .locals 0; never clobber p0 (=v0) with
-        # the gate's boolean result. Allocate a new local first.
-        if is_enabled and ".locals 0" in text:
+        # Any zero-local method aliases v0 to p0. The injected gate uses v0,
+        # so reserve a local for ALL guarded methods, including callAppenders
+        # and filterAndLog, not only is*Enabled overloads.
+        if ".locals 0" in text:
             text=text.replace(".locals 0",".locals 1",1)
         # Insert after any method annotations. No instruction may precede
         # a .annotation block in a well-formed method.
