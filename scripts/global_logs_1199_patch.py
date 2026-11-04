@@ -67,19 +67,19 @@ def parser_source(s: str) -> str:
     # The callback is also guarded before any AVOS-side format work.
     marker = "void av_log_cb(void* ptr, int level, const char* fmt, va_list vl)\n{\n"
     helper = """/* NOVA_1199_FFMPEG_CAPTURE_GATE: logging only; never decode policy. */
-static int nova_ffmpeg_log_was_enabled=-1;
 static pthread_mutex_t nova_ffmpeg_log_gate_mutex=PTHREAD_MUTEX_INITIALIZER;
 void nova_ffmpeg_log_sync(void)
 {
+    /* AVOS can call av_log_set_level() again during FFmpeg open.
+     * Always reconcile the real libavutil level, not a cached toggle. */
     int enabled=nova_diag_on()?1:0;
-    if(__atomic_load_n(&nova_ffmpeg_log_was_enabled,__ATOMIC_ACQUIRE)==enabled)
-        return;
+    int wanted=enabled?(log_debug?AV_LOG_DEBUG:AV_LOG_INFO):AV_LOG_QUIET;
+    if(av_log_get_level()==wanted)return;
     pthread_mutex_lock(&nova_ffmpeg_log_gate_mutex);
     enabled=nova_diag_on()?1:0;
-    if(__atomic_load_n(&nova_ffmpeg_log_was_enabled,__ATOMIC_RELAXED)!=enabled){
-        av_log_set_level(enabled?(log_debug?AV_LOG_DEBUG:AV_LOG_INFO):AV_LOG_QUIET);
-        __atomic_store_n(&nova_ffmpeg_log_was_enabled,enabled,__ATOMIC_RELEASE);
-    }
+    wanted=enabled?(log_debug?AV_LOG_DEBUG:AV_LOG_INFO):AV_LOG_QUIET;
+    if(av_log_get_level()!=wanted)
+        av_log_set_level(wanted);
     pthread_mutex_unlock(&nova_ffmpeg_log_gate_mutex);
 }
 """
