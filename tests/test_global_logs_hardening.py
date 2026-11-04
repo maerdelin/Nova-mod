@@ -207,15 +207,15 @@ class SmaliGateAuditTest(unittest.TestCase):
             folder = Path(d) / 'smali/ch/qos/logback/classic'
             folder.mkdir(parents=True)
             methods = [
-                f'.method public callAppenders({"I" * i})V\\n'
-                f'    .locals 0\\n'
-                f'    return-void\\n'
-                f'.end method\\n'
+                f'.method public callAppenders({"I" * i})V\n'
+                f'    .locals 0\n'
+                f'    return-void\n'
+                f'.end method\n'
                 for i in range(1, 19)
             ]
             f = folder / 'Logger.smali'
-            f.write_text('.class public Lch/qos/logback/classic/Logger;\\n'
-                         '.super Ljava/lang/Object;\\n' + ''.join(methods))
+            f.write_text('.class public Lch/qos/logback/classic/Logger;\n'
+                         '.super Ljava/lang/Object;\n' + ''.join(methods))
             self.assertEqual(smali.gate_logback(Path(d)), 18)
             patched = f.read_text()
             self.assertEqual(patched.count('.locals 1'), 18)
