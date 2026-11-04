@@ -130,7 +130,8 @@ def patch(root):
       '    serprintf("NOVA_1074_EGL_JOIN_BEGIN tid=%ld\\\\n",(long)syscall(SYS_gettid));\n'
       '    pthread_join(r->thread, NULL);\n'
       '    if((nova1074_t0.tv_sec || nova1074_t0.tv_nsec) && nova_diag_on())clock_gettime(CLOCK_MONOTONIC,&nova1074_t1);\n'
-      '    long long nova1074_join_ms=(nova1074_t1.tv_sec || nova1074_t1.tv_nsec)?\n'\n      '       ((long long)nova1074_t1.tv_sec-nova1074_t0.tv_sec)*1000+\n'
+      '    long long nova1074_join_ms=(nova1074_t1.tv_sec || nova1074_t1.tv_nsec)?\n'
+      '       ((long long)nova1074_t1.tv_sec-nova1074_t0.tv_sec)*1000+\n'
       '       (nova1074_t1.tv_nsec-nova1074_t0.tv_nsec)/1000000:0;\n'
       '    serprintf("NOVA_1074_EGL_JOIN_END elapsedMs=%lld\\\\n",nova1074_join_ms);\n'
       '    // The engine is already destroyed',"egl pthread_join")
