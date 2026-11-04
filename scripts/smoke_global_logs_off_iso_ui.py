@@ -18,6 +18,9 @@ from smoke_direct_webdav import adb, logs, PACKAGE, PLAYER
 import smoke_global_logs_settings as settings
 from smoke_global_logs_native_off import pid_lines, FORBIDDEN
 
+class UIHierarchyUnavailable(RuntimeError):
+    pass
+
 def hierarchy():
     errors=[]
     for attempt in range(3):
@@ -38,6 +41,8 @@ def hierarchy():
         except (RuntimeError,ET.ParseError) as exc:
             errors.append(f"{attempt}: {str(exc)[:400]}")
             time.sleep(0.35)
+    if all("No such file or directory" in e for e in errors):
+        raise UIHierarchyUnavailable("UIAUTOMATOR_XML_MISSING: "+" | ".join(errors))
     raise RuntimeError("OFF ISO UI hierarchy unavailable: "+" | ".join(errors))
 
 def main():
@@ -78,7 +83,25 @@ def main():
         positive=False
         empty=0
         while time.monotonic()-start<args.timeout:
-            observed,xml=hierarchy()
+            try:
+                observed,xml=hierarchy()
+            except UIHierarchyUnavailable as exc:
+                # UIAutomator missing XML: not a UI PASS. Only bypass this
+                # infrastructure failure, after verifying actual fetch / process / logs.
+                capture=logs()
+                live=adb("shell","pidof",PACKAGE).strip().split()
+                leaks=[line for line in pid_lines(capture,pid) if any(tag in line for tag in FORBIDDEN)]
+                if not requests or not live or pid!=live[0] or leaks or "FATAL EXCEPTION" in capture or "Fatal signal" in capture:
+                    raise RuntimeError("OFF ISO infra failure accompanied by real playback/log fault: "
+                                       +str(exc)+" requests="+str(len(requests))
+                                       +" pid="+str(live)+" leaks="+str(leaks[:3]))
+                report.update(status="MANUAL_REVIEW_REQUIRED",
+                              ui_error="UIAUTOMATOR_XML_MISSING",ui_error_details=str(exc)[:600],
+                              http_requests=len(requests),pid=pid,process_alive=True,
+                              diagnostic_silence=True,percent_seen=positive,
+                              elapsed_seconds=round(time.monotonic()-start,2))
+                print("NOVA_1197_OFF_ISO_UI_MANUAL_REVIEW_REQUIRED "+json.dumps(report),flush=True)
+                return
             if first_xml is None:first_xml=xml
             last_xml=xml
             if observed:
@@ -111,7 +134,7 @@ def main():
                            "three consecutive valid UI hierarchies with spinner absent",
                            "same running process","diagnostic silence"]
         report["status"]="PASS"
-        print("NOVA_1196_OFF_ISO_UI_HIDE=PASS "+json.dumps(report),flush=True)
+        print("NOVA_1197_OFF_ISO_UI_HIDE=PASS "+json.dumps(report),flush=True)
     finally:
         if first_xml is not None:(args.reports/"off-iso-first-ui.xml").write_text(first_xml)
         if last_xml is not None:(args.reports/"off-iso-last-ui.xml").write_text(last_xml)
