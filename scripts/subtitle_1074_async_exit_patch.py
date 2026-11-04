@@ -47,14 +47,14 @@ static void *nova1074_worker(void *unused) {
         nova1074_head=(nova1074_head+1)%NOVA_1074_QCAP;
         --nova1074_count;
         pthread_mutex_unlock(&nova1074_lock);
-        int64_t start=nova1074_mono_ms();
+        int64_t start=nova_global_log_enabled()?nova1074_mono_ms():0;
         REG_LOGW("NOVA_1074_EGL_DESTROY_BEGIN seq=%llu queueMs=%lld"
                  " tid=%ld", (unsigned long long)job.id,
-                 (long long)(start-job.queued_ms),(long)syscall(SYS_gettid));
+                 (long long)(start && job.queued_ms?start-job.queued_ms:0),(long)syscall(SYS_gettid));
         job.fn(job.eng); /* May block indefinitely in EGL pthread_join, but not UI. */
         REG_LOGW("NOVA_1074_EGL_DESTROY_END seq=%llu elapsedMs=%lld",
                  (unsigned long long)job.id,
-                 (long long)(nova1074_mono_ms()-start));
+                 (long long)(start && nova_global_log_enabled()?nova1074_mono_ms()-start:0));
     }
     return NULL;
 }
@@ -75,8 +75,8 @@ static void nova1074_retire_engine(SUB_ENGINE *eng,sub_engine_destroy_fn fn) {
         pthread_mutex_lock(&nova1074_lock);
         if(nova1074_count < NOVA_1074_QCAP) {
             int idx=(nova1074_head+nova1074_count)%NOVA_1074_QCAP;
-            uint64_t id=++nova1074_seq;
-            int64_t now=nova1074_mono_ms();
+            uint64_t id=nova_global_log_enabled()?++nova1074_seq:0;
+            int64_t now=nova_global_log_enabled()?nova1074_mono_ms():0;
             nova1074_jobs[idx]=(NOVA1074Job){.eng=eng,.fn=fn,.id=id,.queued_ms=now};
             ++nova1074_count;
             int depth=nova1074_count;
@@ -89,12 +89,12 @@ static void nova1074_retire_engine(SUB_ENGINE *eng,sub_engine_destroy_fn fn) {
         pthread_mutex_unlock(&nova1074_lock);
         REG_LOGW("NOVA_1074_EGL_QUEUE_FULL count=%d fallback=sync",NOVA_1074_QCAP);
     }
-    int64_t start=nova1074_mono_ms();
+    int64_t start=nova_global_log_enabled()?nova1074_mono_ms():0;
     REG_LOGW("NOVA_1074_EGL_RETIRE_SYNC_FALLBACK tid=%ld",
              (long)syscall(SYS_gettid));
     fn(eng);
     REG_LOGW("NOVA_1074_EGL_SYNC_END elapsedMs=%lld",
-             (long long)(nova1074_mono_ms()-start));
+             (long long)(start && nova_global_log_enabled()?nova1074_mono_ms()-start:0));
 }
 '''
 
@@ -125,13 +125,14 @@ def patch(root):
     s=egl.read_text()
     s=replace_exact(s,"#include <time.h>","#include <time.h>\n#include <sys/syscall.h>","egl headers")
     s=replace_exact(s,"    pthread_join(r->thread, NULL);\n    // The engine is already destroyed",
-      '    struct timespec nova1074_t0,nova1074_t1;\n'
-      '    clock_gettime(CLOCK_MONOTONIC,&nova1074_t0);\n'
+      '    struct timespec nova1074_t0={0},nova1074_t1={0};\n'
+      '    if(nova_diag_on())clock_gettime(CLOCK_MONOTONIC,&nova1074_t0);\n'
       '    serprintf("NOVA_1074_EGL_JOIN_BEGIN tid=%ld\\\\n",(long)syscall(SYS_gettid));\n'
       '    pthread_join(r->thread, NULL);\n'
-      '    clock_gettime(CLOCK_MONOTONIC,&nova1074_t1);\n'
-      '    long long nova1074_join_ms=((long long)nova1074_t1.tv_sec-nova1074_t0.tv_sec)*1000+\n'
-      '       (nova1074_t1.tv_nsec-nova1074_t0.tv_nsec)/1000000;\n'
+      '    if((nova1074_t0.tv_sec || nova1074_t0.tv_nsec) && nova_diag_on())clock_gettime(CLOCK_MONOTONIC,&nova1074_t1);\n'
+      '    long long nova1074_join_ms=(nova1074_t1.tv_sec || nova1074_t1.tv_nsec)?\n'
+      '       ((long long)nova1074_t1.tv_sec-nova1074_t0.tv_sec)*1000+\n'
+      '       (nova1074_t1.tv_nsec-nova1074_t0.tv_nsec)/1000000:0;\n'
       '    serprintf("NOVA_1074_EGL_JOIN_END elapsedMs=%lld\\\\n",nova1074_join_ms);\n'
       '    // The engine is already destroyed',"egl pthread_join")
     egl.write_text(s)

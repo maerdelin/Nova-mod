@@ -40,6 +40,13 @@ class Test1074(unittest.TestCase):
             self.assertIn("NOVA_1074_EGL_DESTROY_BEGIN",reg)
             self.assertIn("NOVA_1074_EGL_JOIN_BEGIN",egl)
             self.assertIn("NOVA_1074_EGL_JOIN_END",egl)
+            self.assertIn("uint64_t id=nova_global_log_enabled()?++nova1074_seq:0;",reg)
+            self.assertIn("int64_t now=nova_global_log_enabled()?nova1074_mono_ms():0;",reg)
+            self.assertEqual(reg.count("int64_t start=nova_global_log_enabled()?nova1074_mono_ms():0;"),2)
+            self.assertIn("if(nova_diag_on())clock_gettime(CLOCK_MONOTONIC,&nova1074_t0);",egl)
+            self.assertIn("&& nova_diag_on())clock_gettime(CLOCK_MONOTONIC,&nova1074_t1);",egl)
+            self.assertIn("pthread_join(r->thread, NULL);",egl)
+            self.assertIn("job.fn(job.eng)",reg)
     def test_build_delivery(self):
         self.assertIn("fix/1074-subtitle-egl-ui-exit-20261102",CI)
         self.assertIn("python3 scripts/subtitle_1074_async_exit_patch.py",CI)
