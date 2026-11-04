@@ -58,10 +58,30 @@ def patch_trace(src: str) -> str:
         body=body[:ending]+"    :nova_1199_off\n"+off+body[ending:]
         return body
     out=METHOD.sub(apply,src)
+    # 1200: end() must always clear diagnostic session state, even while
+    # OFF, but must not construct the UI_SPINNER_HIDE diagnostic marker.
+    matches=[m for m in METHOD.finditer(out)
+             if m.group(0).splitlines()[0]==".method public static end()V"]
+    if len(matches)!=1:
+        raise RuntimeError("startup trace end() missing or duplicated")
+    end_body=matches[0].group(0)
+    prefix='.method public static end()V\\n    .locals 1\\n'
+    if end_body.count(prefix)!=1 or ":nova_1200_end_reset" in end_body:
+        raise RuntimeError("startup trace end() anchor drift")
+    gate=('    invoke-static {}, '+CLASS+'->enabled()Z\\n'
+          '    move-result v0\\n'
+          '    if-eqz v0, :nova_1200_end_reset\\n')
+    end_body=end_body.replace(prefix,prefix+gate,1)
+    reset=('    const/4 v0, 0x0\\n'
+           '    sput-boolean v0, '+TRACE+'->sActive:Z\\n')
+    if end_body.count(reset)!=1:
+        raise RuntimeError("startup trace end() reset missing")
+    end_body=end_body.replace(reset,'    :nova_1200_end_reset\\n'+reset,1)
+    out=out[:matches[0].start()]+end_body+out[matches[0].end():]
     if matched!=set(GUARDED):
         raise RuntimeError("startup diagnostic method coverage mismatch: "+str(sorted(matched)))
-    if out.count(CLASS+"->enabled()Z")!=8:
-        raise RuntimeError("not all eight producer methods are gated")
+    if out.count(CLASS+"->enabled()Z")!=9:
+        raise RuntimeError("not all eight producers and the end reset are gated")
     # end() is still allowed to clear sActive when switching OFF mid-session,
     # but the end marker itself calls gated mark().
     if ".method public static end()V" not in out:
@@ -76,7 +96,7 @@ def patch(root: Path) -> None:
     p=matches[0]
     old=p.read_text()
     p.write_text(patch_trace(old))
-    print(MARK+"=PASS eight source-level diagnostics producers gated")
+    print(MARK+"=PASS eight sources plus end marker gated; reset preserved")
 
 
 def main() -> None:
