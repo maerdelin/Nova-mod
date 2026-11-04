@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 3 * * *'
   push:
-    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'fix/1088-mkv-fast-preview-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/1097-mkv-403-release-only-seek-20261103', 'fix/1119-progress-size-all-three-20261103', 'feat/always-new-global-logs-toggle-20261103', 'fix/global-logs-complete-gating-20261103', 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
+    branches: ['test/939-seek-pool-forensics', 'test/940-shared-mkv-zero-copy-integrity', 'test/946-shared42-backpressure-resume', 'test/947-loading-prepared-diagnostics', 'test/950-boot-deep-telemetry', 'test/956-onepass-startup-speed', 'test/961-four-startup-fixes', 'test/962-deep-startup', 'test/967-60fps-clock-evidence-20261031', 'fix/tv-webdav-list-holder-field-20261031', 'feat/977-early-buffer-canonical-first-20261031', 'feat/mkv-staged-firstframe-64k-20261031', 'fix/985-mkv-staged-real-runtime-gate-20261031', 'fix/989-staged-final-gate-20261031', 'feat/990-iso-256k-firstframe-early-w2-20261031', 'build/994-all-five-validation-20261031', 'fix/1022-early-percent-full60fps-forensics-20261101', 'fix/1035-all-formats-first-x-locked-20261101', 'fix/1049-final-three-20261101', 'fix/1053-iso-validated-pump-20261101', 'fix/1054-warehouse-reopen-20261101', 'fix/1064-iso-memory-liveness-20261102', 'diag/1073-iso-first-cause-blackbox-20261102', 'fix/1074-subtitle-egl-ui-exit-20261102', 'fix/1088-mkv-fast-preview-20261102', 'test/925-shared42-zero-copy', main, Test, Always-new, 'fix/1097-mkv-403-release-only-seek-20261103', 'fix/1119-progress-size-all-three-20261103', 'feat/always-new-global-logs-toggle-20261103', 'fix/global-logs-complete-gating-20261103', 'fix/global-logs-1200-source-only-review-20261104', 'fix/v662-precise-keyframe-backseek-20261028', 'fix/v662-ts-eof-pcm-leadgate-20261028', 'fix/main-startup-seek-only-20261028', 'ci/full-latest-6_6_2-20261028', 'ci/alwaysnew-precise-seek-dual2-20261029', 'ci/alwaysnew-dual2-http403-recovery-20261029', 'ci/alwaysnew-dual2-keepalive-range-20261029', 'ci/alwaysnew-dual2-hardening-20261029']
 
 permissions:
   contents: write
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     env:
-      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103')) && 'v6.6.2' || 'none' }}
+      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/fix/global-logs-1200-source-only-review-20261104')) && 'v6.6.2' || 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -448,7 +448,7 @@ jobs:
           grep -Fq 'NOVA_RESUME_ZERO_NO_REQUEST_V1' "${resume_ctx[0]}"
 
       - name: Verify complete Java, JNI, Logback and native gate in assembled APK
-        if: github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103'
+        if: github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/fix/global-logs-1200-source-only-review-20261104'
         shell: bash
         run: |
           set -euo pipefail
@@ -467,6 +467,15 @@ jobs:
             "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "native-src/native/avos/libs/$abi/libavosjni.so" | grep -F ' nova_global_log_enabled'
             "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "work/transport-native/$abi/libnova_transport.so" | grep -F ' nova_global_log_enabled'
           done
+          if [ "$GITHUB_REF_NAME" = "fix/global-logs-1200-source-only-review-20261104" ]; then
+            grep -Fq 'if(av_log_get_level()!=wanted)' native-src/native/avos/Source/stream_parser_ffmpeg.c
+            grep -Fq 'pthread_mutex_lock(&nova_ffmpeg_log_gate_mutex)' native-src/native/avos/Source/stream_parser_ffmpeg.c
+            grep -Fq 'for(int i=0;i<8 && nova_diag_on();i++)' native-src/native/avos/Source/stream_video.c
+            grep -Fq 'int64_t start=nova_global_log_enabled()?nova1074_mono_ms():0;' native-src/native/avos/Source/sub_engine_registry.c
+            grep -Fq 'if(nova_diag_on())clock_gettime(CLOCK_MONOTONIC,&nova1074_t0);' native-src/native/avos/Source/sub_render_gl.c
+            grep -Fq 'nova_1200_end_reset' work/direct-final/smali*/com/archos/mediacenter/video/player/NovaLoadingTrace.smali
+            echo NOVA_1200_ACTUAL_COMPILED_SOURCES=PASS
+          fi
           echo NOVA_GLOBAL_LOGS_APK_PRECHECK=PASS
 
       - name: Verify 1119 resumed file-size UI on assembled APK
@@ -574,7 +583,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Prepare real Blu-ray ISO media for five-goal acceptance
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/1053-iso-validated-pump-20261101' || github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/fix/global-logs-1200-source-only-review-20261104'
         shell: bash
         run: |
           set -euo pipefail
@@ -595,7 +604,7 @@ jobs:
       # User-directed acceptance exclusions only on global-logs branch.
       # These are SKIPPED_BY_USER, never PASS; other tests remain mandatory.
       - name: Record two user-excluded acceptance checks
-        if: github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103'
+        if: github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/fix/global-logs-1200-source-only-review-20261104'
         shell: bash
         run: |
           set -euo pipefail
@@ -636,7 +645,7 @@ jobs:
           script: |
            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
            python3 scripts/smoke_global_logs_settings.py --reports reports
-           [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || python3 scripts/smoke_global_logs_off_iso_ui.py --iso fixture/iso994.iso --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/global-logs-1200-source-only-review-20261104" ] || python3 scripts/smoke_global_logs_off_iso_ui.py --iso fixture/iso994.iso --reports reports
            python3 scripts/smoke_global_logs_native_off.py --reports reports
             # The actual signed player's WebDAV MKV weak-network test below
             # verifies one-use signed redirects, first frame, Range and Seek.
@@ -660,7 +669,7 @@ jobs:
            # reactivecircus runs each script line using POSIX /bin/sh -c;
            # multiline if/else is NOT one shell invocation. Scope this
            # independent historical #993 MKV comparison with one command.
-           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/1119-progress-size-all-three-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/1119-progress-size-all-three-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/global-logs-1200-source-only-review-20261104" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
