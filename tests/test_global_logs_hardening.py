@@ -183,6 +183,25 @@ class EmulatorScriptTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'missing'):
             ui.state(ET.fromstring('<node checkable="true"/>'))
 
+    def test_default_off_in_all_three_paths_and_one_time_legacy_migration(self):
+        src = (ROOT / 'scripts/global_logs_smali_patch.py').read_text()
+        smoke = (ROOT / 'scripts/smoke_global_logs_settings.py').read_text()
+        self.assertIn('android:defaultValue="false"', src)
+        self.assertNotIn('android:defaultValue="true"', src)
+        self.assertIn('"nova_logs_default_off_v2_done"', src)
+        self.assertIn('Landroid/content/SharedPreferences$Editor;->commit()Z', src)
+        init = src.split('.method public static init(Landroid/content/Context;)V', 1)[1].split('.end method', 1)[0]
+        self.assertLess(init.index('Landroid/content/SharedPreferences;->getBoolean'),
+                        init.index('Ljava/io/RandomAccessFile;->length()J'))
+        self.assertLess(init.index('Ljava/io/RandomAccessFile;->write(I)V'),
+                        init.index('Landroid/content/SharedPreferences$Editor;->commit()Z'))
+        self.assertIn('const/4 v2, 0x0\n    invoke-interface {v0, v1, v2}', src)
+        self.assertIn('const/4 v0, 0x0\n    invoke-interface {{p1, p2, v0}}', src)
+        self.assertIn('"default": False', smoke)
+        self.assertIn('Fresh install default must be unchecked (OFF)', smoke)
+        self.assertIn('OFF persisted across app restart', smoke)
+        self.assertIn('ON persisted across app restart', smoke)
+
     def test_java_probe_is_gated(self):
         source = (ROOT / 'scripts/global_logs_smali_patch.py').read_text()
         self.assertIn('ON_AFTER_APPLY', source)

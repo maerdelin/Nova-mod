@@ -46,6 +46,12 @@ def audit(root: Path):
     prefs = root / "res/xml/preferences_video.xml"
     if not prefs.exists() or 'android:key="nova_logs_enabled"' not in prefs.read_text():
         raise RuntimeError("Real Logs preference missing")
+    if 'android:defaultValue="false"' not in prefs.read_text():
+        raise RuntimeError("Logs checkbox must default OFF")
+    if '"nova_logs_default_off_v2_done"' not in body:
+        raise RuntimeError("Legacy ON-by-default migration missing")
+    if 'SharedPreferences$Editor;->commit()Z' not in body:
+        raise RuntimeError("Synchronous legacy preference migration missing")
     print(f"NOVA_GLOBAL_LOGS_FULL_JAVA_LOGBACK_AUDIT=PASS smali={len(paths)} logbackGuards={covered}")
 
 

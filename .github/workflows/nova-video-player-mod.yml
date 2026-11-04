@@ -446,7 +446,7 @@ jobs:
           set -euo pipefail
           test -s work/direct-final/res/xml/preferences_video.xml
           python3 scripts/audit_global_logs_smali.py --apktool-root work/direct-final
-          grep -Fq 'android:title="日志" android:key="nova_logs_enabled" android:defaultValue="true"' work/direct-final/res/xml/preferences_video.xml
+          grep -Fq 'android:title="日志" android:key="nova_logs_enabled" android:defaultValue="false"' work/direct-final/res/xml/preferences_video.xml
           grep -R -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' work/direct-final/smali*/com/archos/mediacenter/video/NovaGlobalLogs.smali
           grep -Fq 'NovaGlobalLogs;->init' work/direct-final/smali*/com/archos/mediacenter/video/CustomApplication.smali
           grep -Fq 'NovaGlobalLogs;->update' work/direct-final/smali*/com/archos/mediacenter/video/utils/VideoPreferencesCommon.smali
@@ -668,7 +668,7 @@ jobs:
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "NOVA Always-new Global Logs Toggle - Run $GITHUB_RUN_NUMBER" \
-            --notes "Built directly from Always-new. Settings > About > 日志 checkbox below Licenses, initially checked; shared byte gates Java/Logback, JNI, AVOS, EGL and Transport diagnostics. Local source + C gate tests, Android11 real silent playback, Android11/14 actual checkbox/Java logcat and other playback checks required before publication. Android OS logs are separate. Physical TV / device performance still needs verification."
+            --notes "Built directly from Always-new. Settings > About > 日志 checkbox below Licenses, initially unchecked (OFF); legacy ON defaults are migrated OFF once; shared byte gates Java/Logback, JNI, AVOS, EGL and Transport diagnostics. Local source + C gate tests, Android11 real silent playback, Android11/14 actual checkbox/Java logcat and other playback checks required before publication. Android OS logs are separate. Physical TV / device performance still needs verification."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Persist extracted granular specification on the test branch

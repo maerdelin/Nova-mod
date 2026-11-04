@@ -138,14 +138,26 @@ def main():
     parser.add_argument("--reports", type=Path, required=True)
     args = parser.parse_args()
     args.reports.mkdir(parents=True, exist_ok=True)
-    result = {"status": "FAIL", "key": "nova_logs_enabled", "default": True,
+    result = {"status": "FAIL", "key": "nova_logs_enabled", "default": False,
               "java_gate": "NOT_TESTED", "native_gate": "NOT_TESTED",
               "scroll_attempts": [], "tested": []}
     try:
         item = locate_with_scroll(result)
+        if state(item) is not False:
+            raise RuntimeError("Fresh install default must be unchecked (OFF)")
+        result["tested"].append("Logs preference and fresh install OFF default")
+
+        adb("logcat", "-c")
+        tap(item)
+        expect_state(True, "OFF->ON")
+        require_probe(True, "ON must emit Java gate Log.i")
+        result["tested"].append("OFF->ON restores real gated Java Log.i")
+
+        adb("shell", "am", "force-stop", PACKAGE)
+        item = locate_with_scroll(result)
         if state(item) is not True:
-            raise RuntimeError("Fresh install default must be checked")
-        result["tested"].append("Logs preference and fresh install ON default")
+            raise RuntimeError("ON not persisted across restart")
+        result["tested"].append("ON persisted across app restart")
 
         adb("logcat", "-c")
         tap(item)
@@ -156,20 +168,8 @@ def main():
         adb("shell", "am", "force-stop", PACKAGE)
         item = locate_with_scroll(result)
         if state(item) is not False:
-            raise RuntimeError("OFF not persisted across restart")
+            raise RuntimeError("OFF not persisted across app restart")
         result["tested"].append("OFF persisted across app restart")
-
-        adb("logcat", "-c")
-        tap(item)
-        expect_state(True, "OFF->ON")
-        require_probe(True, "ON must emit Java Log.i probe")
-        result["tested"].append("OFF->ON restores real gated Java Log.i")
-
-        adb("shell", "am", "force-stop", PACKAGE)
-        item = locate_with_scroll(result)
-        if state(item) is not True:
-            raise RuntimeError("ON not persisted across restart")
-        result["tested"].append("ON persisted across app restart")
         result["java_gate"] = "PASS"
         result["status"] = "PASS"
         print("NOVA_GLOBAL_LOGS_UI_JAVA_GATE=PASS")

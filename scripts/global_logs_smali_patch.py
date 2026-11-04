@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """NOVA global logs checkbox and Java log gate. Based on Always-new.
 
-Log setting is persistent and defaults ON. A one-byte MAP_SHARED private flag
+Log setting is persistent and defaults OFF. On first launch of this version,
+legacy ON-by-default installs are migrated to OFF once. A one-byte MAP_SHARED private flag
 is the single authority across Java, AVOS, transport, and :scanner processes.
 No background polling or diagnostic thread is created by this control.
 """
@@ -48,6 +49,35 @@ GATE_SMALI=r'''
     new-instance v3, Ljava/io/RandomAccessFile;
     const-string v4, "rw"
     invoke-direct {v3, v1, v4}, Ljava/io/RandomAccessFile;-><init>(Ljava/io/File;Ljava/lang/String;)V
+    # One-time v2 default-OFF migration: 1194 persisted ON implicitly.
+    # Reset the shared file first, then persist the default and migration marker
+    # synchronously. After this one-time migration, deliberate ON persists.
+    invoke-static {p0}, Landroid/preference/PreferenceManager;->getDefaultSharedPreferences(Landroid/content/Context;)Landroid/content/SharedPreferences;
+    move-result-object v0
+    const-string v1, "nova_logs_default_off_v2_done"
+    const/4 v2, 0x0
+    invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+    move-result v8
+    if-nez v8, :nova_logs_default_off_done
+    const-wide/16 v4, 0x0
+    invoke-virtual {v3, v4, v5}, Ljava/io/RandomAccessFile;->seek(J)V
+    invoke-virtual {v3, v2}, Ljava/io/RandomAccessFile;->write(I)V
+    invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+    move-result-object v9
+    const-string v10, "nova_logs_enabled"
+    invoke-interface {v9, v10, v2}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+    move-result-object v9
+    const/4 v8, 0x1
+    invoke-interface {v9, v1, v8}, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;
+    move-result-object v9
+    invoke-interface {v9}, Landroid/content/SharedPreferences$Editor;->commit()Z
+    move-result v8
+    if-nez v8, :nova_logs_default_off_done
+    new-instance v8, Ljava/io/IOException;
+    const-string v9, "Cannot persist NOVA logs default-off migration"
+    invoke-direct {v8, v9}, Ljava/io/IOException;-><init>(Ljava/lang/String;)V
+    throw v8
+    :nova_logs_default_off_done
     invoke-virtual {v3}, Ljava/io/RandomAccessFile;->length()J
     move-result-wide v4
     const-wide/16 v6, 0x1
@@ -57,7 +87,7 @@ GATE_SMALI=r'''
     invoke-static {p0}, Landroid/preference/PreferenceManager;->getDefaultSharedPreferences(Landroid/content/Context;)Landroid/content/SharedPreferences;
     move-result-object v0
     const-string v1, "nova_logs_enabled"
-    const/4 v2, 0x1
+    const/4 v2, 0x0
     invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
     move-result v2
     const-wide/16 v4, 0x0
@@ -229,7 +259,7 @@ def smali(root:Path):
     prefs=root/'res/xml/preferences_video.xml'
     s=prefs.read_text()
     anchor='<PreferenceScreen android:title="@string/preferences_video_licenses" android:key="preferences_video_licences" app:iconSpaceReserved="false" />'
-    row='<CheckBoxPreference android:persistent="true" android:title="日志" android:key="nova_logs_enabled" android:defaultValue="true" app:iconSpaceReserved="false" />'
+    row='<CheckBoxPreference android:persistent="true" android:title="日志" android:key="nova_logs_enabled" android:defaultValue="false" app:iconSpaceReserved="false" />'
     s=one(s,anchor,anchor+'\n        '+row,"Settings: exactly below licenses")
     prefs.write_text(s)
     ET.fromstring(s)
@@ -250,7 +280,7 @@ def smali(root:Path):
     invoke-virtual {{p2, v0}}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
     move-result v0
     if-eqz v0, :nova_logs_other_preferences
-    const/4 v0, 0x1
+    const/4 v0, 0x0
     invoke-interface {{p1, p2, v0}}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
     move-result v0
     invoke-static {{v0}}, {CLASS}->update(Z)V
