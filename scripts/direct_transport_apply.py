@@ -1220,14 +1220,17 @@ def main():
     result_251 = apply_251_release_seek(root)
     print('NOVA_MKV_SPINNER_RELEASE_ONLY_V3=' + result_251['status'])
 
-    # One persistent checkbox controls Java + native diagnostics.
-    from global_logs_smali_patch import smali as apply_nova_logs
-    apply_nova_logs(root)
-
     # Guard malformed torrent stdout without changing listing or playback.
     from torrent_crash_guard_patch import patch_torrent_observer
     torrent=one(root.glob("smali*/com/archos/mediacenter/video/browser/TorrentObserverService.smali"),"TorrentObserverService")
     torrent.write_text(patch_torrent_observer(torrent.read_text()))
+
+    # Gate LAST: Torrent crash guard and every other Java/Smali patch must
+    # already be present. Otherwise post-gate Log.w calls bypass the checkbox.
+    # One persistent checkbox controls Java + native diagnostics.
+    from global_logs_smali_patch import smali as apply_nova_logs
+    apply_nova_logs(root)
+
 
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
         src=args.native_root/abi/"libnova_transport.so"
