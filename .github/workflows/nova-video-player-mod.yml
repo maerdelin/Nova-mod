@@ -527,7 +527,7 @@ jobs:
           compression-level: 0
 
       - name: Retrieve #993 signed baseline for real MKV speed comparison
-        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103'
+        if: github.ref == 'refs/heads/build/994-all-five-validation-20261031' || github.ref == 'refs/heads/fix/1022-early-percent-full60fps-forensics-20261101' || github.ref == 'refs/heads/fix/1035-all-formats-first-x-locked-20261101'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -586,6 +586,39 @@ jobs:
           test -s fixture/iso994.iso
           test "$(stat -c%s fixture/iso994.iso)" -gt 2097152
 
+      # User-directed acceptance exclusions only on global-logs branch.
+      # These are SKIPPED_BY_USER, never PASS; other tests remain mandatory.
+      - name: Record two user-excluded acceptance checks
+        if: github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reports = Path("reports")
+          reports.mkdir(parents=True, exist_ok=True)
+          checks = {
+              "off-iso-ui.json": {
+                  "status": "SKIPPED_BY_USER",
+                  "scope": "OFF_ISO_UI_PERCENT_AND_SPINNER",
+                  "reason": "User explicitly excluded emulator UI acceptance; manual physical-device check required",
+                  "manual_acceptance_required": True,
+                  "percent_seen": False,
+                  "overlay_hidden": False
+              },
+              "994-mkv-startup-compare.json": {
+                  "status": "SKIPPED_BY_USER",
+                  "scope": "HISTORICAL_993_MKV_STARTUP_LOGCAT_COMPARE",
+                  "reason": "User explicitly excluded historical logcat-marker benchmark incompatible with Logs OFF",
+                  "manual_acceptance_required": True
+              }
+          }
+          for name, data in checks.items():
+              (reports / name).write_text(json.dumps(data, indent=2) + "\n")
+              print("NOVA_ACCEPTANCE_EXCLUDED=" + name + " " + data["status"])
+          PY
+
       - name: Install and launch final APK on Android 11
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -597,7 +630,7 @@ jobs:
           script: |
            python3 scripts/smoke_install.py dist/Nova_Video_Player_mod_SIGNED.apk --reports reports
            python3 scripts/smoke_global_logs_settings.py --reports reports
-           python3 scripts/smoke_global_logs_off_iso_ui.py --iso fixture/iso994.iso --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || python3 scripts/smoke_global_logs_off_iso_ui.py --iso fixture/iso994.iso --reports reports
            python3 scripts/smoke_global_logs_native_off.py --reports reports
             # The actual signed player's WebDAV MKV weak-network test below
             # verifies one-use signed redirects, first frame, Range and Seek.
@@ -621,7 +654,7 @@ jobs:
            # reactivecircus runs each script line using POSIX /bin/sh -c;
            # multiline if/else is NOT one shell invocation. Scope this
            # independent historical #993 MKV comparison with one command.
-           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/1119-progress-size-all-three-20261103" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
+           [ "$GITHUB_REF_NAME" = "fix/1053-iso-validated-pump-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1054-warehouse-reopen-20261101" ] || [ "$GITHUB_REF_NAME" = "fix/1064-iso-memory-liveness-20261102" ] || [ "$GITHUB_REF_NAME" = "diag/1073-iso-first-cause-blackbox-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1074-subtitle-egl-ui-exit-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1088-mkv-fast-preview-20261102" ] || [ "$GITHUB_REF_NAME" = "fix/1097-mkv-403-release-only-seek-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/1119-progress-size-all-three-20261103" ] || [ "$GITHUB_REF_NAME" = "fix/global-logs-complete-gating-20261103" ] || python3 scripts/smoke_994_mkv_compare.py --apk dist/Nova_Video_Player_mod_SIGNED.apk --baseline-apk inputs/993-baseline/Nova_Video_Player_mod_SIGNED.apk --reports reports
             # This independent startup-only branch intentionally leaves the
             # main-branch unknown-duration TS relative-seek handling untouched.
             # Do not silently claim its existing EOF stress test passed.
@@ -667,20 +700,18 @@ jobs:
           native=json.loads(Path('reports/global-logs-native-off.json').read_text())
           assert native['status']=='PASS' and native['native_off']=='PASS',native
           off_iso=json.loads(Path('reports/off-iso-ui.json').read_text())
-          assert (off_iso['status']=='PASS' and off_iso['percent_seen'] and off_iso['overlay_hidden']) or (off_iso['status']=='MANUAL_REVIEW_REQUIRED' and off_iso.get('ui_error')=='UIAUTOMATOR_XML_MISSING' and off_iso.get('http_requests',0)>0 and off_iso.get('process_alive') and off_iso.get('diagnostic_silence')),off_iso
+          assert off_iso['status']=='SKIPPED_BY_USER' and off_iso['scope']=='OFF_ISO_UI_PERCENT_AND_SPINNER' and off_iso['manual_acceptance_required'] is True,off_iso
+          mkv_compare=json.loads(Path('reports/994-mkv-startup-compare.json').read_text())
+          assert mkv_compare['status']=='SKIPPED_BY_USER' and mkv_compare['scope']=='HISTORICAL_993_MKV_STARTUP_LOGCAT_COMPARE' and mkv_compare['manual_acceptance_required'] is True,mkv_compare
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
-          if python3 -c "import json; assert json.load(open('reports/off-iso-ui.json'))['status']=='MANUAL_REVIEW_REQUIRED'"; then
-            echo "NOVA_OFF_ISO_UI=MANUAL_REVIEW_REQUIRED; publish candidate only"
-            publish_title="NOVA Run $GITHUB_RUN_NUMBER - manual OFF ISO UI acceptance required"
-          else
-            publish_title="NOVA Run $GITHUB_RUN_NUMBER - automated OFF ISO UI passed"
-          fi
+          echo "OFF_ISO_UI=SKIPPED_BY_USER MKV_BENCHMARK=SKIPPED_BY_USER"
+          publish_title="NOVA Run $GITHUB_RUN_NUMBER - signed APK, 2 checks await manual acceptance"
           tag="nova-alwaysnew-global-logs-$GITHUB_RUN_NUMBER"
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "$publish_title" \
-            --notes "NOVA 1197 candidate. ISO spinner auto-test must be inspected in reports/off-iso-ui.json: PASS or MANUAL_REVIEW_REQUIRED (UIAutomator XML missing only). MANUAL_REVIEW_REQUIRED means OFF ISO spinner UI NOT VERIFIED; user will perform manual acceptance. Other Android 11/14 and log gate tests required before publication. 1197 gates diagnostic-only counters and sampling; playback and transport controls remain unchanged."
+            --notes "NOVA signed test APK based on 1197 diagnostic collection gates. TWO tests explicitly excluded by user, status SKIPPED_BY_USER (NOT PASS): OFF ISO percent/spinner UI and historical 993 MKV startup comparison driven by diagnostic logcat markers. All other native, signing, Android 11/14 install, global logs and independent playback checks must pass. User will manually verify excluded items on physical device."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Persist extracted granular specification on the test branch
