@@ -62,10 +62,11 @@ jobs:
           meson --version
           ffmpeg -version | head -n 1
           mkdir -p inputs dist tools work reports
-          python3 -m py_compile scripts/global_logs_native_coverage_patch.py scripts/audit_global_logs_smali.py scripts/smoke_global_logs_native_off.py scripts/smoke_global_logs_off_iso_ui.py
+          python3 -m py_compile scripts/global_logs_native_coverage_patch.py scripts/audit_global_logs_smali.py scripts/smoke_global_logs_native_off.py scripts/smoke_global_logs_off_iso_ui.py scripts/global_logs_1199_patch.py scripts/global_logs_smali_1199_patch.py
           python3 -m unittest discover -s tests -p test_global_logs_hardening.py -v
           python3 -m unittest discover -s tests -p test_global_logs_playback_decouple.py -v
           python3 -m unittest discover -s tests -p test_global_logs_sampling_1197.py -v
+          python3 -m unittest discover -s tests -p test_global_logs_1199.py -v
           python3 scripts/direct_transport_audit.py --source --require-removed
           python3 -m unittest discover -s tests -p test_iso_metadata_cache.py -v
           python3 -m unittest discover -s tests -p test_direct_transport_lifecycle.py -v
@@ -246,6 +247,10 @@ jobs:
           python3 scripts/global_logs_native_patch.py --native native-src/native/avos --transport iso/nova_transport.c
           python3 scripts/global_logs_native_coverage_patch.py --native native-src/native/avos --transport iso/nova_transport.c
           python3 scripts/global_logs_sampling_1197_patch.py --transport iso/nova_transport.c --lite iso/nova_literange4.inc
+          python3 scripts/global_logs_1199_patch.py --native native-src/native/avos --transport iso/nova_transport.c --lite iso/nova_literange4.inc
+          grep -Fq 'NOVA_1199_FFMPEG_CAPTURE_GATE' native-src/native/avos/Source/stream_parser_ffmpeg.c
+          grep -Fq 'nova_ffmpeg_log_sync();' native-src/native/avos/Source/stream_video.c
+          grep -Fq 'if(nova_global_log_enabled()) p->owner->received_sample_bytes' iso/nova_literange4.inc
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' native-src/native/avos/Include/log.h
           grep -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' iso/nova_transport.c
           grep -Fq 'nova_global_log_enabled' native-src/native/avos/Include/nova_global_gate_impl.inc
@@ -449,6 +454,7 @@ jobs:
           set -euo pipefail
           test -s work/direct-final/res/xml/preferences_video.xml
           python3 scripts/audit_global_logs_smali.py --apktool-root work/direct-final
+          grep -Fq 'nova_1199_off' work/direct-final/smali*/com/archos/mediacenter/video/player/NovaLoadingTrace.smali
           grep -Fq 'android:title="日志" android:key="nova_logs_enabled" android:defaultValue="false"' work/direct-final/res/xml/preferences_video.xml
           grep -R -Fq 'NOVA_GLOBAL_LOGS_TOGGLE_V1' work/direct-final/smali*/com/archos/mediacenter/video/NovaGlobalLogs.smali
           grep -Fq 'NovaGlobalLogs;->init' work/direct-final/smali*/com/archos/mediacenter/video/CustomApplication.smali
@@ -711,7 +717,7 @@ jobs:
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "$publish_title" \
-            --notes "NOVA signed test APK based on 1197 diagnostic collection gates. TWO tests explicitly excluded by user, status SKIPPED_BY_USER (NOT PASS): OFF ISO percent/spinner UI and historical 993 MKV startup comparison driven by diagnostic logcat markers. All other native, signing, Android 11/14 install, global logs and independent playback checks must pass. User will manually verify excluded items on physical device."
+            --notes "NOVA signed test APK based on 1198 and 1199 expanded 13-family diagnostic source gates. TWO tests explicitly excluded by user, status SKIPPED_BY_USER (NOT PASS): OFF ISO percent/spinner UI and historical 993 MKV startup comparison driven by diagnostic logcat markers. All other native, signing, Android 11/14 install, global logs and independent playback checks must pass. User will manually verify excluded items on physical device."
           echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
 
       - name: Persist extracted granular specification on the test branch

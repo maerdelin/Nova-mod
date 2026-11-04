@@ -1230,6 +1230,10 @@ def main():
     # One persistent checkbox controls Java + native diagnostics.
     from global_logs_smali_patch import smali as apply_nova_logs
     apply_nova_logs(root)
+    # 1199: stop startup tracer counters, clocks and StringBuilder work
+    # BEFORE they reach the otherwise-correct Android Log output wrappers.
+    from global_logs_smali_1199_patch import patch as gate_diag_producers
+    gate_diag_producers(root)
 
 
     for abi in ("arm64-v8a","armeabi-v7a","x86","x86_64"):
