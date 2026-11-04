@@ -65,18 +65,18 @@ def patch_trace(src: str) -> str:
     if len(matches)!=1:
         raise RuntimeError("startup trace end() missing or duplicated")
     end_body=matches[0].group(0)
-    prefix='.method public static end()V\\n    .locals 1\\n'
+    prefix='.method public static end()V\n    .locals 1\n'
     if end_body.count(prefix)!=1 or ":nova_1200_end_reset" in end_body:
         raise RuntimeError("startup trace end() anchor drift")
-    gate=('    invoke-static {}, '+CLASS+'->enabled()Z\\n'
-          '    move-result v0\\n'
-          '    if-eqz v0, :nova_1200_end_reset\\n')
+    gate=('    invoke-static {}, '+CLASS+'->enabled()Z\n'
+          '    move-result v0\n'
+          '    if-eqz v0, :nova_1200_end_reset\n')
     end_body=end_body.replace(prefix,prefix+gate,1)
-    reset=('    const/4 v0, 0x0\\n'
-           '    sput-boolean v0, '+TRACE+'->sActive:Z\\n')
+    reset=('    const/4 v0, 0x0\n'
+           '    sput-boolean v0, '+TRACE+'->sActive:Z\n')
     if end_body.count(reset)!=1:
         raise RuntimeError("startup trace end() reset missing")
-    end_body=end_body.replace(reset,'    :nova_1200_end_reset\\n'+reset,1)
+    end_body=end_body.replace(reset,'    :nova_1200_end_reset\n'+reset,1)
     out=out[:matches[0].start()]+end_body+out[matches[0].end():]
     if matched!=set(GUARDED):
         raise RuntimeError("startup diagnostic method coverage mismatch: "+str(sorted(matched)))
