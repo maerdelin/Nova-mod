@@ -70,6 +70,63 @@ def rewrite_counter_lines(src):
         r'(?:nova_diag_|nova_final_|nova_seek_diag_|nova_seek_engine_loops)[^;]*;)')
     return pattern.sub(lambda m: m.group(1)+'if(nova_diag_on()) '+m.group(2),src)
 
+def decouple_startup_render(root: Path):
+    """Render submission is playback business state, independent of Logs OFF.
+
+    The historical rebuffer first-frame hold read nova_diag_render_submitted,
+    but OFF properly suppressed that diagnostic counter. Keep diagnostics
+    disabled while preserving the real render event and 2 readiness checks.
+    """
+    header=root/"Include/stream.h"
+    s=header.read_text()
+    s=once(s,"\tvolatile int\trebuffer_frame_seen;\n",
+           "\tvolatile int\trebuffer_frame_seen;\n"
+           "\tvolatile int\tstartup_render_submitted; /* business: never log-gated */\n",
+           "persistent playback render liveness field")
+    header.write_text(s)
+
+    codec=root/"Source/codec_sfdec2.c"
+    s=codec.read_text()
+    diag="if(nova_diag_on()) __atomic_fetch_add(&s->nova_diag_render_submitted, 1, __ATOMIC_RELAXED);"
+    s=once(s,diag,
+           "__atomic_store_n(&s->startup_render_submitted, 1, __ATOMIC_RELEASE);\n"
+           "                        "+diag,
+           "real submitted frame BEFORE optional diagnostic counter")
+    codec.write_text(s)
+
+    video=root/"Source/stream_video.c"
+    s=video.read_text()
+    pattern=r'__atomic_load_n\(&s->nova_diag_render_submitted,\s*__ATOMIC_ACQUIRE\)>0'
+    s,n=re.subn(pattern,
+                lambda m:m.group(0).replace("nova_diag_render_submitted",
+                                            "startup_render_submitted"),s)
+    if n!=2:
+        raise RuntimeError(f"Exactly two real first-render business predicates required, found {n}")
+    s=once(s,"\t__atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );\n",
+           "\t__atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );\n"
+           "\t__atomic_store_n( &s->startup_render_submitted, 0, __ATOMIC_RELEASE );\n",
+           "seek reset first-render liveness")
+    video.write_text(s)
+
+    avos=root/"Source/avos_mp_video.c"
+    s=avos.read_text()
+    anchor="\t__atomic_store_n(&video->s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE);\n"
+    if s.count(anchor)!=2:
+        raise RuntimeError(f"Start/pause render resets expected twice, found {s.count(anchor)}")
+    s=s.replace(anchor,anchor+
+                "\t__atomic_store_n(&video->s->startup_render_submitted, 0, __ATOMIC_RELEASE);\n")
+    avos.write_text(s)
+
+    stream=root/"Source/stream.c"
+    s=stream.read_text()
+    s=once(s,"        __atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );\n",
+           "        __atomic_store_n( &s->rebuffer_frame_seen, 0, __ATOMIC_RELEASE );\n"
+           "        __atomic_store_n( &s->startup_render_submitted, 0, __ATOMIC_RELEASE );\n",
+           "stop reset first-render liveness")
+    stream.write_text(s)
+    print("NOVA_STARTUP_RENDER_BUSINESS_GATE_V1=PASS: real renderer independent from diagnostic counters")
+
+
 def guard_owned_snippets(s):
     """Guard the entire stateful AVOS diagnostic tick and Seek stage observer."""
     s=once(s,'static void nova_avdiag_tick(STREAM *s)\n{\n    if (!s) return;',
@@ -253,6 +310,7 @@ static void nova_bb_arm(int mode)
     if not GATE_C.is_file():raise RuntimeError("Global gate native C missing")
     from strict_idle_hotpaths_1133 import patch as strict_1133_hotpaths
     strict_1133_hotpaths(root)
+    decouple_startup_render(root)
     print(MARKER+"=PASS native")
 
 
