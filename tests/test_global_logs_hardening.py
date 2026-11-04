@@ -116,7 +116,7 @@ class SharedGateTest(unittest.TestCase):
             target = root / 'shared.bin'
             source = actual.replace(
                 '"/data/user/%u/org.courville.nova/files/nova_logs_enabled.bin",\n        user_id',
-                f'"{target.as_posix()}",\n        user_id'
+                f'"{target.as_posix()}"'
             ).replace(
                 'unsigned user_id = (unsigned)getuid()/100000u;',
                 'unsigned user_id = (unsigned)getuid()/100000u;\n    (void)user_id;'
