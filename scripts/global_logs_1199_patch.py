@@ -68,13 +68,19 @@ def parser_source(s: str) -> str:
     marker = "void av_log_cb(void* ptr, int level, const char* fmt, va_list vl)\n{\n"
     helper = """/* NOVA_1199_FFMPEG_CAPTURE_GATE: logging only; never decode policy. */
 static int nova_ffmpeg_log_was_enabled=-1;
+static pthread_mutex_t nova_ffmpeg_log_gate_mutex=PTHREAD_MUTEX_INITIALIZER;
 void nova_ffmpeg_log_sync(void)
 {
     int enabled=nova_diag_on()?1:0;
-    int previous=__atomic_exchange_n(&nova_ffmpeg_log_was_enabled,
-                                     enabled,__ATOMIC_ACQ_REL);
-    if(previous==enabled)return;
-    av_log_set_level(enabled?(log_debug?AV_LOG_DEBUG:AV_LOG_INFO):AV_LOG_QUIET);
+    if(__atomic_load_n(&nova_ffmpeg_log_was_enabled,__ATOMIC_ACQUIRE)==enabled)
+        return;
+    pthread_mutex_lock(&nova_ffmpeg_log_gate_mutex);
+    enabled=nova_diag_on()?1:0;
+    if(__atomic_load_n(&nova_ffmpeg_log_was_enabled,__ATOMIC_RELAXED)!=enabled){
+        av_log_set_level(enabled?(log_debug?AV_LOG_DEBUG:AV_LOG_INFO):AV_LOG_QUIET);
+        __atomic_store_n(&nova_ffmpeg_log_was_enabled,enabled,__ATOMIC_RELEASE);
+    }
+    pthread_mutex_unlock(&nova_ffmpeg_log_gate_mutex);
 }
 """
     s = replace(s, marker, helper+marker+"    if(!nova_diag_on())return;\n",
@@ -130,6 +136,13 @@ def player_source(s: str) -> str:
         "getrusage(RUSAGE_SELF,&ru);",
         "if(!nova_diag_on())break;\n        getrusage(RUSAGE_SELF,&ru);",
         "system worker before resource sampling")
+    # OFF toggled during the snapshot must not format eight sysfs paths.
+    # A partial ON snapshot is harmless: FFmpeg/AVOS output is gated.
+    s = replace(s,
+        "long freqs[8];\n        for(int i=0;i<8;i++){",
+        "long freqs[8]={-1,-1,-1,-1,-1,-1,-1,-1};\n"
+        "        for(int i=0;i<8 && nova_diag_on();i++){",
+        "system worker CPU frequency sysfs scan cancellation")
     s = replace(s,
         'DIR *dir=opendir("/proc/self/task");',
         'if(!nova_diag_on())break;\n        DIR *dir=opendir("/proc/self/task");',
