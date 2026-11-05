@@ -41,7 +41,7 @@ def seek_after(text,marker):
     if at<0:return None
     phase=text[at+len(marker):]
     ms=list(re.finditer(
-        r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=([01])',
+        r'avos_mp_video_seek current_pos=(-?\d+) to pos=(-?\d+) direction=([01])',
         phase))
     if not ms:return None
     m=ms[-1];a=int(m[1]);b=int(m[2]);direction=int(m[3])
@@ -100,14 +100,20 @@ def main():
             text=wait_for(lambda t:'first_frame_sink' in t and 'ETYPE_MPEG_TS' in t,30,'ordinary TS first frame')
             if 'NOVA_ISO_TIMELINE_READY' in text or 'nova_iso=1' in text:
                 raise RuntimeError('Test accidentally entered ISO path')
-            # Ordinary MPEG-TS DPAD-right uses Nova's position domain
-            # (0..1000). Drive the same non-ISO position-seek path repeatedly
-            # until the log itself proves we reached the tail. No hidden test
-            # API, no nova_iso metadata, and no download-state shortcut.
+            # The signed native log reports ordinary TS seek positions in
+            # milliseconds (e.g. 36461->41461 for this 42s fixture), not
+            # in the normalized 0..1000 GUI progress range. Some real forward
+            # key seeks use direction=0; derive forward progress from the
+            # before/after positions instead of treating that flag as a sign.
+            # The last ~6s is a near-tail playback/EOF test without risking
+            # an already-past-EOF 5s jump. No hidden test API or ISO path.
+            duration_ms = 42000
+            safe_min = int(duration_ms * .85)
+            safe_max = int(duration_ms * .95)
             seeks=[]
             final_marker=''
             current_target=-1
-            for step in range(180):
+            for step in range(45):
                 marker='NOVA_TS_POS_STEP_'+str(step)+'_'+str(time.monotonic_ns())
                 adb('shell','log -p i -t NOVA_TS_EOF_TEST '+marker)
                 adb('shell','input keyevent 22')
@@ -132,21 +138,17 @@ def main():
                     raise RuntimeError('ISO seek appeared in ordinary TS position test')
                 seeks.append([before,current_target,direction])
 
-                if direction != 1:
-                    # Do not count a RIGHT-key no-op/backward-classified event
-                    # as progress; retry promptly so natural playback cannot
-                    # carry the short fixture into EOF before verification.
+                if before >= 0 and current_target <= before:
+                    # A real no-op or backward move is not forward progress.
                     time.sleep(.03)
                     continue
 
-                # Run463 proved a batched driver could pass through 966 and
-                # race into 990. Stop all input immediately at the first
-                # verified safe tail position.
-                if 930 <= current_target <= 975:
+                # Stop at the first observed near-tail media-time position.
+                if safe_min <= current_target <= safe_max:
                     final_marker=marker
                     break
 
-                if current_target > 975:
+                if current_target > safe_max:
                     # Recover with single left events if scheduling skipped
                     # over the safe window.
                     for back_step in range(12):
@@ -156,24 +158,24 @@ def main():
                         try:
                             back_text=wait_for(
                                 lambda t: re.search(
-                                    r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=0',
+                                    r'avos_mp_video_seek current_pos=(-?\d+) to pos=(-?\d+) direction=[01]',
                                     t[t.rfind(back_marker):] if back_marker in t else '') is not None,
                                 3,'ordinary TS backward recovery seek')
                         except RuntimeError:
                             continue
                         back_phase=back_text[back_text.rfind(back_marker):]
                         m=list(re.finditer(
-                            r'avos_mp_video_seek current_pos=(\d+) to pos=(\d+) direction=0',
+                            r'avos_mp_video_seek current_pos=(-?\d+) to pos=(-?\d+) direction=[01]',
                             back_phase))[-1]
                         current_target=int(m[2])
                         seeks.append([int(m[1]),current_target,0])
-                        if 930 <= current_target <= 975:
+                        if safe_min <= current_target <= safe_max:
                             final_marker=back_marker
                             break
                     if final_marker:
                         break
 
-            if not final_marker or not seeks or not (930<=seeks[-1][1]<=975):
+            if not final_marker or not seeks or not (safe_min <= seeks[-1][1] <= safe_max):
                 raise RuntimeError('Could not land in verified near-tail ordinary TS position: '+repr(seeks[-30:]))
             phase_start=time.monotonic()
             text=wait_for(lambda t:
