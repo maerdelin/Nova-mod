@@ -465,13 +465,34 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                     if len(candidates)==1:
                         method_name=candidates[0]
                         print('NOVA_V66_NETWORK_TYPED_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+                if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and method_name == 'lambda$new$2()V':
+                    proposed = 'lambda$new$0()V'
+                    if proposed in methods:
+                        probe = tokens(methods[proposed][0], symbols)
+                        marker = 'iput-object v0, p0, Lcom/archos/mediacenter/video/leanback/MainFragment;->mRowPendingSelection:Ljava/lang/Object;'
+                        if probe.count(marker) == 1 and register_line(probe) == '.locals 1':
+                            method_name = proposed
+                            print('NOVA_V664_VERIFIED_ROW_SELECTION_LAMBDA_REMAP '+method_name,flush=True)
+                if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask;' and method_name == 'lambda$execute$0(Landroid/database/Cursor;)V':
+                    proposed = 'lambda$execute$1(Landroid/database/Cursor;)V'
+                    if proposed in methods:
+                        probe = tokens(methods[proposed][0], symbols)
+                        if (register_line(probe) == '.locals 4' and
+                            sum('Landroid/database/Cursor;->moveToNext()Z' in q for q in probe) == 1 and
+                            sum('->isFinishing()Z' in q for q in probe) == 1):
+                            method_name = proposed
+                            print('NOVA_V664_VERIFIED_SHORTCUT_LOADER_CALLBACK_REMAP '+method_name,flush=True)
                 if method_name not in methods:
                     print('NOVA_V664_MISSING_METHOD '+rule['class']+' '+method_name,flush=True)
                     print('NOVA_V664_METHOD_CANDIDATES '+repr([x for x in methods if x.startswith('lambda')]),flush=True)
                     raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
             expected_class_header=rule['class_header']
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/presenter/PosterImageCardPresenter;':
-                expected_class_header=[line.replace('.super Lsx0;', '.super Lrx0;') for line in rule['class_header']]
+                actual_header = class_header(text)
+                allowed_headers = [[line.replace('.super Lsx0;', '.super '+name+';') for line in rule['class_header']] for name in ('Lrx0', 'Lux0')]
+                if actual_header not in allowed_headers:
+                    raise Conflict('Unrecognized official poster class inheritance: '+repr(actual_header))
+                expected_class_header = actual_header
             if class_header(text)!=expected_class_header:
                 print('NOVA_V66_ACTUAL_CLASS_HEADER '+rule['class']+' -> '+repr(class_header(text)),flush=True)
                 print('NOVA_V66_OLD_CLASS_HEADER '+repr(rule['class_header']),flush=True)
