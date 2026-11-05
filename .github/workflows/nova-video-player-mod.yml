@@ -235,7 +235,7 @@ jobs:
           python3 scripts/pgs_history_bypass_ab_patch.py --native native-src/native/avos --report reports/pgs-history-bypass-ab.json
           python3 scripts/mp4_seek_slow_read_grace_patch.py --native native-src/native/avos --report reports/mp4-seek-slow-read-grace.json
           # Strictly revert unsafe Test-only seek experiments. Keep the
-          # proven RUN638 network/seek path and unchanged 2X/5X thresholds.
+          # proven RUN638 network/seek path and unchanged 1.5X low / 3X resume thresholds.
           if grep -Eq 'seek_preempt|NOVA_RAW_CACHE_SEEK_V1|NOVA_FAST_VIDEO_INDEX_SEEK_V1' native-src/native/avos/Source/stream_parser_ffmpeg.c; then echo '::error::Experimental Seek path still present'; exit 1; fi
           python3 scripts/disable_all_subtitle_history_patch.py --native native-src/native/avos --report reports/all-subtitle-history-disabled.json
           python3 scripts/late_stall_self_heal_patch.py --native native-src/native/avos --report reports/late-render-recovery.json

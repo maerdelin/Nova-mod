@@ -2033,7 +2033,7 @@ def apply(
         "architecture": "one independent native raw-source producer before FFmpeg demux; no Java FIFO and no parallel downloader",
         "network_wall": "fixed 128MiB raw warehouse only",
         "raw_io_bytes": 128 * 1024,
-        "dynamic_buffer": "X=file bytes/duration seconds; playback low=2X, resume=5X; raw producer cap=fixed 128MiB",
+        "dynamic_buffer": "X=average source bytes/second; playback low=1.5X, resume=3X (clamped if needed); unknown-X fallback low=24MiB, resume=64MiB; raw cap=fixed 128MiB",
         "fallback": {
             "low_bytes": LOW_BYTES,
             "resume_bytes": RESUME_BYTES,

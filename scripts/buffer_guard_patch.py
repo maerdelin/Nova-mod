@@ -44,7 +44,8 @@ def patch_player(text):
         raise RuntimeError("setVideoURI locals anchor missing")
     inject = f"""
     # Packet queue is only a bounded demux->decoder handoff/safety queue.
-    # All remote download buffering policy lives in the native raw 2X/5X/10X layer.
+    # Remote playback thresholds are native RAW 1.5X low / 3X resume;
+    # network production is independently bounded by a fixed 128 MiB RAW capacity.
     const/16 {tmp}, 0x18
     invoke-static {{{tmp}}}, Lcom/archos/medialib/LibAvos;->setStreamBufferSize(I)V
     :nova_packet_handoff_done
@@ -64,7 +65,7 @@ def apply(root: Path, report: Path | None = None):
             "packet_handoff_mib": PACKET_HANDOFF_MIB,
             "webdav_special_packet_buffer": False,
             "raw_prefetch_owner": "native FFmpeg source layer",
-            "raw_policy": "dynamic 2X/5X/10X",
+            "raw_policy": "dynamic 1.5X low / 3X resume; fixed 128 MiB RAW capacity",
             "java_prefetch": False,
         },
     }

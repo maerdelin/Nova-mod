@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TS-only X detection for native FFmpeg 2X/5X playback thresholds.
+"""TS-only X detection for native FFmpeg 1.5X low / 3X resume thresholds.
 
 Applied AFTER native_rebuffer_patch.py and BEFORE compiling libavos.so.
 Uses credible FFmpeg duration when available (upstream discards TS duration
@@ -13,6 +13,9 @@ import argparse
 import json
 from pathlib import Path
 
+# Historical Run373 matcher only (used by transform(), not active apply()).
+# Keep this literal unchanged for compatibility; 6.6.4 calculations live in
+# native_rebuffer_patch.py DYNAMIC_POLICY and use 1.5X / 3X.
 ANCHOR = (
     "    if (nova_x > 0) {\n"
     "        s->rebuffer_low_bytes = (int)(2 * nova_x);"
