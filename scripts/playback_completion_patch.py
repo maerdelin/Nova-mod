@@ -293,20 +293,63 @@ def patch_stream_video(text: str) -> str:
         "request real audio EOF drain from player")
     return text
 
+def patch_sfdec2(text: str) -> str:
+    """Port EOF observability to official v6.6.4 sfdec2.
+
+    The actual upstream codec already owns input/output EOS, drain callback,
+    frame presentation deadline and reset on flush/seek. Do not transplant the
+    deleted sfdec1 state machine over this newer decoder.
+    """
+    required = (
+        "int input_eos;", "int output_eos;", "INT64 presentation_end_ns;",
+        "static int videosink_drained(STREAM_SINK_VIDEO *sink)",
+        "sink->drained = videosink_drained;",
+        "p->output_eos || !(f = frame_q_get(&p->locked.dec_q))",
+        "(read_out.flag & SFDEC_READ_EOS)",
+        "p->presentation_end_ns = MAX(p->presentation_end_ns,",
+        "static int videodec_drain(STREAM_DEC_VIDEO *dec, VIDEO_FRAME **in,",
+        "sfdec_send_eos(p->sfdec)", "p->input_eos = p->output_eos = 0;",
+        "dec->drain = videodec_drain;",
+        "*done = p->output_eos && !frame_q_count(&p->locked.out_q);",
+    )
+    missing = [item for item in required if item not in text]
+    if missing:
+        raise RuntimeError("official sfdec2 EOF structural mismatch: " + repr(missing))
+    if "NOVA_SFDEC_EOF_DRAIN" in text:
+        raise RuntimeError("sfdec2 EOF trace already installed")
+    return once(
+        text,
+        "else if (ret > 0) p->input_eos = 1;",
+        'else if (ret > 0) {\n'
+        '            p->input_eos = 1;\n'
+        '            serprintf("NOVA_SFDEC_EOF_DRAIN: input_eos=1\\n");\n'
+        '        }',
+        "official v6.6.4 sfdec2 EOS instrumentation")
+
+
 def apply(root: Path, report: Path | None = None) -> dict:
     sfdec = root / "Source/codec_sfdec.c"
+    sfdec2 = root / "Source/codec_sfdec2.c"
     stream = root / "Source/stream_video.c"
     audio = root / "Source/stream_audio.c"
     header = root / "Include/stream.h"
-    if not sfdec.is_file() or not stream.is_file() or not audio.is_file() or not header.is_file():
-        raise RuntimeError("expected pinned AVOS source tree")
-    sfdec.write_text(patch_sfdec(sfdec.read_text()))
+    if not stream.is_file() or not audio.is_file() or not header.is_file():
+        raise RuntimeError("AVOS playback EOF source tree is incomplete")
+    if sfdec.is_file():
+        sfdec.write_text(patch_sfdec(sfdec.read_text()))
+        codec = "legacy-sfdec1-patched"
+    elif sfdec2.is_file():
+        sfdec2.write_text(patch_sfdec2(sfdec2.read_text()))
+        codec = "official-v6.6.4-sfdec2-eos-verified"
+    else:
+        raise RuntimeError("neither legacy sfdec nor official sfdec2 exists")
     header.write_text(patch_stream_header(header.read_text()))
     audio.write_text(patch_stream_audio(audio.read_text()))
     stream.write_text(patch_stream_video(stream.read_text()))
     result = {
         "status":"PASS",
         "scope":"player-owned natural EOF completion only",
+        "decoder_impl": codec,
         "uses_existing_stream_stop":True,
         "sfdec_decoder_eos":True,
         "sfdec_sink_drain":True,

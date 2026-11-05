@@ -164,7 +164,7 @@ def main():
     g.write_json(args.reports / 'build.json', {'status': 'PASS', 'upstream': selected,
         'patch_stats': patch['stats'], 'patch_sha256': upstream.sha256_file(SPEC),
         'whole_module_replacements': 0, 'native_replacements': ['libavos.so', 'libavosjni.so'],
-        'native_rebuffer_control': 'pre-demux raw source: dynamic 2X low / 5X resume; fixed 128MiB producer wall independent of playback state',
+        'native_rebuffer_control': 'pre-demux raw source: dynamic 1.5X low / 3X resume; fixed 128MiB producer wall independent of playback state',
         'packet_handoff_mib': 24,
         'webdav_transport': 'direct native transport is applied after granular base; no StreamOverHttp playback tuning',
         'spec_bootstrapped': generated,
