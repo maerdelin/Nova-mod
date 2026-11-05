@@ -148,6 +148,8 @@ def transform(src):
     if src.count(audio_anchor) != 1:
         raise RuntimeError("ISO codec audio format hook missing or ambiguous")
     src = src.replace(audio_anchor, audio_replacement, 1)
+    if selected_anchor == ANCHOR:
+        return src.replace(ANCHOR, REPLACEMENT, 1)
     return src.replace(selected_anchor, REPLACEMENT.replace(ANCHOR, selected_anchor), 1)
 
 
