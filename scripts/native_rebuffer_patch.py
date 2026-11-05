@@ -1963,11 +1963,16 @@ def patch_startup_trace(root: Path) -> None:
         "\t// Retrieve stream information\n",
         "trace stream info start",
     )
+    # Official v6.6.4 AVOS changed _parse_format() to accept FF_PRIV only.
+    # Preserve the exact probe-completion trace on both supported signatures.
+    trace_probe_anchor = ("\tif (_parse_format(ff_p)) goto ErrorExit4;"
+                          if "\tif (_parse_format(ff_p)) goto ErrorExit4;" in text
+                          else "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;")
     text = replace_once(
         text,
-        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;",
+        trace_probe_anchor,
         '\tserprintf("NOVA_STARTUP_TRACE probe_done t=%d streams=%d\\n", atime(), ff_p->fmt->nb_streams);\n'
-        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;",
+        + trace_probe_anchor,
         "trace probe complete",
     )
     text = replace_once(
