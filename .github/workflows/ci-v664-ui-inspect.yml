@@ -1,0 +1,67 @@
+name: NOVA official v6.6.4 UI port inspection
+on:
+  push:
+    branches: ['upgrade/nova-v6.6.4-official-20261105']
+    paths: ['.github/workflows/ci-v664-ui-inspect.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch and hash-check exact official APK and apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 -o official.apk "https://github.com/nova-video-player/aos-AVP/releases/download/v6.6.4/org.courville.nova-2674303-6.6.4-20261104.0822-universal-release.apk"
+          echo "1aa2068ffec42a86efe4cee790a3f03e61194a01261405baff73ecdef1ca9ee4  official.apk" | sha256sum -c -
+          curl -fL --retry 3 -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar"
+          echo "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  apktool.jar" | sha256sum -c -
+          java -Xmx4g -jar apktool.jar d --no-debug-info --no-res -f official.apk -o decoded
+      - name: Print exact v6.6.4 smali methods needed for semantic port
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee ui-v664-methods.txt
+          from pathlib import Path
+          targets = {
+            "com/archos/mediacenter/video/browser/filebrowsing/BrowserByVideoFolder$1.smali": ("onMenuItemSelected(",),
+            "com/archos/mediacenter/video/leanback/MainFragment.smali": ("lambda$new", "loadRows(", "addRow("),
+            "com/archos/mediacenter/video/leanback/filebrowsing/ListingFragment.smali": ("openDetailsActivity(",),
+            "com/archos/mediacenter/video/leanback/network/NetworkRootFragment$1.smali": ("onItemClicked(",),
+            "com/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask.smali": ("lambda$execute", "execute("),
+            "com/archos/mediacenter/video/leanback/presenter/PosterImageCardPresenter.smali": ("bindVideo(",),
+          }
+          for rel,patterns in targets.items():
+            candidates=list(Path("decoded").glob("smali*/"+rel))
+            print("\n===CLASS",rel,"FILES",len(candidates),"===")
+            if len(candidates)!=1:
+              continue
+            s=candidates[0].read_text().splitlines()
+            print("\n".join(s[:10]))
+            methods=[]; start=None
+            for i,line in enumerate(s):
+              if line.startswith(".method"):
+                start=i
+              elif line.startswith(".end method") and start is not None:
+                signature=s[start]
+                if any(pattern in signature for pattern in patterns):
+                  methods.append((signature,start,i))
+                start=None
+            print("METHOD_COUNT",len(methods))
+            for signature,start,end in methods:
+              print("\n---METHOD",signature,"LINES",end-start+1,"---")
+              if end-start>360:
+                indices=list(range(start,min(end+1,start+180)))+list(range(max(start+180,end-160),end+1))
+              else:
+                indices=list(range(start,end+1))
+              for k in indices:
+                print(f"{k+1}: {s[k]}")
+          PY
+      - name: Upload source inspection report only
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-v664-ui-port-methods
+          path: ui-v664-methods.txt
+          retention-days: 7
