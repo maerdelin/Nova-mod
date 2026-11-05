@@ -252,6 +252,16 @@ def patch_demux(root):
                 stream, (long long)packet.pts, packet.size, n);
     }
 '''
+    # Official v6.6.4 removed legacy GET_VIDEO_TS. The decoder now
+    # uses packet-owning stream time_base via _get_video_timestamp().
+    # Retain exactly the same observational millisecond PTS semantics,
+    # without affecting audio/video routing, playback or queue behavior.
+    if "static INT64 _get_video_timestamp(" in path.read_text():
+        if snippet.count("GET_VIDEO_TS(packet.pts)") != 1:
+            raise RuntimeError("unexpected demux video PTS observation hook")
+        snippet = snippet.replace(
+            "GET_VIDEO_TS(packet.pts)",
+            "_get_video_timestamp(s, &packet, packet.pts)")
     # ISO ENOMEM inspection uses getrlimit/RLIMIT_AS/RLIMIT_DATA.
     # The upstream FFmpeg parser does not include sys/resource.h.
     include_anchor = '#include <signal.h>'
