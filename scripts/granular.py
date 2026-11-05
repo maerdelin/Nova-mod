@@ -395,7 +395,21 @@ TV_LIST_METHOD = ('onBindListViewHolder('
 TV_VIEW_OLD = 'Lqx0;->view:Landroid/view/View;'
 TV_VIEW_NEW = 'Lpx0;->view:Landroid/view/View;'
 
-def port_v66_tv_list_view(rule, changes):
+TV_VIEW_V664 = 'Lsx0;->view:Landroid/view/View;'
+
+def resolved_tv_view(index):
+    # The exact official 6.6.4 R8 rename is sx0; 6.6.2 used px0.
+    # Never write an unresolved field into the installed APK.
+    present = [v for v in (TV_VIEW_NEW, TV_VIEW_V664)
+               if v.split('->', 1)[0] in index and
+               member_available(v.split('->', 1)[0], 'view:Landroid/view/View;', index, {})]
+    if not present:
+        raise Conflict('TV list v6.6.2 target px0.view is missing; v6.6.4 sx0.view also missing')
+    if len(present) != 1:
+        raise Conflict('TV list ViewHolder field descriptor ambiguous: ' + repr(present))
+    return present[0]
+
+def port_v66_tv_list_view(rule, changes, target_view=TV_VIEW_NEW):
     """Map precisely the one inserted field access; reject future ambiguity."""
     if (rule['class'], rule['method']) != (TV_LIST_CLASS, TV_LIST_METHOD):
         return changes
@@ -406,7 +420,7 @@ def port_v66_tv_list_view(rule, changes):
         raise Conflict('TV list holder legacy field count changed: '+str(n))
     for h in fixed:
         for part in ('before','after','left','right','after_left','after_right'):
-            h[part] = [s.replace(TV_VIEW_OLD, TV_VIEW_NEW) for s in h[part]]
+            h[part] = [s.replace(TV_VIEW_OLD, target_view) for s in h[part]]
     return fixed
 
 def audit_tv_list_view(root: Path):
@@ -418,11 +432,10 @@ def audit_tv_list_view(root: Path):
     if TV_LIST_METHOD not in methods:
         raise Conflict('Missing TV onBindListViewHolder method')
     body = methods[TV_LIST_METHOD][0]
-    good = 'iget-object v3, p1, ' + TV_VIEW_NEW
+    view = resolved_tv_view(index)
+    good = 'iget-object v3, p1, ' + view
     if body.count(good) != 1 or TV_VIEW_OLD in body:
         raise Conflict('TV list ViewHolder field is stale/ambiguous in final smali')
-    if 'Lpx0;' not in index or not member_available('Lpx0;', 'view:Landroid/view/View;', index, {}):
-        raise Conflict('TV list v6.6.2 target px0.view is missing')
     return {'status':'PASS', 'scope':'decoded TV video list binding',
             'required_instruction': good, 'old_field_refs':0,
             'target_field_exists':True}
@@ -501,7 +514,8 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if register_line(original) not in (rule['registers_before'],rule['registers_after']):
                 raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
             projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
-            changes=port_v66_tv_list_view(rule, rule['hunks'])
+            view_target = resolved_tv_view(index) if (rule['class'], rule['method']) == (TV_LIST_CLASS, TV_LIST_METHOD) else TV_VIEW_NEW
+            changes=port_v66_tv_list_view(rule, rule['hunks'], target_view=view_target)
             # The verified official v6.6.4 MainFragment moved the row-selection
             # callback from lambda$new$2 to lambda$new$0. The method identity
             # remap above also needs to port both hunk header anchors; otherwise
@@ -590,7 +604,7 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             check_labels(restored)
             replacement=materialize(restored,symbols)
             if rule['class'] == TV_LIST_CLASS and rule['method'] == TV_LIST_METHOD:
-                if replacement.count('iget-object v3, p1, ' + TV_VIEW_NEW) != 1 or TV_VIEW_OLD in replacement:
+                if replacement.count('iget-object v3, p1, ' + view_target) != 1 or TV_VIEW_OLD in replacement:
                     raise Conflict('TV list ViewHolder field migration lost in materialize')
             pending[path]=text[:match.start()]+replacement+text[match.end():]
             statuses.append({'class':rule['class'],'method':rule['method'],'status':status,'hunks':len(rule['hunks'])})
@@ -614,6 +628,16 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         ('Lp41;', 'setHeaderPresenter(Lm41;)V'): ('Lo41;', 'setHeaderPresenter(Ll41;)V'),
         ('Lqx0;', 'view:Landroid/view/View;'): ('Lpx0;', 'view:Landroid/view/View;'),
     }
+    # Official 6.6.4 uses a third, verified R8 descriptor set. Resolve
+    # this exact group only when all three target declarations exist.
+    v664_deps = {
+        ('Ln4;', 'a(Ljava/lang/Object;Lhs1;)V'): ('Ln4;', 'a(Ljava/lang/Object;Lms1;)V'),
+        ('Lp41;', 'setHeaderPresenter(Lm41;)V'): ('Lr41;', 'setHeaderPresenter(Lo41;)V'),
+        ('Lqx0;', 'view:Landroid/view/View;'): ('Lsx0;', 'view:Landroid/view/View;'),
+    }
+    if all(c in index and member_available(c, m, index, pending) for c, m in v664_deps.values()):
+        dep_renames.update(v664_deps)
+        print('NOVA_V664_VERIFIED_R8_DEPENDENCY_REMAP=PASS', flush=True)
     for dep in patch.get('dependencies',[]):
         c,m=dep_renames.get((dep['class'],dep['member']),(dep['class'],dep['member']))
         if c not in index or not member_available(c,m,index,pending):
