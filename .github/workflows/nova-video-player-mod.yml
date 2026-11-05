@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     env:
-      NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/fix/global-logs-1200-source-only-review-20261104' || github.ref == 'refs/heads/Always-new' || github.ref == 'refs/heads/upgrade/nova-v6.6.4-official-20261105' || github.ref == 'refs/heads/main')) && 'v6.6.2' || 'none' }}
+      NOVA_1054_EXACT_1053_BASELINE: ${{ github.ref == 'refs/heads/upgrade/nova-v6.6.4-official-20261105' && 'none' || 'v6.6.2' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
