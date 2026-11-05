@@ -724,7 +724,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check_upstream.py assert-current --apk inputs/official.apk --metadata inputs/upstream.json
 
-      - name: Publish Always-new Logs checkbox signed APK (only after Android 11/14 pass)
+      - name: Validate Always-new Logs checkbox signed APK (only after Android 11/14 pass) (APK retained in Actions only)
         if: (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/Always-new') && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -753,13 +753,9 @@ jobs:
           echo "OFF_ISO_UI=SKIPPED_BY_USER MKV_BENCHMARK=SKIPPED_BY_USER"
           publish_title="NOVA Run $GITHUB_RUN_NUMBER - signed APK, 2 checks await manual acceptance"
           tag="nova-alwaysnew-global-logs-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "$publish_title" \
-            --notes "NOVA signed test APK based on 1198 and 1199 expanded 13-family diagnostic source gates. TWO tests explicitly excluded by user, status SKIPPED_BY_USER (NOT PASS): OFF ISO percent/spinner UI and historical 993 MKV startup comparison driven by diagnostic logcat markers. All other native, signing, Android 11/14 install, global logs and independent playback checks must pass. User will manually verify excluded items on physical device."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish official v6.6.4 full-port candidate only after all mandatory gates PASS
+      - name: Validate official v6.6.4 full-port candidate only after all mandatory gates PASS (APK retained in Actions only)
         if: github.ref == 'refs/heads/upgrade/nova-v6.6.4-official-20261105' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -784,11 +780,7 @@ jobs:
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
           tag="nova-v664-full-mod-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "NOVA v6.6.4 official source port - Run $GITHUB_RUN_NUMBER" \
-            --notes "Official v6.6.4 universal APK digest and all exact official release-manifest source commits verified. All prior mod patch and Android 11/14 runtime gates required. Two historical checks remain SKIPPED_BY_USER, NOT PASS: OFF ISO spinner/percent UI and historical #993 MKV startup comparison; require physical-device verification. Test-only build; signing key compatibility with installed APK must be checked."
-          echo "V664_RELEASE=https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
       - name: Persist extracted granular specification on the test branch
         if: github.ref == 'refs/heads/ci/granular-patches-20261015'
@@ -834,7 +826,7 @@ jobs:
           compression-level: 0
 
       - name: Publish validated Release and keep latest three
-        if: github.ref == 'refs/heads/main' && github.event_name != 'schedule' && !contains(github.event.head_commit.message, '[baseline-only]')
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[baseline-only]')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -852,12 +844,16 @@ jobs:
           PY
           tag="nova-mod-granular-${UPSTREAM_RELEASE_ID}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Nova Video Player mod - ${UPSTREAM_TAG} granular" --notes-file dist/RELEASE_NOTES.md
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false) | [.published_at, .tag_name] | @tsv' | sort -r | tail -n +4 | cut -f2- | while IFS= read -r old; do
-            [[ -z "$old" || "$old" == "$tag" ]] && continue
-            case "$old" in nova-mod-*|v9.8.2-cloud-*) gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag ;; esac
-          done
+          # Keep the newest three published Releases across the repository.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .published_at != null) | [.published_at, .tag_name] | @tsv' \
+            | LC_ALL=C sort -r | tail -n +4 | cut -f2- | while IFS= read -r old; do
+              [[ -z "$old" || "$old" == "$tag" ]] && continue
+              echo "Delete old Release: $old"
+              gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            done
 
-      - name: Publish tested Test pre-release APK for direct downloads
+      - name: Validate tested Test pre-release APK for direct downloads (APK retained in Actions only)
         if: github.ref == 'refs/heads/Test' && github.event_name != 'schedule'
         shell: bash
         env:
@@ -875,15 +871,9 @@ jobs:
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
           tag="nova-run-${GITHUB_RUN_NUMBER}-iso-index-1p5x3x"
-          gh release create "$tag" \
-            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Nova Test Run ${GITHUB_RUN_NUMBER}: read-only ISO index + 1.5X/3X" \
-            --prerelease \
-            --notes "Built from pinned Test sources. Android 11 and Android 14 clean install and both launcher checks passed; APK v1/v2 signature and ZIP alignment verified. Single-clip Blu-ray ISO CLPI lookup is non-mutating with FFmpeg fallback. Network ISO playback on the user's Amlogic device remains to be field-tested. Different signing certificates cannot update an installed previous APK. Back up settings before uninstalling."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish isolated startup-only validated APK
+      - name: Validate isolated startup-only validated APK (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/main-startup-seek-only-20261028' && github.event_name == 'push'
         shell: bash
         env:
@@ -903,15 +893,9 @@ jobs:
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
           tag="nova-main-startup-seek-only-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" \
-            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Nova main-based startup zero Seek fix - Run ${GITHUB_RUN_NUMBER}" \
-            --prerelease \
-            --notes "Independent main-based startup-only change; source-side zero Seek(0) suppression and initial audio selection. Mid-playback audio switching, manual seeks, decoders, and transport are unchanged. Android 11 and 14 checks passed. Official v6.5.5 SHA-256 baseline. Full-size real-device files still require field testing; test key may differ from installed app."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1054 isolated validated pre-release APK
+      - name: Validate NOVA 1054 isolated validated pre-release APK (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' && github.event_name == 'push'
         shell: bash
         env:
@@ -933,15 +917,9 @@ jobs:
             grep -aq 'NOVA_1054_DIRECT_INIT_FAIL' "native-src/native/avos/libs/$abi/libavos.so"
           done
           tag="nova-1054-reopen-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" \
-            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1054 - sequential playback resource recovery - Run $GITHUB_RUN_NUMBER" \
-            --prerelease \
-            --notes "Rebuild of exact official NOVA 1053 v6.6.2 APK (SHA256 2ec057186f781bafde2d628edb09771994e2a0b15c6bff2661b5169ba24ca764), intentionally not the incompatible new official v6.6.3. Isolated derivative of immutable NOVA 1053 baseline. Keep one idle virtual Shared42 128MiB warehouse for sequential reopen; release physical media pages while idle; fix partial Direct source open cleanup; report precise RAW/AVIO init failure stage and errno. Android 11 and Android 14 emulator launch acceptance and signed APK smoke required before this pre-release. User Run632 failed before Direct source open; its exact errno was not present in 1053 log, so 1054 addresses verified source defects and requires user-device repeated-playback acceptance. Do not overwrite baseline/1053 or Always-new."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1064 ISO recovery candidate
+      - name: Validate NOVA 1064 ISO recovery candidate (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' && github.event_name == 'push'
         shell: bash
         env:
@@ -963,15 +941,9 @@ jobs:
             grep -aq 'NOVA_1064_ISO_DEMUX_ENOMEM' "native-src/native/avos/libs/$abi/libavos.so"
           done
           tag="nova-1064-iso-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" \
-            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1064 ISO memory and range liveness" \
-            --prerelease \
-            --notes "Isolated derivative of verified 1063 (52563d13), official v6.6.2 pinned. ISO-only: reduce 32-bit huge single-clip replay from 24MiB to 8MiB; free replay past first verified frame and prefix; detect an 8s unproductive Range and retry at exact cursor once with fresh TCP; retain byte-exact serial fallback; capture ISO-only FFmpeg ENOMEM VM diagnostics and curl pause-return. Does not alter MKV/MP4 data paths. Signed APK Android 11/14 emulator gates passed; 87GB UHD Amlogic device regression remains required. The trigger inside the previous unreturned native call is not yet proven."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1073 ISO first-cause blackbox APK
+      - name: Validate NOVA 1073 ISO first-cause blackbox APK (APK retained in Actions only)
         if: github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' && github.event_name == 'push'
         shell: bash
         env:
@@ -993,15 +965,9 @@ jobs:
             grep -aq 'NOVA_1073_ISO_FIRST_FRAME_READY' "work/transport-native/$abi/libnova_transport.so"
           done
           tag="nova-1073-iso-blackbox-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" \
-            dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1073 ISO first-cause blackbox - Run $GITHUB_RUN_NUMBER" \
-            --prerelease \
-            --notes "Based on verified #1072; official v6.6.2 pinned. Fixed 8192-slot process-lifetime blackbox, last-120s history freeze on first anomaly, independent 1Hz resource and thread-stage monitor, ptr-map gap estimate, fd/thread/VM samples, actual ISO RAW/demux and hardware CBE allocation-event bridge; conditional /proc kernel stack and debuggerd pointer; fix ISO first-frame replay-release condition. Collect full logcat from process launch. A failure inside prebuilt FFmpeg malloc cannot reveal exact allocator site without platform backtrace; this is a forensic candidate, not a proven ISO playback root fix. Android 11/14 emulator launch gates passed; 87GiB ISO real-device repeated playback not verified."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1074 subtitle EGL async exit candidate
+      - name: Validate NOVA 1074 subtitle EGL async exit candidate (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' && github.event_name == 'push'
         shell: bash
         env:
@@ -1025,14 +991,9 @@ jobs:
             grep -aq 'NOVA_1074_EGL_RETIRE_SYNC_FALLBACK' "$reg"
           done
           tag="nova-1074-subtitle-egl-exit-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1074 UI exit subtitle EGL teardown - Run $GITHUB_RUN_NUMBER" \
-            --prerelease \
-            --notes "Isolated from validated NOVA 1073 c99b5ed9. Move last-reference subtitle EGL destroy/join from Android UI thread into process-lifetime bounded worker; retain registry ownership and JNI listener lifetime, synchronous safe fallback on worker/queue failure. Log queue, worker, EGL join and completion, preserving ISO startup memory blackbox. Android 11 and 14 clean install+2 launches verified in CI; physical-device quick-back black-screen reproduction NOT claimed."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1088 MKV fast keyframe preview candidate
+      - name: Validate NOVA 1088 MKV fast keyframe preview candidate (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' && github.event_name == 'push'
         shell: bash
         env:
@@ -1057,14 +1018,9 @@ jobs:
             grep -aq 'NOVA_MKV_FAST_PREVIEW_V1' "$reg"
           done
           tag="nova-1088-mkv-fast-preview-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1088 fast MKV SEEK preview - Run $GITHUB_RUN_NUMBER" \
-            --prerelease \
-            --notes "Based exactly on signed Run 1088 (ee3dcc52), retaining 1074 subtitle EGL and prior ISO/WebDAV fixes. MKV seeks bypass 30-second NOVA_PRECISE_SEEK wait and restore upstream AVOS 10-frame/1-second keyframe preview; MP4/TS/ISO behavior unchanged. Faster first-frame priority can show the nearest keyframe before precise playback catches up. CI emulator tests are not a physical 4K HEVC 80GB WebDAV benchmark."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1097 spinner-triggered MKV release-only seek APK
+      - name: Validate NOVA 1097 spinner-triggered MKV release-only seek APK (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' && github.event_name == 'push'
         shell: bash
         env:
@@ -1086,14 +1042,9 @@ jobs:
             grep -aq 'NOVA_MKV_403_SEEK_RECOVERED' "work/transport-native/$abi/libnova_transport.so"
           done
           tag="nova-1097-spinner-seek-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1097 actual-spinner-triggered MKV DPAD SEEK fallback - Run $GITHUB_RUN_NUMBER" \
-            --prerelease \
-            --notes "Actual PlayerActivity progress SHOW event during a held DPAD MKV seek activates target-only updates, immediately hides the spinner, suppresses further repeated seeks while held, and submits one final seek on key-up. MKVs without that UI event preserve existing live-frame preview; file length and HTTP403 never classify UI behavior. MP4, TS, ISO, local files and slider seeks unchanged. Signed Android 11/14 emulator install and smoke tests required. The user's problematic compilation MKV is not available in CI and requires device acceptance."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
-      - name: Publish NOVA 1119 64-bit resumed video file-size UI APK
+      - name: Validate NOVA 1119 64-bit resumed video file-size UI APK (APK retained in Actions only)
         if: github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' && github.event_name == 'push'
         shell: bash
         env:
@@ -1114,12 +1065,7 @@ jobs:
           PY
           (cd dist && sha256sum -c SHA256SUMS.txt)
           tag="nova-1119-resumed-size-$GITHUB_RUN_NUMBER"
-          gh release create "$tag" dist/Nova_Video_Player_mod_SIGNED.apk dist/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "NOVA 1119 - 64-bit file size remains visible after resume - Run $GITHUB_RUN_NUMBER" \
-            --prerelease \
-            --notes "Based on validated NOVA 1097 / signed #1118. Original generic VideoCursorMapper used 32-bit Cursor.getInt for SIZE while Movie/Episode used getLong; sizes above 2GiB sign-extended negative and all three UI binders hid the label for <=0. This release uses Cursor.getLong/move-result-wide for ordinary indexed Video, and TV poster cards permit plain indexed video sizes while keeping Movie/Episode descriptions. Phone/tablet list, TV poster card and TV horizontal list retain file size with playback progress. No AVOS decoder, transport, WebDAV, seek, startup overlay or progress bar behavior changed. Original APK smali patched/reassembled and Android11/14 install+smoke verified. User's exact 2.43GiB WebDAV list still requires device acceptance."
-          echo "DIRECT_APK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/Nova_Video_Player_mod_SIGNED.apk"
+          echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
       - name: Upload diagnostics only - no intermediate APKs
         if: always() && !cancelled()
