@@ -522,7 +522,12 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;' and rule['method'].startswith('openDetailsActivity('):
                 import copy
                 changes=copy.deepcopy(changes)
-                mapping=[('Lqx0;', 'Lpx0;'), ('Lhs1;', 'Ljs1;')]
+                # The release's obfuscator changes typed ViewHolder and
+                # ActivityOptions descriptors without changing this callback's
+                # purpose. Match each against this exact decoded method.
+                holder = 'Lsx0;' if 'Lsx0;->view:Landroid/view/View;' in text else 'Lpx0;'
+                options = 'Lms1;' if 'Lms1;->' in text else 'Ljs1;'
+                mapping=[('Lqx0;', holder), ('Lhs1;', options)]
                 for h in changes:
                     for field in ('before','after','left','right','after_left','after_right'):
                         h[field]=[__import__('functools').reduce(lambda line,p:line.replace(*p),mapping,item)
@@ -530,9 +535,10 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$1;' and rule['method'].startswith('onItemClicked('):
                 import copy
                 changes=copy.deepcopy(changes)
+                callback = 'Lms1;' if 'Lms1;->' in text else 'Ljs1;'
                 for h in changes:
                     for field in ('before','after','left','right','after_left','after_right'):
-                        h[field]=[line.replace('Lhs1;', 'Ljs1;') for line in h[field]]
+                        h[field]=[line.replace('Lhs1;', callback) for line in h[field]]
             # R8 remapped Leanback presenter descriptors in official v6.6.2.
             # Port all affected instruction/context tokens for this one method;
             # retain the 6 original UI edits and their overlap checks.
