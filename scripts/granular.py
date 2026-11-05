@@ -466,7 +466,8 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                         method_name=candidates[0]
                         print('NOVA_V66_NETWORK_TYPED_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
                 if method_name not in methods:
-                    if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and method_name.startswith('lambda$new
+                    print('NOVA_V664_MISSING_METHOD '+rule['class']+' '+method_name,flush=True)
+                    print('NOVA_V664_METHOD_CANDIDATES '+repr([x for x in methods if x.startswith('lambda')]),flush=True)
                     raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
             expected_class_header=rule['class_header']
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/presenter/PosterImageCardPresenter;':
