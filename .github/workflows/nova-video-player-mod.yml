@@ -16,7 +16,6 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[purge-run-history]')
     env:
       NOVA_1054_EXACT_1053_BASELINE: ${{ (github.ref == 'refs/heads/fix/1054-warehouse-reopen-20261101' || github.ref == 'refs/heads/fix/1064-iso-memory-liveness-20261102' || github.ref == 'refs/heads/diag/1073-iso-first-cause-blackbox-20261102' || github.ref == 'refs/heads/fix/1074-subtitle-egl-ui-exit-20261102' || github.ref == 'refs/heads/fix/1088-mkv-fast-preview-20261102' || github.ref == 'refs/heads/fix/1097-mkv-403-release-only-seek-20261103' || github.ref == 'refs/heads/fix/1119-progress-size-all-three-20261103' || (github.ref == 'refs/heads/feat/always-new-global-logs-toggle-20261103' || github.ref == 'refs/heads/fix/global-logs-complete-gating-20261103' || github.ref == 'refs/heads/fix/global-logs-1200-source-only-review-20261104' || github.ref == 'refs/heads/Always-new' || github.ref == 'refs/heads/main')) && 'v6.6.2' || 'none' }}
     runs-on: ubuntu-24.04
@@ -1071,80 +1070,3 @@ jobs:
             inputs/upstream.json
           retention-days: 14
           if-no-files-found: ignore
-
-  purge_run_history_once:
-    name: One-time cleanup of old Nova Video Player mod workflow runs
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[purge-run-history]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    permissions:
-      actions: write
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: Delete only historical runs of canonical workflow and restore YAML
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os, subprocess, json, time, sys
-          repo=os.environ['GITHUB_REPOSITORY']
-          self_run=int(os.environ['GITHUB_RUN_ID'])
-          expected_head=os.environ['GITHUB_SHA']
-          workflow_id=385080648
-          source_commit='99bcbb504b51b8ca567ce75b2c836ef828e22d0e'
-          file_path='.github/workflows/nova-video-player-mod.yml'
-          def gh(method,path,body=None,allow_failure=False):
-              cmd=['gh','api','--method',method,'repos/'+repo+'/'+path]
-              if body is not None:
-                  cmd+=['--input','-']
-              p=subprocess.run(cmd,input=json.dumps(body) if body is not None else None,text=True,capture_output=True)
-              if p.returncode and not allow_failure: raise RuntimeError('API '+method+' '+path+' failed: '+p.stderr[-800:])
-              return (json.loads(p.stdout) if p.stdout.strip() else {}) if p.returncode==0 else None
-          run=gh('GET','actions/runs/'+str(self_run))
-          assert run['workflow_id']==workflow_id and run['head_branch']=='main',run
-          assert repo=='maerdelin/Nova-mod'
-          print('Verified canonical workflow and repository. Self run:',self_run,flush=True)
-          deleted=set()
-          start=time.monotonic()
-          def cleanup():
-              while True:
-                  page=gh('GET',f'actions/workflows/{workflow_id}/runs?per_page=100&page=1')
-                  items=page.get('workflow_runs',[])
-                  eligible=[x for x in items if x['id']!=self_run]
-                  if not eligible:
-                      print('NO OLD CANONICAL RUNS REMAIN; current maintenance run is excluded.',flush=True)
-                      return
-                  changes=0
-                  for x in eligible:
-                      rid=x['id']
-                      assert x['workflow_id']==workflow_id
-                      if x['status']!='completed':
-                          p=gh('POST',f'actions/runs/{rid}/cancel',allow_failure=True)
-                          print('Cancel requested for unfinished run',rid,flush=True)
-                          time.sleep(1)
-                          continue
-                      gh('DELETE',f'actions/runs/{rid}')
-                      deleted.add(rid)
-                      changes+=1
-                      if len(deleted)%25==0: print('Deleted',len(deleted),'old runs',flush=True)
-                      time.sleep(0.8)
-                  if not changes:
-                      if time.monotonic()-start>3600: raise RuntimeError('Some active runs did not stop within an hour')
-                      time.sleep(10)
-          def restore():
-              original=gh('GET',f'contents/{file_path}?ref={source_commit}')
-              assert original['sha']=='311a4dd7d5e27ba447dce2c19e27e2f6efce0549'
-              ref=gh('GET','git/ref/heads/main')
-              assert ref['object']['sha']==expected_head, 'main changed during purge; refuse to overwrite'
-              live=gh('GET',f'contents/{file_path}?ref=main')
-              payload={'message':'chore(actions): restore sole workflow after one-off run history purge [skip ci]', 'content':original['content'].replace('\n',''), 'sha':live['sha'],'branch':'main'}
-              res=gh('PUT','contents/'+file_path,payload)
-              print('Restored original single workflow; commit:',res.get('commit',{}).get('sha'),flush=True)
-          try:
-              cleanup()
-          finally:
-              restore()
-          print('Purged',len(deleted),'past canonical workflow runs; maintenance run remains until it completes.',flush=True)
-          PY
