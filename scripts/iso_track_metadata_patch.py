@@ -10,6 +10,7 @@ from pathlib import Path
 
 MARKER = "NOVA_ISO_TRACK_APPLIED_V1"
 ANCHOR = "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;"
+OFFICIAL_V664_ANCHOR = "\tif (_parse_format(ff_p)) goto ErrorExit4;"
 
 REPLACEMENT = r'''    /* NOVA_ISO_TRACK_LANG_V1: CLPI language -> FFmpeg AVStream metadata.
      * Run only for Blu-ray ISO proxy after FFmpeg discovers MPEG-TS PIDs,
@@ -102,8 +103,13 @@ REPLACEMENT = r'''    /* NOVA_ISO_TRACK_LANG_V1: CLPI language -> FFmpeg AVStrea
 
 
 def transform(src):
-    if src.count(ANCHOR) != 1:
+    # Official v6.6.4 uses _parse_format(FF_PRIV *), not the old
+    # _parse_format(etype, FF_PRIV *) entry point. The ISO metadata bridge
+    # still runs after stream discovery and before AVOS track enumeration.
+    anchors = [a for a in (ANCHOR, OFFICIAL_V664_ANCHOR) if src.count(a)]
+    if len(anchors) != 1 or src.count(anchors[0]) != 1:
         raise RuntimeError("ISO metadata hook missing or ambiguous")
+    selected_anchor = anchors[0]
     if MARKER in src:
         raise RuntimeError("ISO metadata hook already applied")
     if "nova_transport_iso_track_language" in src:
@@ -142,7 +148,7 @@ def transform(src):
     if src.count(audio_anchor) != 1:
         raise RuntimeError("ISO codec audio format hook missing or ambiguous")
     src = src.replace(audio_anchor, audio_replacement, 1)
-    return src.replace(ANCHOR, REPLACEMENT, 1)
+    return src.replace(selected_anchor, REPLACEMENT.replace(ANCHOR, selected_anchor), 1)
 
 
 def main():
