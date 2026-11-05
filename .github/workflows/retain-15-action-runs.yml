@@ -1,0 +1,82 @@
+name: Keep last 15 Actions runs
+
+on:
+  workflow_run:
+    workflows:
+      - "Nova Video Player mod"
+      - "NOVA official v6.6.4 UI port inspection"
+    types: [completed]
+  schedule:
+    - cron: "37 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: retain-last-15-actions-runs
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune completed runs beyond newest 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Keep only the 15 newest repository-wide Actions records
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          CURRENT_RUN: ${{ github.run_id }}
+          RETAIN: "15"
+          CLEANUP_PATH: ".github/workflows/retain-15-action-runs.yml"
+        run: |
+          set -euo pipefail
+
+          list_runs() {
+            gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${REPO}/actions/runs?per_page=100" \
+              --jq '.workflow_runs[] | [.created_at, (.id | tostring), .status, .path] | @tsv'
+          }
+
+          # Completed runs of this housekeeping workflow are disposable. Removing
+          # them first prevents periodic housekeeping from crowding out APK builds.
+          all_runs="${RUNNER_TEMP}/all-actions-runs.tsv"
+          list_runs > "${all_runs}"
+          while IFS=$'\t' read -r created_at run_id status workflow_path; do
+            if [[ "${workflow_path}" == "${CLEANUP_PATH}" &&
+                  "${run_id}" != "${CURRENT_RUN}" &&
+                  "${status}" == "completed" ]]; then
+              echo "Remove previous housekeeping run ${run_id}"
+              gh api -X DELETE "repos/${REPO}/actions/runs/${run_id}" >/dev/null
+            fi
+          done < "${all_runs}"
+
+          # Snapshot all runs before deleting: deleting during pagination would
+          # otherwise shift pages and accidentally skip older records.
+          list_runs | LC_ALL=C sort -r > "${all_runs}"
+          total=$(wc -l < "${all_runs}")
+          echo "Repository has ${total} workflow runs; retaining newest ${RETAIN}."
+
+          rank=0
+          deleted=0
+          postponed=0
+          while IFS=$'\t' read -r created_at run_id status workflow_path; do
+            rank=$((rank + 1))
+            if (( rank <= RETAIN )); then
+              continue
+            fi
+            if [[ "${run_id}" == "${CURRENT_RUN}" || "${status}" != "completed" ]]; then
+              echo "Preserve active run ${run_id} (status: ${status}, rank: ${rank})"
+              postponed=$((postponed + 1))
+              continue
+            fi
+            echo "Delete old completed run ${run_id} (rank: ${rank}, created: ${created_at})"
+            gh api -X DELETE "repos/${REPO}/actions/runs/${run_id}" >/dev/null
+            deleted=$((deleted + 1))
+          done < "${all_runs}"
+
+          echo "Deleted ${deleted} old runs; deferred ${postponed} active runs."
+          echo "If more than ${RETAIN} runs remain due to active builds, the next cleanup will retry."
