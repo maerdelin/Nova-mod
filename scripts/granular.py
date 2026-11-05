@@ -502,6 +502,25 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                 raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
             projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
             changes=port_v66_tv_list_view(rule, rule['hunks'])
+            # The verified official v6.6.4 MainFragment moved the row-selection
+            # callback from lambda$new$2 to lambda$new$0. The method identity
+            # remap above also needs to port both hunk header anchors; otherwise
+            # the unchanged instruction body is rejected as missing context.
+            if (rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;'
+                    and rule['method'] == 'lambda$new$2()V'
+                    and method_name == 'lambda$new$0()V'):
+                import copy
+                changes = copy.deepcopy(changes)
+                old_header = '.method private synthetic lambda$new$2()V'
+                new_header = '.method private synthetic lambda$new$0()V'
+                remapped_headers = 0
+                for h in changes:
+                    for part in ('before', 'after', 'left', 'right', 'after_left', 'after_right'):
+                        remapped_headers += h[part].count(old_header)
+                        h[part] = [new_header if line == old_header else line for line in h[part]]
+                if remapped_headers != 2:
+                    raise Conflict('Unexpected row-selection lambda hunk anchor count: ' + str(remapped_headers))
+                print('NOVA_V664_VERIFIED_ROW_SELECTION_HUNK_HEADER_REMAP ' + str(remapped_headers), flush=True)
             # v6.6 R8 changed this callback argument's obfuscated interface name
             # from Lhs1; to Ljs1;. The entire old onMenuItemSelected body is
             # removed by the existing patch. Require the new descriptor in the
