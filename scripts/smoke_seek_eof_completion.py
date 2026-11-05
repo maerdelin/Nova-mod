@@ -108,7 +108,7 @@ def main():
             # The last ~6s is a near-tail playback/EOF test without risking
             # an already-past-EOF 5s jump. No hidden test API or ISO path.
             duration_ms = 42000
-            safe_min = int(duration_ms * .85)
+            safe_min = int(duration_ms * .83)
             safe_max = int(duration_ms * .95)
             seeks=[]
             final_marker=''
