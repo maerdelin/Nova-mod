@@ -1,0 +1,103 @@
+name: NOVA Tianyi Cloud test APK
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['tianyi/**', '.github/workflows/tianyi-build.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download validated NOVA v6.6.4 Run1236
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p inputs tools work dist reports
+          gh run download 42169925006 --repo "$GITHUB_REPOSITORY" --name Nova-installable-signed-1236 --dir inputs
+          test -s inputs/Nova_Video_Player_mod_SIGNED.apk
+      - name: Install pinned tools and decode baseline
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  tools/apktool.jar' | sha256sum -c -
+          curl -fL --retry 3 -o tools/zxing-core.jar https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
+          java -Xmx5g -jar tools/apktool.jar d -f --no-debug-info inputs/Nova_Video_Player_mod_SIGNED.apk -o work/decode
+          python3 tianyi/patch_apk.py --decoded work/decode
+          java -Xmx5g -jar tools/apktool.jar b work/decode -o work/ui-unsigned.apk
+      - name: Compile Tianyi driver and QR encoder into Android DEX
+        run: |
+          set -euo pipefail
+          android_jar="$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -1)"
+          d8="$(find "$ANDROID_HOME/build-tools" -type f -name d8 | sort -V | tail -1)"
+          test -s "$android_jar" && test -x "$d8"
+          mkdir -p work/tianyi-classes work/tianyi-dex
+          javac -source 8 -target 8 -cp "$android_jar:tools/zxing-core.jar" -d work/tianyi-classes $(find tianyi/src -name '*.java' | sort)
+          jar cf work/tianyi-classes.jar -C work/tianyi-classes .
+          "$d8" --min-api 23 --lib "$android_jar" --output work/tianyi-dex work/tianyi-classes.jar tools/zxing-core.jar
+          python3 - <<'PY'
+          import re,zipfile
+          from pathlib import Path
+          dex=Path('work/tianyi-dex/classes.dex').read_bytes()
+          with zipfile.ZipFile('work/ui-unsigned.apk') as src:
+            names=src.namelist()
+            nums=[int(m.group(1) or '1') for n in names if (m:=re.fullmatch(r'classes(\d*)\.dex',n))]
+            assert nums and dex.startswith(b'dex\n')
+            name=f'classes{max(nums)+1}.dex'
+            assert name not in names
+            with zipfile.ZipFile('work/tianyi-unsigned.apk','w',allowZip64=False) as dst:
+              for i in src.infolist():
+                if i.filename.upper().startswith('META-INF/') and i.filename.upper().endswith(('.RSA','.SF','.DSA')): continue
+                dst.writestr(i,src.read(i))
+              dst.writestr(name,dex,compress_type=zipfile.ZIP_DEFLATED)
+          print('Integrated',name)
+          PY
+          unzip -tq work/tianyi-unsigned.apk
+      - name: Sign and verify installable Tianyi test APK
+        env:
+          NOVA_KEYSTORE_BASE64: \${{ secrets.NOVA_KEYSTORE_BASE64 }}
+          NOVA_STORE_PASSWORD: \${{ secrets.NOVA_STORE_PASSWORD }}
+          NOVA_KEY_ALIAS: \${{ secrets.NOVA_KEY_ALIAS }}
+          NOVA_KEY_PASSWORD: \${{ secrets.NOVA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          ALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -1)"
+          STORE="$RUNNER_TEMP/tianyi.jks"
+          trap 'rm -f "$STORE"' EXIT
+          if [[ -n "$NOVA_KEYSTORE_BASE64" && -n "$NOVA_STORE_PASSWORD" && -n "$NOVA_KEY_ALIAS" && -n "$NOVA_KEY_PASSWORD" ]]; then
+            printf '%s' "$NOVA_KEYSTORE_BASE64" | base64 -d > "$STORE"
+            SIGN_MODE=configured-key
+          elif [[ -z "$NOVA_KEYSTORE_BASE64" && -z "$NOVA_STORE_PASSWORD" && -z "$NOVA_KEY_ALIAS" && -z "$NOVA_KEY_PASSWORD" ]]; then
+            NOVA_STORE_PASSWORD="$(openssl rand -hex 16)"
+            NOVA_KEY_PASSWORD="$NOVA_STORE_PASSWORD"
+            NOVA_KEY_ALIAS=nova-tianyi-test
+            keytool -genkeypair -noprompt -keystore "$STORE" -alias "$NOVA_KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 3650 -dname 'CN=NOVA Tianyi TEST' -storepass "$NOVA_STORE_PASSWORD" -keypass "$NOVA_KEY_PASSWORD"
+            SIGN_MODE=temporary-test-key
+          else
+            echo 'Incomplete signing secrets' && exit 1
+          fi
+          "$ALIGN" -f -p 4 work/tianyi-unsigned.apk work/aligned.apk
+          export NOVA_STORE_PASSWORD NOVA_KEY_PASSWORD
+          "$SIGNER" sign --min-sdk-version 23 --v4-signing-enabled false --ks "$STORE" --ks-key-alias "$NOVA_KEY_ALIAS" --ks-pass env:NOVA_STORE_PASSWORD --key-pass env:NOVA_KEY_PASSWORD --out dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk work/aligned.apk
+          "$SIGNER" verify --verbose --print-certs dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk > reports/signature.txt
+          "$ALIGN" -c -p 4 dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
+          unzip -tq dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
+          echo "$SIGN_MODE" > reports/signing_mode.txt
+          (cd dist && sha256sum NOVA_Tianyi_Cloud_TEST_SIGNED.apk > SHA256SUMS.txt)
+      - name: Publish test APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-Tianyi-Cloud-TEST-SIGNED
+          path: |
+            dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
+            dist/SHA256SUMS.txt
+            reports/signature.txt
+            reports/signing_mode.txt
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
