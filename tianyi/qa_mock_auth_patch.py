@@ -92,8 +92,8 @@ print("NOVA_TIANYI_QA_BACKEND_MOCK=ENABLED_IN_TEST_DEX_ONLY")
 q=p.with_name("TianyiUi.java")
 u=q.read_text(encoding="utf-8")
 replacements={
-    '            Uri uri=Uri.parse(path);':
-    '            Uri uri=Uri.parse(path);\n            android.util.Log.i("NOVA_TIANYI_QA","TITLE_MAPPING scheme="+uri.getScheme()+" host="+uri.getHost()+" port="+uri.getPort()+" oldLen="+(oldName==null?-1:oldName.length()));',
+    '            if(isTianyiUri(path))':
+    '            android.util.Log.i("NOVA_TIANYI_QA","TITLE_MAPPING ownPath="+TianyiCloud.isOwnShortcutLabel(path)+" ownLabel="+TianyiCloud.isOwnShortcutLabel(oldName));\n            if(isTianyiUri(path))',
     '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);':
     '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVED");',
     '        dismissAuthorizedDialog(fragment);':
