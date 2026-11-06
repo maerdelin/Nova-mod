@@ -1,0 +1,15 @@
+name: Tianyi OpenList 189CloudPC QR authentication probe
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['tianyi/qr_api_probe.py','.github/workflows/tianyi-qr-api-probe.yml']
+permissions:
+  contents: read
+jobs:
+  live-provider-qr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify QR challenge without user credentials
+        run: python3 tianyi/qr_api_probe.py
