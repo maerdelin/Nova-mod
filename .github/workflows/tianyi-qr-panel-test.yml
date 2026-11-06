@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Validate QR UI navigation Bash syntax
+        run: bash -n .github/scripts/tianyi-qr-ui-test.sh
       - name: Download specific Tianyi test APK
         env:
           GH_TOKEN: ${{ github.token }}
