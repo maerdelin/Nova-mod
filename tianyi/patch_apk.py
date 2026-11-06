@@ -228,14 +228,14 @@ def patch_application_restore(root):
         name=manifest.attrib["package"]+"."+name
     p=unique(root,name.replace(".","/")+".smali")
     t=p.read_text()
-    m=re.search(r"(?ms)^\\.method[^\\n]* onCreate\\(\\)V\\n.*?^\\.end method",t)
+    m=re.search(r"(?ms)^\.method[^\n]* onCreate\(\)V\n.*?^\.end method",t)
     if not m:
         # This optimized NOVA build may inherit Application.onCreate
         # unchanged. Install a normal override that keeps the parent's
         # initialization and schedules the saved DAV restore afterwards.
         if "onCreate()V" in t:
             raise RuntimeError("Unsupported custom Application.onCreate format")
-        parent=re.search(r"(?m)^\\.super (L[^\\s]+;)$",t)
+        parent=re.search(r"(?m)^\.super (L[^\s]+;)$",t)
         if not parent:
             raise RuntimeError("Could not identify Application superclass")
         method=f"""
@@ -247,7 +247,7 @@ def patch_application_restore(root):
     return-void
 .end method
 """
-        p.write_text(t+"\\n"+method)
+        p.write_text(t+"\n"+method)
         print("NOVA_TIANYI_APP_COLD_START_RESTORE=OVERRIDE",name)
         return
     original=m.group()
