@@ -39,37 +39,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: false
-          script: |
-            bash <<'NOVA_SMOKE_BASH'
-            set -euo pipefail
-            mkdir -p reports
-            adb logcat -c
-            trap 'adb logcat -d -v threadtime > reports/logcat.txt 2>/dev/null || true' EXIT
-            adb install -r testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk | tee reports/install.txt
-            adb shell monkey -p org.courville.nova -c android.intent.category.LAUNCHER 1
-            sleep 8
-            adb shell pidof org.courville.nova | tee reports/phone-pid.txt || true
-            if ! grep -q '[0-9]' reports/phone-pid.txt; then
-              echo 'ANDROID11_PHONE_COLD_START=FAIL' | tee reports/result.txt
-              adb logcat -d -v threadtime > reports/logcat.txt
-              exit 1
-            fi
-            adb shell am force-stop org.courville.nova
-            adb shell monkey -p org.courville.nova -c android.intent.category.LEANBACK_LAUNCHER 1
-            sleep 8
-            adb shell pidof org.courville.nova | tee reports/tv-pid.txt || true
-            adb logcat -d -v threadtime > reports/logcat.txt
-            grep -E -A 18 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError|UnsatisfiedLinkError|Unable to create application' reports/logcat.txt | tail -n 120 | tee reports/fatal-summary.txt || true
-            if grep -q 'FATAL EXCEPTION' reports/logcat.txt; then
-              echo 'ANDROID11_TIANYI_RUNTIME=FAIL' | tee reports/result.txt
-              exit 1
-            fi
-            if ! adb shell pidof org.courville.nova | grep -q '[0-9]'; then
-              echo 'ANDROID11_TIANYI_PROCESS_NOT_RUNNING=FAIL' | tee reports/result.txt
-              exit 1
-            fi
-            echo "NOVA_TIANYI_ANDROID11_INSTALL_START=PASS" | tee reports/result.txt
-            NOVA_SMOKE_BASH
+          script: bash .github/scripts/tianyi-smoke-android.sh
       - name: Upload Android 11 smoke report
         if: always()
         uses: actions/upload-artifact@v4
