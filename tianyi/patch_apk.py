@@ -172,7 +172,20 @@ def patch_network_on_resume(root):
     print("NOVA_TIANYI_NETWORK_REFRESH_CONSTRUCTOR=VERIFIED",ctor)
     if "novaTianyiRefreshShortcuts" in t:
         raise RuntimeError("Already injected network refresh")
-    p.write_text(t[:m.start()]+body+t[m.end():]+"\n"+refresh)
+    patched=t[:m.start()]+body+t[m.end():]+"\n"+refresh
+    # Some optimized MOD navigation flows retain NetworkRootFragment without
+    # dispatching its original onResume method. Also register from onCreate,
+    # which happens once per live network page and needs no extra registers.
+    oncreate=re.search(r"(?ms)^\\.method public onCreate\\(Landroid/os/Bundle;\\)V\\n.*?^\\.end method",patched)
+    if not oncreate: raise RuntimeError("NetworkRootFragment.onCreate missing")
+    created=oncreate.group()
+    exits=created.count("    return-void")
+    if not 1 <= exits <= 5:
+        raise RuntimeError(f"Unexpected network onCreate returns: {exits}")
+    created=created.replace("    return-void",
+        f"    invoke-static {{p0}}, {UI}->registerNetworkPage(Ljava/lang/Object;)V\\n    return-void")
+    patched=patched[:oncreate.start()]+created+patched[oncreate.end():]
+    p.write_text(patched)
 
 def main():
     p=argparse.ArgumentParser()
