@@ -141,6 +141,11 @@ public final class TianyiCloud {
                 if(uuid.isEmpty())throw new IOException("QR challenge unavailable");
                 TianyiDiag.event("QR_CREATE","OK",0,diagStart,0L);
                 listener.onCode(uuid);
+                // A real scan must not succeed only to lose rotating tokens:
+                // verify secure token persistence before waiting for approval.
+                phase[0]="SECURE_STORE";
+                store.verifyCrypto();
+                TianyiDiag.event("SECURE_STORE","OK",0);
                 final long until=System.currentTimeMillis()+180000L;
                 while(System.currentTimeMillis()<until && Boolean.TRUE.equals(alive.call())) {
                     Thread.sleep(2000);
