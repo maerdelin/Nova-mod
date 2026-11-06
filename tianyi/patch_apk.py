@@ -112,10 +112,15 @@ def patch_application(root):
     m=re.search(r"(?ms)^\.method (?:public|protected) onCreate\(\)V\n.*?^\.end method",t)
     if not m:raise RuntimeError("CustomApplication.onCreate absent")
     body=m.group()
-    body=once(body,"    return-void",
-              "    # NOVA_TIANYI_COLD_BOOT_V1: resume local loopback DAV from encrypted token state.\n"
-              f"    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V\n"
-              "    return-void", "application startup")
+    # The optimized NOVA v6.6.4 app has multiple legitimate exit points.
+    # Instrument all return sites to avoid skipping startup on some paths.
+    exits=body.count("    return-void")
+    if not 1 <= exits <= 5:
+        raise RuntimeError(f"Unexpected CustomApplication.onCreate return paths: {exits}")
+    body=body.replace("    return-void",
+        "    # NOVA_TIANYI_COLD_BOOT_V1\n"
+        f"    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V\n"
+        "    return-void")
     p.write_text(t[:m.start()]+body+t[m.end():])
 
 def main():
