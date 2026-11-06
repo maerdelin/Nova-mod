@@ -57,14 +57,42 @@ public final class TianyiCloud {
     }
     public static void startIfSaved(Context c) {
         TianyiCloud cloud=get(c);
-        cloud.workers.execute(() -> {
-            try {
-                if(!cloud.store.read().refreshToken.isEmpty()) {
-                    cloud.startServer();
-                    TianyiDiag.event("DAV_RESTORE","OK",0);
-                }
-            }catch(Exception ignored){TianyiDiag.event("DAV_RESTORE","FAIL",-1);}
-        });
+        // Bind loopback immediately when opening the Network page so a
+        // restored shortcut is never clickable before the server exists.
+        // No network call or AndroidKeyStore operation is needed for binding.
+        try {
+            if(!cloud.store.existingPathKey().isEmpty()) {
+                cloud.startServer();
+                TianyiDiag.event("DAV_RESTORE","OK",0);
+            }
+        }catch(Exception ignored){
+            TianyiDiag.event("DAV_RESTORE","FAIL",-1);
+        }
+    }
+
+    private void resetIfShortcutWasDeleted() {
+        try {
+            String path=store.existingPathKey();
+            if(path.isEmpty())return;
+            String uri="webdav://127.0.0.1:"+PORT+"/"+path+"/";
+            Class<?> cls=Class.forName("com.archos.mediacenter.video.browser.ShortcutDb");
+            @SuppressWarnings({"rawtypes","unchecked"})
+            Object db=Enum.valueOf((Class<? extends Enum>)cls,"STATIC");
+            long found=((Number)cls.getMethod("isShortcut",Context.class,String.class)
+                    .invoke(db,app,uri)).longValue();
+            if(found>=0)return;
+            // The only Tianyi shortcut was deleted. Never silently reuse
+            // its previous tokens or local capability in a new QR session.
+            store.resetAfterShortcutDeletion();
+            sessionKey="";
+            sessionSecret="";
+            nextRefresh=0L;
+            cookies.getCookieStore().removeAll();
+            TianyiDiag.event("ACCOUNT_RESET","DELETED",0);
+        }catch(Exception ignored) {
+            // A transient database read failure must not revoke credentials.
+            TianyiDiag.event("ACCOUNT_RESET","CHECK_FAIL",-1);
+        }
     }
     public void startServer() throws Exception {
         synchronized(this) {
@@ -111,6 +139,8 @@ public final class TianyiCloud {
             TianyiDiag.event("QR_START","BEGIN",0);
             final String[] phase=new String[]{"FINGER"};
             try {
+                resetIfShortcutWasDeleted();
+                cookies.getCookieStore().removeAll();
                 String finger=store.getOrCreateFinger();
                 String ts=Long.toString(System.currentTimeMillis());
                 Map<String,String> start=map("appId",APP_ID,"clientType",CLIENT_TYPE,"returnURL",RETURN_URL,"timeStamp",ts);
