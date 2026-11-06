@@ -54,6 +54,7 @@ screenshot "protocol-list"
 tap_match '天翼云盘'
 sleep 20
 screenshot "tianyi-panel"
+adb logcat -d -v threadtime > reports/logcat.txt
 if grep -Eq 'Attempt to get length of null array|FATAL EXCEPTION|NoClassDefFoundError|VerifyError' reports/logcat.txt; then
   echo "NOVA_TIANYI_QR_TEST=FAIL" | tee reports/result.txt
   exit 1
