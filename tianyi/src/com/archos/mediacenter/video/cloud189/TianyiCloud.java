@@ -42,6 +42,9 @@ public final class TianyiCloud {
     private final CookieManager cookies=new CookieManager(null,CookiePolicy.ACCEPT_ALL);
     private final SecureRandom rng=new SecureRandom();
     private final Object sessionLock=new Object();
+    private final ScheduledExecutorService keepAlive=Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t=new Thread(r,"nova-tianyi-refresh");t.setDaemon(true);return t;
+    });
     private volatile String sessionKey="", sessionSecret="";
     private volatile long nextRefresh=0L;
     private volatile boolean started=false;
@@ -75,6 +78,17 @@ public final class TianyiCloud {
             },"nova-tianyi-dav");
             acceptor.setDaemon(true);
             acceptor.start();
+            // OpenList's PC driver periodically pings its authenticated session.
+            // Android can suspend the timer; every DAV request can also refresh.
+            keepAlive.scheduleWithFixedDelay(() -> {
+                try {
+                    if(!store.read().refreshToken.isEmpty())
+                        apiGet("/keepUserSession.action",new LinkedHashMap<String,String>());
+                } catch(Exception e) {
+                    nextRefresh=0;
+                    try{ensureSession();}catch(Exception ignored){}
+                }
+            },5,5,TimeUnit.MINUTES);
         }
     }
     public String rootUri() throws Exception {
@@ -125,7 +139,7 @@ public final class TianyiCloud {
                         String redirect=status.optString("redirectUrl","");
                         if(redirect.isEmpty())throw new IOException("Missing QR authorization redirect");
                         JSONObject token=json(request("POST",API+"/getSessionForPC.action",
-                                suffix(map("redirectURL",redirect,"X-Request-ID",UUID.randomUUID().toString())),
+                                suffix(map("redirectURL",redirect,"returnType","JSON")),
                                 null,null,true).body);
                         String access=token.optString("accessToken",""),refresh=token.optString("refreshToken","");
                         if(access.isEmpty()||refresh.isEmpty())throw new IOException("QR token exchange failed");
@@ -164,7 +178,7 @@ public final class TianyiCloud {
             JSONObject data=null;
             if(!saved.accessToken.isEmpty()) {
                 data=json(request("GET",API+"/getSessionForPC.action",
-                        suffix(map("appId",APP_ID,"accessToken",saved.accessToken)),
+                        suffix(map("appId",APP_ID,"accessToken",saved.accessToken,"returnType","JSON")),
                         null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
             }
             if(data==null || data.optString("sessionKey","").isEmpty()){
@@ -175,7 +189,7 @@ public final class TianyiCloud {
                 if(access.isEmpty()||refresh.isEmpty())throw new IOException("Please re-scan Tianyi QR code");
                 store.saveTokens(access,refresh);
                 data=json(request("GET",API+"/getSessionForPC.action",
-                        suffix(map("appId",APP_ID,"accessToken",access)),
+                        suffix(map("appId",APP_ID,"accessToken",access,"returnType","JSON")),
                         null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
             }
             setSession(data);
@@ -367,33 +381,69 @@ public final class TianyiCloud {
         String body,url;
         Reply(String b,String u){body=b;url=u;}
     }
-    private Reply request(String method,String url,Map<String,String> params,Map<String,String> form,Map<String,String> headers,boolean redirect)throws Exception {
+    private Reply request(String method,String url,Map<String,String> params,
+                          Map<String,String> form,Map<String,String> headers,
+                          boolean redirect)throws Exception {
+        return request0(method,url,params,form,headers,redirect,0);
+    }
+    private Reply request0(String method,String url,Map<String,String> params,
+                           Map<String,String> form,Map<String,String> headers,
+                           boolean redirect,int hops)throws Exception {
+        if(hops>8)throw new IOException("Too many Tianyi login redirects");
         String q=query(params);
         URL target=new URL(url+(q.isEmpty()?"":(url.contains("?")?"&":"?")+q));
+        if(!"https".equalsIgnoreCase(target.getProtocol()))
+            throw new IOException("Insecure Tianyi authentication URL");
         HttpURLConnection c=(HttpURLConnection)target.openConnection();
-        c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setInstanceFollowRedirects(redirect);
+        c.setConnectTimeout(12000);
+        c.setReadTimeout(12000);
+        c.setInstanceFollowRedirects(false); // capture cookies from EVERY redirect
         c.setRequestMethod(method);
         c.setRequestProperty("Accept","application/json;charset=UTF-8");
         c.setRequestProperty("User-Agent","Mozilla/5.0");
-        if(headers!=null)for(Map.Entry<String,String> e:headers.entrySet())if(!e.getKey().equals("X-Request-ID")||!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),e.getValue());
-        // Preserve server-issued DEVICEID and anti-CSRF cookies across QR exchanges.
-        try{Map<String,List<String>> sent=cookies.get(target.toURI(),Collections.emptyMap());for(Map.Entry<String,List<String>> e:sent.entrySet())if(e.getKey()!=null&&!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),joinCookie(e.getValue()));}catch(Exception ignored){}
+        if(headers!=null)for(Map.Entry<String,String> e:headers.entrySet())
+            c.setRequestProperty(e.getKey(),e.getValue());
+        Map<String,List<String>> sent=cookies.get(target.toURI(),Collections.emptyMap());
+        for(Map.Entry<String,List<String>> e:sent.entrySet())
+            if(e.getKey()!=null&&!e.getValue().isEmpty())
+                c.setRequestProperty(e.getKey(),joinCookie(e.getValue()));
         if(form!=null){
-            byte[] data=query(form).getBytes(StandardCharsets.UTF_8);c.setDoOutput(true);
+            byte[] data=query(form).getBytes(StandardCharsets.UTF_8);
+            c.setDoOutput(true);
             c.setRequestProperty("Content-Type","application/x-www-form-urlencoded;charset=UTF-8");
             try(OutputStream o=c.getOutputStream()){o.write(data);}
         }
         int status=c.getResponseCode();
-        try{cookies.put(target.toURI(),c.getHeaderFields());}catch(Exception ignored){}
+        cookies.put(target.toURI(),c.getHeaderFields());
+        if(status>=300&&status<400&&redirect){
+            String location=c.getHeaderField("Location");
+            c.disconnect();
+            if(location==null||location.isEmpty())
+                throw new IOException("Redirect location missing");
+            URL to=new URL(target,location);
+            String host=to.getHost().toLowerCase(Locale.US);
+            if(!"https".equalsIgnoreCase(to.getProtocol())
+                  ||!(host.equals("cloud.189.cn")||host.equals("open.e.189.cn")
+                     ||host.endsWith(".cloud.189.cn")||host.endsWith(".e.189.cn")))
+                throw new IOException("Login redirected outside trusted Tianyi domains");
+            boolean retain=(status==307||status==308);
+            return request0(retain?method:"GET",to.toString(),null,
+                            retain?form:null,headers,true,hops+1);
+        }
         String finalUrl=c.getURL().toString();
         InputStream stream=status>=400?c.getErrorStream():c.getInputStream();
         String body="";
         if(stream!=null)try(InputStream in=stream){
-            ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n;
-            while((n=in.read(buf))!=-1){out.write(buf,0,n);if(out.size()>4*1024*1024)throw new IOException("Oversize API response");}
+            ByteArrayOutputStream out=new ByteArrayOutputStream();
+            byte[] buf=new byte[8192];int n;
+            while((n=in.read(buf))!=-1){
+                out.write(buf,0,n);
+                if(out.size()>4*1024*1024)throw new IOException("Oversize API response");
+            }
             body=out.toString("UTF-8");
         }finally{c.disconnect();}
         if(status>=400)throw new IOException("Tianyi service HTTP "+status);
         return new Reply(body,finalUrl);
     }
+
 }
