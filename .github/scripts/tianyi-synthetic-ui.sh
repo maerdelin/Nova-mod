@@ -59,7 +59,7 @@ check_log() {
   }
 }
 enter_network() {
-  tap '^Network\\s*$'
+  tap '^Network\s*$'
   sleep 5
 }
 
@@ -107,10 +107,10 @@ echo 'MOCK_DAV_ROOT_AFTER_APP_RESTART=PASS' | tee reports/app-restart.txt
 adb reboot
 adb wait-for-device
 for i in $(seq 1 90); do
-  if [ "$(adb shell getprop sys.boot_completed | tr -d '\\r')" = 1 ]; then break; fi
+  if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; then break; fi
   sleep 2
 done
-test "$(adb shell getprop sys.boot_completed | tr -d '\\r')" = 1
+test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 7
 enter_network
