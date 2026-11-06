@@ -91,7 +91,13 @@ replacements={
     '        dismissAuthorizedDialog(fragment);':
     '        dismissAuthorizedDialog(fragment);\n        android.util.Log.i("NOVA_TIANYI_QA","DIALOG_DISMISS_CALLED");',
     '        page.getClass().getMethod("novaTianyiRefreshShortcuts").invoke(page);':
-    '        page.getClass().getMethod("novaTianyiRefreshShortcuts").invoke(page);\n        android.util.Log.i("NOVA_TIANYI_QA","NETWORK_REFRESH_INVOKED");',
+    '        android.util.Log.i("NOVA_TIANYI_QA","NETWORK_REFRESH_PAGE="+page.getClass().getName());\n        page.getClass().getMethod("novaTianyiRefreshShortcuts").invoke(page);\n        android.util.Log.i("NOVA_TIANYI_QA","NETWORK_REFRESH_INVOKED");',
+    '        if(page==null) {':
+    '        if(page==null) {\n            android.util.Log.i("NOVA_TIANYI_QA","NETWORK_REFRESH_NO_PAGE");',
+    '        activeNetworkPage=new WeakReference<>(page);':
+    '        activeNetworkPage=new WeakReference<>(page);\n        android.util.Log.i("NOVA_TIANYI_QA","NETWORK_PAGE_REGISTERED="+page.getClass().getName());',
+    '            catch(Exception ignored) { TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1); }':
+    '            catch(Exception ignored) { TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1); android.util.Log.e("NOVA_TIANYI_QA","NETWORK_REFRESH_FAILED",ignored); }',
 }
 for old,new in replacements.items():
     if u.count(old)!=1: raise SystemExit("QA UI anchor drift: "+old)
