@@ -281,10 +281,18 @@ public final class TianyiCloud {
             TianyiStore.Saved saved=store.read();
             if(saved.refreshToken.isEmpty())throw new IOException("Please scan the Tianyi QR code");
             JSONObject data=null;
+            // On a cold start the cached access token may have expired.
+            // The Tianyi API can report that as HTTP 401/403 (throwing) OR
+            // JSON without sessionKey. Both must fall back to the encrypted,
+            // persisted refresh token rather than leaving the shortcut dead.
             if(!saved.accessToken.isEmpty()) {
-                data=json(request("GET",API+"/getSessionForPC.action",
-                        suffix(map("appId",APP_ID,"accessToken",saved.accessToken,"returnType","JSON")),
-                        null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
+                try {
+                    data=json(request("GET",API+"/getSessionForPC.action",
+                            suffix(map("appId",APP_ID,"accessToken",saved.accessToken,"returnType","JSON")),
+                            null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
+                }catch(IOException expiredAccess) {
+                    TianyiDiag.event("SESSION_ACCESS","REFRESH_REQUIRED",0);
+                }
             }
             if(data==null || data.optString("sessionKey","").isEmpty()){
                 JSONObject refreshed=json(request("POST",AUTH+"/api/oauth2/refreshToken.do",
@@ -298,8 +306,13 @@ public final class TianyiCloud {
                         suffix(map("appId",APP_ID,"accessToken",access,"returnType","JSON")),
                         null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
             }
+            // Do not accept an obsolete in-memory session if the newly
+            // acquired response did not include both signed-session fields.
+            sessionKey="";
+            sessionSecret="";
+            nextRefresh=0L;
             setSession(data);
-            if(sessionKey.isEmpty()) {
+            if(sessionKey.isEmpty() || sessionSecret.isEmpty()) {
                 TianyiDiag.event("SESSION","FAIL",-1,diagStart,0L);
                 throw new IOException("Cannot initialize Tianyi session");
             }
