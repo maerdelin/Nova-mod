@@ -271,6 +271,20 @@ public final class TianyiUi {
      * Saves the verified local DAV URI in NOVA's existing ShortcutDb.
      * A previously saved URI is success (idempotent, no duplicate shortcut).
      */
+    /** Only NOVA's private loopback cloud URI gets a friendly list title.
+     * All other existing network shortcut labels pass through unchanged. */
+    public static String displayCloudShortcutName(String path,String oldName) {
+        if(path==null)return oldName;
+        try {
+            Uri uri=Uri.parse(path);
+            if("webdav".equals(uri.getScheme())
+                    && "127.0.0.1".equals(uri.getHost())
+                    && uri.getPort()==27989)
+                return "天翼云盘";
+        }catch(Exception ignored){}
+        return oldName;
+    }
+
     public static boolean installCloudShortcut(Context ctx,String rawUri) throws Exception {
         Uri uri=Uri.parse(rawUri);
         if(!"webdav".equals(uri.getScheme())
