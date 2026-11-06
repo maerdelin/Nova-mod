@@ -124,6 +124,7 @@ public final class TianyiCloud {
                     lt=match(initial.body,"lt = \"([^\"]+)\"");
                     reqId=match(initial.body,"reqId = \"([^\"]+)\"");
                     paramId=match(initial.body,"paramId = \"([^\"]+)\"");
+                    ref=AUTH+"/api/logbox/separate/web/index.html?appId="+APP_ID+"&lt="+URLEncoder.encode(lt,"UTF-8")+"&reqId="+URLEncoder.encode(reqId,"UTF-8");
                 }
                 if(lt.isEmpty()||reqId.isEmpty())throw new IOException("Login challenge unavailable");
                 Map<String,String> headers=map("REQID",reqId,"lt",lt,"user-finger",finger,"Referer",ref);
@@ -159,7 +160,7 @@ public final class TianyiCloud {
                         phase[0]="GET_SESSION";
                         JSONObject token=json(request("POST",API+"/getSessionForPC.action",
                                 suffix(map("redirectURL",redirect,"returnType","JSON")),
-                                null,null,true).body);
+                                null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
                         String access=token.optString("accessToken",""),refresh=token.optString("refreshToken","");
                         if(access.isEmpty()||refresh.isEmpty())throw new IOException("QR token exchange failed");
                         phase[0]="TOKEN_SAVE";
