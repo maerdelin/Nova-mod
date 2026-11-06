@@ -210,6 +210,33 @@ def patch_shortcut_display(root):
     p.write_text(t[:start]+method+t[end:])
     print("NOVA_TIANYI_SHORTCUT_NAME=PATCHED")
 
+def patch_shared_shortcut_getname(root):
+    # The original phone database Shortcut object has a separate mUri
+    # and mName. Apply the Tianyi display alias in getName() itself so
+    # callers cannot accidentally show its random DAV capability path.
+    p=unique(root,"com/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut.smali")
+    t=p.read_text()
+    start=t.index(".method public getName()Ljava/lang/String;")
+    end=t.index(".end method",start)
+    body=t[start:end]
+    old="""    .locals 0
+
+    iget-object p0, p0, Lcom/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut;->mName:Ljava/lang/String;
+
+    return-object p0
+"""
+    new=f"""    .locals 2
+
+    iget-object v0, p0, Lcom/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut;->mName:Ljava/lang/String;
+    iget-object v1, p0, Lcom/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut;->mUri:Ljava/lang/String;
+    invoke-static {{v1, v0}}, {UI}->displayCloudShortcutName(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v0
+    return-object v0
+"""
+    body=once(body,old,new,"phone shared shortcut getName")
+    p.write_text(t[:start]+body+t[end:])
+    print("NOVA_TIANYI_PHONE_GETNAME=PATCHED")
+
 def patch_phone_shortcut_title(root):
     # The PHONE screen does not use GenericNetworkShortcutMapper. Its actual
     # RecyclerView adapter reads ShortcutDbAdapter$Shortcut.getName(), which
@@ -333,6 +360,7 @@ def main():
     patch_shortcut_display(a.decoded)
     patch_shortcut_model(a.decoded)
     patch_phone_shortcut_title(a.decoded)
+    patch_shared_shortcut_getname(a.decoded)
     patch_application_restore(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
