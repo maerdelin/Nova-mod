@@ -80,24 +80,42 @@ check_log() {
   }
 }
 enter_network() {
-  # A fresh emulator can show NOVA onboarding or a system launcher briefly.
-  # Retry rather than declaring a Tianyi functional failure prematurely.
+  # New Android emulator boots can surface SystemUI ANR or the launcher while
+  # NOVA is still settling. The network view is ready only when its real
+  # BROWSE A NETWORK SHARE row is visible.
   local attempt
-  for attempt in $(seq 1 15); do
-    dump_ui
+  for attempt in $(seq 1 18); do
+    if ! dump_ui; then
+      sleep 4
+      continue
+    fi
+    if grep -Eqi 'System UI isn.t responding|System UI is not responding' reports/current-ui.xml; then
+      echo "EMULATOR_SYSTEMUI_ANR_RECOVERY=$attempt"
+      tap '^Wait$' || true
+      sleep 8
+      adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null || true
+      sleep 4
+      continue
+    fi
+    if grep -Fqi 'BROWSE A NETWORK SHARE' reports/current-ui.xml; then
+      return 0
+    fi
     if tap '^Network\s*$'; then
       sleep 5
-      return 0
+      if dump_ui && grep -Fqi 'BROWSE A NETWORK SHARE' reports/current-ui.xml; then
+        return 0
+      fi
+      sleep 4
+      continue
     fi
     adb shell input keyevent KEYCODE_BACK || true
     sleep 3
   done
   capture 'network-navigation-timeout' || true
   adb logcat -d -v threadtime > reports/logcat-network-navigation.txt || true
-  echo 'NOVA_NETWORK_NAVIGATION_TIMEOUT_AFTER_15_ATTEMPTS' >&2
+  echo 'NOVA_NETWORK_NAVIGATION_TIMEOUT_AFTER_18_ATTEMPTS' >&2
   return 1
-}
-adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
+}adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 9
 enter_network
 tap 'browse|add server|network connection|服务器|添加'
@@ -171,8 +189,13 @@ for i in $(seq 1 90); do
   sleep 2
 done
 test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+# sys.boot_completed can become 1 before SystemUI, SurfaceFlinger and
+# the launcher are responsive on hosted Android emulators.
+adb shell input keyevent KEYCODE_WAKEUP || true
+adb shell wm dismiss-keyguard || true
+sleep 18
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
-sleep 7
+sleep 9
 enter_network
 capture 'after-system-reboot'
 assert_text reports/after-system-reboot.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
