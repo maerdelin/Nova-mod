@@ -763,7 +763,7 @@ jobs:
           echo "Main-only Release policy: validation complete; signed APK is available in Actions artifacts."
 
       - name: Validate official v6.6.4 full-port candidate only after all mandatory gates PASS (APK retained in Actions only)
-        if: (github.ref == 'refs/heads/upgrade/nova-v6.6.4-official-20261105' || github.ref == 'refs/heads/Always-new' || github.ref == 'refs/heads/fix/393-seek-exit-anr-20261106' || github.ref == 'refs/heads/main') && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/upgrade/nova-v6.6.4-official-20261105' || github.ref == 'refs/heads/Always-new' || github.ref == 'refs/heads/fix/393-seek-exit-anr-20261106' || github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -833,7 +833,7 @@ jobs:
           compression-level: 0
 
       - name: Publish validated Release and keep latest three
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, '[baseline-only]')
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[baseline-only]')))
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
