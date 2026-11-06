@@ -139,7 +139,7 @@ sleep 5
 dump_ui
 # Dismiss NOVA's one-time network-folder tutorial before DAV assertions.
 if grep -qi 'Press this menu item to integrate the content' reports/current-ui.xml; then
-  tap '^OK\s*
+  tap 'OK'
   sleep 3
 fi
 capture 'root-before-restart'
