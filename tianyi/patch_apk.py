@@ -187,6 +187,29 @@ def patch_network_on_resume(root):
     patched=patched[:oncreate.start()]+created+patched[oncreate.end():]
     p.write_text(patched)
 
+def patch_shortcut_display(root):
+    # NOVA's optimized GenericNetworkShortcutMapper derives the visible title
+    # from Uri.getPath(), ignoring ShortcutDb's friendly shortcut_name column.
+    # Replace only the displayed title of the reserved localhost Tianyi URI;
+    # never change the path used to open the shortcut or any other protocol.
+    p=unique(root,"com/archos/mediacenter/video/leanback/adapter/GenericNetworkShortcutMapper.smali")
+    t=p.read_text()
+    head=".method public bind(Landroid/database/Cursor;)Ljava/lang/Object;"
+    start=t.index(head)
+    end=t.index(".end method",start)
+    method=t[start:end]
+    anchor="    move-result-object v5\\n\\n    move-object v6, v4"
+    injection=f"""    move-result-object v5
+
+    # NOVA_TIANYI_SHORTCUT_NAME: map only the private local DAV shortcut.
+    invoke-static {{v4, v5}}, {UI}->displayCloudShortcutName(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v5
+
+    move-object v6, v4"""
+    method=once(method,anchor,injection,"cloud shortcut name mapping")
+    p.write_text(t[:start]+method+t[end:])
+    print("NOVA_TIANYI_SHORTCUT_NAME=PATCHED")
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
@@ -196,6 +219,7 @@ def main():
     patch_ok_listener(a.decoded)
     patch_dialog(a.decoded)
     patch_network_on_resume(a.decoded)
+    patch_shortcut_display(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
 if __name__=="__main__":
