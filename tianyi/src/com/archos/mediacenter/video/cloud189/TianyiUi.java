@@ -336,23 +336,12 @@ public final class TianyiUi {
         }
         // Invalidate pending QR callbacks before any asynchronous list reload.
         guard.incrementAndGet();
-        // Keep the working QR dialog dismissal behavior; refresh after it
-        // closes so the original network page can update its adapter.
+        // The dialog dismissal already works on the user's device.
+        // Reload ONCE after its transition instead of immediately loading
+        // and cancelling that task 500 ms later (which loses adapter results).
         dismissAuthorizedDialog(fragment);
-        boolean refreshScheduled=false;
-        try {
-            refreshScheduled=refreshNetworkPage();
-        }catch(Exception refreshError) {
-            TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);
-        }
-        MAIN.postDelayed(()->{
-            try { refreshNetworkPage(); }
-            catch(Exception ignored){TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1);}
-        },500);
-        Toast.makeText(activity,
-                refreshScheduled?"天翼云盘已添加到网络存储":
-                                 "天翼云盘已保存，网络列表稍后更新",
-                Toast.LENGTH_SHORT).show();
+        scheduleNetworkRefresh(0);
+        Toast.makeText(activity,"天翼云盘已保存，正在更新网络列表",Toast.LENGTH_SHORT).show();
     }
 
     private static void dismissAuthorizedDialog(Object fragment) {
@@ -377,6 +366,17 @@ public final class TianyiUi {
             }
         }catch(Exception ignored){}
         TianyiDiag.event("QR_DIALOG","FAIL",-1);
+    }
+
+    private static void scheduleNetworkRefresh(int attempt) {
+        MAIN.postDelayed(()->{
+            boolean ready=false;
+            try { ready=refreshNetworkPage(); }
+            catch(Exception ignored) { TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1); }
+            // Retry only if the page/loader was not available. Do NOT cancel
+            // an already-running NetworkShortcutsLoaderTask with another load.
+            if(!ready && attempt<5) scheduleNetworkRefresh(attempt+1);
+        },attempt==0?350:400);
     }
 
     private static boolean refreshNetworkPage() throws Exception {
