@@ -3,6 +3,8 @@ set -euo pipefail
 mkdir -p reports
 APK="testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk"
 PACKAGE="org.courville.nova"
+API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+echo "NOVA_TIANYI_EMULATOR_API=${API}"
 
 adb logcat -c || true
 collect_logs() {
@@ -22,15 +24,16 @@ adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 | tee repor
 sleep 8
 adb shell pidof "$PACKAGE" > reports/phone-pid.txt || true
 if ! grep -q '[0-9]' reports/phone-pid.txt; then
-  echo "ANDROID11_PHONE_COLD_START=FAIL" | tee reports/result.txt
+  echo "ANDROID${API}_PHONE_COLD_START=FAIL" | tee reports/result.txt
   exit 1
 fi
 collect_logs
 if grep -E -q 'FATAL EXCEPTION|Fatal signal.*org.courville.nova' reports/logcat.txt; then
-  echo "ANDROID11_PHONE_FATAL=FAIL" | tee reports/result.txt
+  echo "ANDROID${API}_PHONE_FATAL=FAIL" | tee reports/result.txt
   exit 1
 fi
-echo "NOVA_TIANYI_PHONE_COLD_BOOT_PASS"
+adb exec-out screencap -p > reports/phone-coldboot.png || true
+ echo "NOVA_TIANYI_PHONE_COLD_BOOT_PASS"
 
 echo "NOVA_TIANYI_PHONE_RESTART_BEGIN"
 adb shell am force-stop "$PACKAGE"
@@ -38,7 +41,7 @@ adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 | tee repor
 sleep 8
 adb shell pidof "$PACKAGE" > reports/phone-restart-pid.txt || true
 if ! grep -q '[0-9]' reports/phone-restart-pid.txt; then
-  echo "ANDROID11_PHONE_RESTART=FAIL" | tee reports/result.txt
+  echo "ANDROID${API}_PHONE_RESTART=FAIL" | tee reports/result.txt
   exit 1
 fi
 echo "NOVA_TIANYI_PHONE_RESTART_PASS"
@@ -49,12 +52,13 @@ adb shell monkey -p "$PACKAGE" -c android.intent.category.LEANBACK_LAUNCHER 1 | 
 sleep 8
 adb shell pidof "$PACKAGE" > reports/leanback-pid.txt || true
 if ! grep -q '[0-9]' reports/leanback-pid.txt; then
-  echo "ANDROID11_LEANBACK=FAIL" | tee reports/result.txt
+  echo "ANDROID${API}_LEANBACK=FAIL" | tee reports/result.txt
   exit 1
 fi
 collect_logs
 if grep -q 'FATAL EXCEPTION' reports/logcat.txt; then
-  echo "ANDROID11_RUNTIME_FATAL=FAIL" | tee reports/result.txt
+  echo "ANDROID${API}_RUNTIME_FATAL=FAIL" | tee reports/result.txt
   exit 1
 fi
-echo "ANDROID11_TIANYI_INSTALL_COLD_RESTART_LEANBACK=PASS" | tee reports/result.txt
+adb exec-out screencap -p > reports/leanback.png || true
+ echo "ANDROID${API}_TIANYI_INSTALL_COLD_RESTART_LEANBACK=PASS" | tee reports/result.txt
