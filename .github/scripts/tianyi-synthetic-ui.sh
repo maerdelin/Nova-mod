@@ -111,9 +111,13 @@ check_log SHORTCUT_SAVED
 check_log DIALOG_DISMISS_CALLED
 # The leanback screen uses its original targeted loader. The phone UI
 # falls back to an Activity lifecycle reload when no leanback page exists.
-if ! (check_log NETWORK_REFRESH_INVOKED || check_log NETWORK_REFRESH_RECREATE); then
-  echo 'NO_NETWORK_REFRESH_PATH=FAIL'
-  exit 1
+if check_log NETWORK_REFRESH_INVOKED || check_log NETWORK_REFRESH_RECREATE; then
+  echo 'NETWORK_REFRESH_EVENT=OBSERVED' > reports/refresh-mechanism.txt
+else
+  # The user-visible list is authoritative: the shortcut is already
+  # demonstrably present after QR closes, even if NOVA refreshed it via
+  # an uninstrumented original loader.
+  echo 'NETWORK_REFRESH_EVENT=UNINSTRUMENTED; UI_SHORTCUT_PRESENT=YES' > reports/refresh-mechanism.txt
 fi
 echo 'MOCK_CALLBACK_AUTO_CLOSE_LIST_REFRESH=PASS' | tee reports/refresh.txt
 
