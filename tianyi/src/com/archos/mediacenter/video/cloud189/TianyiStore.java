@@ -84,30 +84,35 @@ final class TianyiStore {
         }
     }
 
+    // Login device fingerprint and local DAV locator are not cloud credentials.
+    // Store separately in app-private preferences so creating a QR does not
+    // touch AndroidKeyStore. Hardware-backed encryption applies to the actual
+    // accessToken/refreshToken only after the user authorizes the QR.
     synchronized String getOrCreateFinger() throws Exception {
-        Saved saved = read();
-        if (saved.userFinger.isEmpty()) {
-            long n = 1000000000L + (Math.abs(RNG.nextLong()) % 9000000000L);
-            saved.userFinger = Long.toString(n);
-            write(saved);
-        }
-        return saved.userFinger;
+        String finger = prefs.getString("login_fingerprint_v2", "");
+        if (finger != null && !finger.isEmpty()) return finger;
+        // Use 10 decimal digits matching OpenList's 189CloudPC fingerprint.
+        long n = 1000000000L + Math.floorMod(RNG.nextLong(), 9000000000L);
+        finger = Long.toString(n);
+        if (!prefs.edit().putString("login_fingerprint_v2",finger).commit())
+            throw new IllegalStateException("Cannot persist device fingerprint");
+        return finger;
     }
 
     synchronized String getOrCreatePathKey() throws Exception {
-        Saved saved = read();
-        if (saved.pathKey.isEmpty()) {
-            byte[] random = new byte[24];
-            RNG.nextBytes(random);
-            StringBuilder key = new StringBuilder(48);
-            for (byte b : random) {
-                key.append(Character.forDigit((b >>> 4) & 15, 16));
-                key.append(Character.forDigit(b & 15, 16));
-            }
-            saved.pathKey = key.toString();
-            write(saved);
+        String pathKey = prefs.getString("local_dav_capability_v2", "");
+        if (pathKey != null && !pathKey.isEmpty()) return pathKey;
+        byte[] random = new byte[24];
+        RNG.nextBytes(random);
+        StringBuilder out = new StringBuilder(48);
+        for (byte b : random) {
+            out.append(Character.forDigit((b >>> 4) & 15, 16));
+            out.append(Character.forDigit(b & 15, 16));
         }
-        return saved.pathKey;
+        pathKey=out.toString();
+        if (!prefs.edit().putString("local_dav_capability_v2",pathKey).commit())
+            throw new IllegalStateException("Cannot persist local DAV capability");
+        return pathKey;
     }
 
     synchronized void saveTokens(String access, String refresh) throws Exception {
@@ -130,9 +135,9 @@ final class TianyiStore {
     private static SecretKey key() throws Exception {
         KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
         ks.load(null);
-        KeyStore.Entry entry = ks.getEntry(ALIAS, null);
-        if (entry instanceof KeyStore.SecretKeyEntry) {
-            return ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+        java.security.Key existing = ks.getKey(ALIAS,null);
+        if (existing instanceof SecretKey) {
+            return (SecretKey)existing;
         }
         // v6.6.4 uses minSdk >= 23. Never silently fall back to plain text.
         if (Build.VERSION.SDK_INT < 23) {
