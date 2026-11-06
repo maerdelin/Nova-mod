@@ -36,6 +36,7 @@ public final class TianyiUi {
     }
     public static boolean onConfirm(Object fragment,int uiIndex){
         if(uiIndex!=NEW_UI_INDEX)return false;
+        TianyiDiag.event("UI_CONFIRM","QR_ONLY",0);
         Activity a=activity(fragment);
         if(a!=null)Toast.makeText(a,"请扫描二维码并在手机上确认",Toast.LENGTH_SHORT).show();
         return true;
@@ -49,6 +50,7 @@ public final class TianyiUi {
             if(generation==null){generation=new AtomicInteger();GENERATIONS.put(fragment,generation);}
         }
         final int current=generation.incrementAndGet();
+        TianyiDiag.event("UI_PROTOCOL","SELECT",selected);
         final boolean tianyi=selected==NEW_UI_INDEX;
         int[] ids=new int[]{resId(ctx,"remote"),resId(ctx,"port"),resId(ctx,"path"),
                 resId(ctx,"username"),resId(ctx,"password"),resId(ctx,"domain"),
@@ -91,8 +93,16 @@ public final class TianyiUi {
                         pixels[y*width+x]=bits.get(x,y)?0xff000000:0xffffffff;
                     final Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
                     bitmap.setPixels(pixels,0,width,0,0,width,height);
-                    MAIN.post(()->{if(guard.get()==current&&isShowing(fragment))image.setImageBitmap(bitmap);});
-                }catch(Exception e){onStatus("无法生成登录二维码");}
+                    MAIN.post(()->{
+                        if(guard.get()==current&&isShowing(fragment)) {
+                            image.setImageBitmap(bitmap);
+                            TianyiDiag.event("QR_DISPLAY","OK",0);
+                        }
+                    });
+                }catch(Exception e){
+                    TianyiDiag.event("QR_DISPLAY","FAIL",-1);
+                    onStatus("无法生成登录二维码");
+                }
             }
             public void onStatus(String message) {
                 MAIN.post(()->{if(guard.get()==current&&isShowing(fragment))Toast.makeText(ctx,message,Toast.LENGTH_LONG).show();});
@@ -112,6 +122,7 @@ public final class TianyiUi {
                             Object ok=save.invoke(db,ctx,rootUri,"天翼云盘","天翼云盘");
                             if(!(ok instanceof Boolean)||!((Boolean)ok))throw new IllegalStateException("无法保存网络快捷方式");
                         }
+                        TianyiDiag.event("SHORTCUT_CREATE","OK",0);
                         Toast.makeText(ctx,"天翼云盘添加成功",Toast.LENGTH_SHORT).show();
                         guard.incrementAndGet();
                         Method dismiss=fragment.getClass().getMethod("dismiss");
@@ -123,6 +134,7 @@ public final class TianyiUi {
                         launch.putExtra((String)base.getField("EXTRA_ROOT_NAME").get(null),"天翼云盘");
                         ctx.startActivity(launch);
                     }catch(Exception e){
+                        TianyiDiag.event("SHORTCUT_CREATE","FAIL",-1);
                         Toast.makeText(ctx,"账号已授权，但创建快捷方式失败",Toast.LENGTH_LONG).show();
                     }
                 });
