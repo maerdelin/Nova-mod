@@ -115,7 +115,8 @@ enter_network() {
   adb logcat -d -v threadtime > reports/logcat-network-navigation.txt || true
   echo 'NOVA_NETWORK_NAVIGATION_TIMEOUT_AFTER_18_ATTEMPTS' >&2
   return 1
-}adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
+}
+adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 9
 enter_network
 tap 'browse|add server|network connection|服务器|添加'
