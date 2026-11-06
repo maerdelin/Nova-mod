@@ -401,9 +401,14 @@ public final class TianyiUi {
     /** Only NOVA's private loopback cloud URI gets a friendly list title.
      * All other existing network shortcut labels pass through unchanged. */
     public static String displayCloudShortcutName(String path,String oldName) {
+        // Some optimized phone/tablet adapters supply only a random DAV
+        // capability segment as their visible title, not its full URI.
+        // Compare against the SAVED key so ordinary WebDAV paths are intact.
+        if(TianyiCloud.isOwnShortcutLabel(oldName)
+                || TianyiCloud.isOwnShortcutLabel(path))
+            return "天翼云盘";
         if(path==null)return oldName;
         try {
-            Uri uri=Uri.parse(path);
             if(isTianyiUri(path))
                 return "天翼云盘";
         }catch(Exception ignored){}
