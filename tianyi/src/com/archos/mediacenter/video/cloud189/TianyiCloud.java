@@ -269,32 +269,13 @@ public final class TianyiCloud {
         query.put("rand",Integer.toString(rng.nextInt(100000))+"_"+Long.toString(Math.abs(rng.nextLong()%10000000000L)));
         return query;
     }
-    /** 189CloudPC requires AES-ECB PKCS7 of sorted raw parameter pairs, with
-     * encrypted params included in the HMAC signature (OpenList v4.2.9). */
-    private String encryptParams(Map<String,String> params) throws Exception {
-        if(params==null || params.isEmpty())return "";
-        ensureSession();
-        if(sessionSecret.length()<16)throw new IOException("Invalid session secret");
-        TreeMap<String,String> sorted=new TreeMap<>(params);
-        StringBuilder clear=new StringBuilder();
-        for(Map.Entry<String,String> e:sorted.entrySet()){
-            if(clear.length()!=0)clear.append('&');
-            clear.append(e.getKey()).append('=').append(e.getValue());
-        }
-        Cipher aes=Cipher.getInstance("AES/ECB/PKCS5Padding");
-        aes.init(Cipher.ENCRYPT_MODE,new SecretKeySpec(
-                sessionSecret.substring(0,16).getBytes(StandardCharsets.UTF_8),"AES"));
-        byte[] encrypted=aes.doFinal(clear.toString().getBytes(StandardCharsets.UTF_8));
-        StringBuilder hex=new StringBuilder(encrypted.length*2);
-        final char[] chars="0123456789ABCDEF".toCharArray();
-        for(byte b:encrypted){hex.append(chars[(b>>4)&15]).append(chars[b&15]);}
-        return hex.toString();
-    }
+    // OpenList v4.2.9 uses y.get(url, callback) for listFiles and
+    // getFileDownloadUrl: the callback sets ordinary query parameters.
+    // Only the separate request(params) overload AES-encrypts params.
+    // Incorrectly encrypting these listing/link query arguments breaks them.
     private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
-        String encrypted=encryptParams(params);
-        Map<String,String> query=suffix(new LinkedHashMap<String,String>());
-        if(!encrypted.isEmpty())query.put("params",encrypted);
-        Reply r=request("GET",API+path,query,null,signedHeaders(path,encrypted),true);
+        Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));
+        Reply r=request("GET",API+path,query,null,signedHeaders(path,""),true);
         JSONObject data=json(r.body);
         if(data.has("res_code")&&data.optInt("res_code",0)!=0) {
             nextRefresh=0;
