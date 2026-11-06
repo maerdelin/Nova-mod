@@ -1,30 +1,46 @@
 name: NOVA Tianyi synthetic authorization UI integration test
 on:
-  workflow_run:
-    workflows: ['NOVA Tianyi Cloud test APK']
-    types: [completed]
+  push:
     branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['tianyi/src/**', 'tianyi/patch_apk.py', 'tianyi/qa_mock_auth_patch.py',
+            '.github/scripts/tianyi-synthetic-ui.sh', '.github/workflows/tianyi-build.yml',
+            '.github/workflows/tianyi-synthetic-auth-test.yml']
 permissions:
   contents: read
   actions: read
 jobs:
   synthetic-auth-ui:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 38
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Download production candidate for QA-only DEX replacement
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}"
           mkdir -p work tools reports
-          gh run download "${{ github.event.workflow_run.id }}" --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir work/source
+          # Wait for the exact matching push commit's production-candidate
+          # build; never test an old artifact and claim the latest passed.
+          target="$(git rev-parse HEAD)"
+          run_id=""
+          for attempt in $(seq 1 80); do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow tianyi-build.yml --branch "$GITHUB_REF_NAME" --limit 30 --json databaseId,headSha,status,conclusion)"
+            row="$(echo "$runs" | jq -c --arg sha "$target" '[.[] | select(.headSha == $sha)] | first // empty')"
+            if [ -n "$row" ]; then
+              conclusion="$(echo "$row" | jq -r '.conclusion')"
+              status="$(echo "$row" | jq -r '.status')"
+              run_id="$(echo "$row" | jq -r '.databaseId')"
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success || { echo "Build did not pass: $conclusion"; exit 1; }
+                break
+              fi
+            fi
+            sleep 8
+          done
+          test -n "$run_id" && [ "$status" = completed ] || { echo "Matching build not completed"; exit 1; }
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir work/source
           (cd work/source/dist && sha256sum -c SHA256SUMS.txt)
           curl -fL --retry 3 -o tools/zxing-core.jar https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
       - name: Recompile ONLY Tianyi DEX with mock auth and simulated root directory
