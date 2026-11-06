@@ -198,7 +198,7 @@ def patch_shortcut_display(root):
     start=t.index(head)
     end=t.index(".end method",start)
     method=t[start:end]
-    anchor="    move-result-object v5\\n\\n    move-object v6, v4"
+    anchor="    move-result-object v5\n\n    move-object v6, v4"
     injection=f"""    move-result-object v5
 
     # NOVA_TIANYI_SHORTCUT_NAME: map only the private local DAV shortcut.
