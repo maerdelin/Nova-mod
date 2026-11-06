@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p testapk
-          gh run download 42194377767 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
+          gh run download 42200696148 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
           (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
       - name: KVM acceleration
         run: |
