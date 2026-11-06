@@ -130,6 +130,26 @@ def patch_network_on_resume(root):
     # rather than opening an unrelated activity or waiting for navigation.
     cls="Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment;"
     loader="Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask;"
+    loader_file=unique(root,"com/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask.smali")
+    loader_code=loader_file.read_text()
+    # The optimized APK can add a synthetic constructor marker argument.
+    # Never guess: derive exact Smali descriptor from the decoded baseline.
+    signatures=re.findall(r"(?m)^\.method[^\n]* constructor <init>\(([^)]*)\)V$",loader_code)
+    if len(signatures)!=1:
+        raise RuntimeError(f"Expected one network loader constructor, got {signatures}")
+    ctor=signatures[0]
+    if ctor==cls:
+        arguments="{v0, p0}"
+        init_regs=""
+    elif ctor==cls+"I":
+        arguments="{v0, p0, v1}"
+        init_regs="    const/4 v1, 0x0\n"
+    else:
+        raise RuntimeError(f"Unexpected network loader constructor: {ctor}")
+    if ".method public execute()V" not in loader_code or ".method public cancel()V" not in loader_code:
+        raise RuntimeError("Network shortcuts loader execute/cancel methods changed")
+    if f"mNetworkShortcutsLoaderTask:{loader}" not in t:
+        raise RuntimeError("NetworkRootFragment shortcut loader field absent")
     refresh=f"""
 .method public novaTianyiRefreshShortcuts()V
     .locals 2
@@ -140,13 +160,13 @@ def patch_network_on_resume(root):
 
     :nova_tianyi_new_loader
     new-instance v0, {loader}
-    const/4 v1, 0x0
-    invoke-direct {{v0, p0, v1}}, {loader}-><init>({cls}I)V
+{init_regs}    invoke-direct {arguments}, {loader}-><init>({ctor})V
     iput-object v0, p0, {cls}->mNetworkShortcutsLoaderTask:{loader}
     invoke-virtual {{v0}}, {loader}->execute()V
     return-void
 .end method
 """
+    print("NOVA_TIANYI_NETWORK_REFRESH_CONSTRUCTOR=VERIFIED",ctor)
     if "novaTianyiRefreshShortcuts" in t:
         raise RuntimeError("Already injected network refresh")
     p.write_text(t[:m.start()]+body+t[m.end():]+"\n"+refresh)
