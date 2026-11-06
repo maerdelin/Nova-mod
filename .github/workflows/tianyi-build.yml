@@ -2,7 +2,9 @@ name: NOVA Tianyi Cloud test APK
 on:
   push:
     branches: ['feat/tianyi-cloud-webdav-20261106']
-    paths: ['tianyi/src/**', 'tianyi/patch_apk.py', 'tianyi/test_protocol_order.py', '.github/workflows/tianyi-build.yml']
+    paths: ['tianyi/src/**', 'tianyi/patch_apk.py', 'tianyi/test_protocol_order.py',
+            'tianyi/qa_mock_auth_patch.py', '.github/scripts/tianyi-synthetic-ui.sh',
+            '.github/workflows/tianyi-synthetic-auth-test.yml', '.github/workflows/tianyi-build.yml']
 permissions:
   contents: read
   actions: read
