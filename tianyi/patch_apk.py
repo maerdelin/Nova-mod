@@ -102,7 +102,9 @@ def patch_dialog(root):
     body=t[start:end]
     anchor="    invoke-virtual {v5, v11}, Landroid/widget/AdapterView;->setSelection(I)V"
     body=once(body,anchor,
-              f"    invoke-static {{v11}}, {UI}->toUiIndex(I)I\n\n    move-result v11\n\n{anchor}",
+              f"    invoke-static {{v11}}, {UI}->toUiIndex(I)I\n\n    move-result v11\n\n{anchor}\n"
+              f"    # NOVA_TIANYI_DISABLE_DUPLICATE: preserve original spinner IDs.\n"
+              f"    invoke-static {{v5}}, {UI}->installProtocolGuard(Landroid/widget/Spinner;)V",
               "initial saved protocol index")
     p.write_text(t[:start]+body+t[end:])
 
@@ -267,6 +269,34 @@ def patch_phone_shortcut_title(root):
     p.write_text(t[:start]+body+t[end:])
     print("NOVA_TIANYI_PHONE_SHORTCUT_NAME=PATCHED")
 
+def patch_phone_shortcut_secondary_uri(root):
+    # Phone/tablet shows two text rows. The second displays the raw
+    # 48-character capability via getFriendlyUri, even when getName works.
+    p=unique(root,"com/archos/mediacenter/video/browser/filebrowsing/network/RootFragmentAdapter.smali")
+    t=p.read_text()
+    head=".method public onBindViewHolder(Landroidx/recyclerview/widget/o;I)V"
+    start=t.index(head);end=t.index(".end method",start)
+    body=t[start:end]
+    anchor="""    invoke-virtual {p2}, Lcom/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut;->getFriendlyUri()Ljava/lang/String;
+
+    move-result-object v1
+
+    invoke-virtual {v0, v1}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V"""
+    replacement=f"""    invoke-virtual {{p2}}, Lcom/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut;->getFriendlyUri()Ljava/lang/String;
+
+    move-result-object v1
+
+    # NOVA_TIANYI_PHONE_SECONDARY_URI: keep real address for navigation.
+    invoke-virtual {{p2}}, Lcom/archos/mediacenter/utils/ShortcutDbAdapter$Shortcut;->getUri()Ljava/lang/String;
+    move-result-object v4
+    invoke-static {{v4, v1}}, {UI}->displayCloudShortcutName(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v1
+
+    invoke-virtual {{v0, v1}}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V"""
+    body=once(body,anchor,replacement,"phone secondary friendly URI")
+    p.write_text(t[:start]+body+t[end:])
+    print("NOVA_TIANYI_PHONE_SECONDARY_URI=PATCHED")
+
 def patch_shortcut_model(root):
     # Both phone and leanback lists may construct the same shortcut object
     # through different cursor mappers. Patch the shared constructor so all
@@ -360,6 +390,7 @@ def main():
     patch_shortcut_display(a.decoded)
     patch_shortcut_model(a.decoded)
     patch_phone_shortcut_title(a.decoded)
+    patch_phone_shortcut_secondary_uri(a.decoded)
     patch_shared_shortcut_getname(a.decoded)
     patch_application_restore(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")

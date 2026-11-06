@@ -33,6 +33,26 @@ class ProtocolOrderTest(unittest.TestCase):
         self.assertIn("->onSelection(", PATCH)
         self.assertIn("->onConfirm(", PATCH)
 
+    def test_disable_duplicate_shortcut(self):
+        self.assertIn('installProtocolGuard', PATCH)
+        self.assertIn('GuardedProtocols', UI)
+        self.assertIn('getCursorAllShortcuts', UI)
+        self.assertIn('areAllItemsEnabled()', UI)
+        self.assertIn('isEnabled(int position)', UI)
+        self.assertIn('if(hasExistingShortcut(ctx))', UI)
+        self.assertIn('if(tianyi && hasExistingShortcut(activity))', UI)
+
+    def test_phone_tablet_uri_labels(self):
+        self.assertIn('NOVA_TIANYI_PHONE_SECONDARY_URI', PATCH)
+        self.assertIn('NOVA_TIANYI_PHONE_SHORTCUT_NAME', PATCH)
+        self.assertIn('->getFriendlyUri()', PATCH)
+
+    def test_webdav_video_mime(self):
+        code=(ROOT/'src/com/archos/mediacenter/video/cloud189/TianyiCloud.java').read_text(encoding='utf-8')
+        self.assertIn('<d:getcontenttype>', code)
+        self.assertIn('video/x-matroska', code)
+        self.assertIn('video/mp4', code)
+
     def test_tianyi_avoids_original_protocol_handling(self):
         self.assertIn("if(uiIndex==NEW_UI_INDEX)return 8;", UI)
         self.assertIn("if(uiIndex!=NEW_UI_INDEX)return false;", UI)

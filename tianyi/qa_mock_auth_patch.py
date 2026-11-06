@@ -66,6 +66,12 @@ replace_once(
                 folder.parent="-11"; folder.dir=true; folder.size=0L;
                 folder.mtime=System.currentTimeMillis();
                 fixture.add(folder);
+            } else if("qa-folder".equals(folderId)) {
+                FileObj video=new FileObj();
+                video.id="qa-video"; video.name="QA Video.mp4";
+                video.parent=folderId; video.dir=false; video.size=1024L;
+                video.mtime=System.currentTimeMillis();
+                fixture.add(video);
             }
             android.util.Log.i("NOVA_TIANYI_QA","MOCK_ROOT_LIST_"+folderId);
             return fixture;

@@ -3,6 +3,7 @@ package com.archos.mediacenter.video.cloud189;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -13,6 +14,7 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -20,6 +22,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.Spinner;
+import android.widget.SpinnerAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -79,6 +82,84 @@ public final class TianyiUi {
         }
     }
 
+    /** Locate the cloud shortcut in NOVA's actual database, not stale prefs. */
+    private static boolean isTianyiUri(String raw) {
+        if(raw==null)return false;
+        try {
+            Uri candidate=Uri.parse(raw);
+            List<String> segments=candidate.getPathSegments();
+            return "webdav".equalsIgnoreCase(candidate.getScheme())
+                    && "127.0.0.1".equals(candidate.getHost())
+                    && candidate.getPort()==27989
+                    && segments!=null && !segments.isEmpty()
+                    && segments.get(0).matches("[0-9a-fA-F]{48}");
+        }catch(Exception ignored){return false;}
+    }
+    public static boolean hasExistingShortcut(Context ctx) {
+        if(ctx==null)return false;
+        Cursor cursor=null;
+        try {
+            Class<?> cls=Class.forName("com.archos.mediacenter.video.browser.ShortcutDb");
+            @SuppressWarnings({"rawtypes","unchecked"})
+            Object db=Enum.valueOf((Class<? extends Enum>)cls,"STATIC");
+            cursor=(Cursor)cls.getMethod("getCursorAllShortcuts",Context.class)
+                    .invoke(db,ctx);
+            if(cursor!=null) {
+                int index=cursor.getColumnIndex("uri");
+                if(index>=0)while(cursor.moveToNext()) {
+                    if(isTianyiUri(cursor.getString(index)))return true;
+                }
+            }
+            return false;
+        }catch(Exception e) {
+            TianyiDiag.event("SHORTCUT_LOOKUP","FAIL",-1);
+            // If DB is temporarily unavailable, do not overwrite saved login.
+            return !new TianyiStore(ctx).existingPathKey().isEmpty();
+        }finally{
+            if(cursor!=null)cursor.close();
+        }
+    }
+    /**
+     * A disabled ListAdapter row is actually non-clickable in the Spinner
+     * popup; only the new Tianyi row is changed. All original IDs are kept.
+     */
+    private static final class GuardedProtocols extends BaseAdapter {
+        final SpinnerAdapter delegate;
+        final Context context;
+        GuardedProtocols(SpinnerAdapter adapter,Context ctx){
+            delegate=adapter;context=ctx.getApplicationContext();
+        }
+        @Override public int getCount(){return delegate.getCount();}
+        @Override public Object getItem(int position){return delegate.getItem(position);}
+        @Override public long getItemId(int position){return delegate.getItemId(position);}
+        @Override public boolean hasStableIds(){return delegate.hasStableIds();}
+        @Override public boolean areAllItemsEnabled(){return !hasExistingShortcut(context);}
+        @Override public boolean isEnabled(int position){
+            return position!=NEW_UI_INDEX || !hasExistingShortcut(context);
+        }
+        private View tint(View view,int position){
+            if(view==null)return null;
+            boolean disabled=position==NEW_UI_INDEX && hasExistingShortcut(context);
+            view.setAlpha(disabled?0.35f:1f);
+            view.setEnabled(!disabled);
+            return view;
+        }
+        @Override public View getView(int index,View old,ViewGroup parent){
+            return tint(delegate.getView(index,old,parent),index);
+        }
+        @Override public View getDropDownView(int index,View old,ViewGroup parent){
+            return tint(delegate.getDropDownView(index,old,parent),index);
+        }
+    }
+    public static void installProtocolGuard(Spinner spinner) {
+        if(spinner==null)return;
+        SpinnerAdapter adapter=spinner.getAdapter();
+        if(adapter==null || adapter instanceof GuardedProtocols)return;
+        int old=spinner.getSelectedItemPosition();
+        spinner.setAdapter(new GuardedProtocols(adapter,spinner.getContext()));
+        if(old>=0)spinner.setSelection(old,false);
+    }
+
     public static int toLegacyType(int uiIndex) {
         if(uiIndex==NEW_UI_INDEX)return 8;
         return uiIndex>NEW_UI_INDEX?uiIndex-1:uiIndex;
@@ -89,8 +170,13 @@ public final class TianyiUi {
     }
     public static boolean onConfirm(Object fragment,int uiIndex) {
         if(uiIndex!=NEW_UI_INDEX)return false;
-        TianyiDiag.event("UI_CONFIRM","QR_ONLY",0);
         Activity ctx=activity(fragment);
+        if(ctx!=null && hasExistingShortcut(ctx)) {
+            Toast.makeText(ctx,"天翼云盘已添加，请先删除原快捷方式",Toast.LENGTH_SHORT).show();
+            TianyiDiag.event("UI_CONFIRM","DUPLICATE_BLOCKED",0);
+            return true;
+        }
+        TianyiDiag.event("UI_CONFIRM","QR_ONLY",0);
         if(ctx!=null)Toast.makeText(ctx,"请使用右侧二维码扫码授权",Toast.LENGTH_SHORT).show();
         return true;
     }
@@ -139,6 +225,12 @@ public final class TianyiUi {
         }
         Spinner protocol=(Spinner)row.getChildAt(0);
         View address=row.getChildAt(1);
+        if(tianyi && hasExistingShortcut(activity)) {
+            protocol.setSelection(0);
+            Toast.makeText(activity,"天翼云盘已添加，请先删除原快捷方式",Toast.LENGTH_SHORT).show();
+            TianyiDiag.event("UI_PROTOCOL","DUPLICATE_BLOCKED",0);
+            return true;
+        }
         AtomicInteger gen;
         synchronized(GENERATIONS) {
             gen=GENERATIONS.get(fragment);
@@ -312,9 +404,7 @@ public final class TianyiUi {
         if(path==null)return oldName;
         try {
             Uri uri=Uri.parse(path);
-            if("webdav".equals(uri.getScheme())
-                    && "127.0.0.1".equals(uri.getHost())
-                    && uri.getPort()==27989)
+            if(isTianyiUri(path))
                 return "天翼云盘";
         }catch(Exception ignored){}
         return oldName;
@@ -334,6 +424,8 @@ public final class TianyiUi {
         Method exists=cls.getMethod("isShortcut",Context.class,String.class);
         long already=((Number)exists.invoke(db,ctx,rawUri)).longValue();
         if(already>=0)return true;
+        if(hasExistingShortcut(ctx))
+            throw new IllegalStateException("Only one Tianyi shortcut is allowed");
         Object result=cls.getMethod("insertShortcut",Context.class,
                 Uri.class,String.class,String.class)
                 .invoke(db,ctx,uri,"天翼云盘","天翼云盘");

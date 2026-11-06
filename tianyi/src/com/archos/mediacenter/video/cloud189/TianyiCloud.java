@@ -160,6 +160,11 @@ public final class TianyiCloud {
     }
     public void beginLogin(QrListener listener, Callable<Boolean> alive) {
         workers.execute(()->{
+            if(TianyiUi.hasExistingShortcut(app)) {
+                listener.onStatus("已添加天翼云盘，请先删除原快捷方式");
+                TianyiDiag.event("QR_START","DUPLICATE_BLOCKED",0);
+                return;
+            }
             long diagStart=TianyiDiag.tick();
             TianyiDiag.event("QR_START","BEGIN",0);
             final String[] phase=new String[]{"FINGER"};
@@ -226,6 +231,8 @@ public final class TianyiCloud {
                         String access=token.optString("accessToken",""),refresh=token.optString("refreshToken","");
                         if(access.isEmpty()||refresh.isEmpty())throw new IOException("QR token exchange failed");
                         phase[0]="TOKEN_SAVE";
+                        if(TianyiUi.hasExistingShortcut(app))
+                            throw new IOException("Tianyi shortcut already exists");
                         store.saveTokens(access,refresh);
                         TianyiDiag.event("QR_TOKEN","OK",0,diagStart,0L);
                         setSession(token);
@@ -359,7 +366,7 @@ public final class TianyiCloud {
         List<FileObj> out=new ArrayList<>();
         for(int page=1;page<=200;page++){
             JSONObject r=apiGet("/listFiles.action",map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
-                    "pageNum",Integer.toString(page),"pageSize","1000","recursive","0",
+                    "pageNum",Integer.toString(page),"pageSize","1000","recursive","0","mediaType","0",
                     "orderBy","filename","descending","false"));
             JSONObject arr=r.optJSONObject("fileListAO");
             if(arr==null)throw new IOException("Cloud folder list unavailable");
@@ -445,7 +452,10 @@ public final class TianyiCloud {
                     xml.append("<d:response><d:href>").append(escapeXml(href)).append("</d:href><d:propstat><d:prop><d:displayname>")
                       .append(escapeXml(item.name)).append("</d:displayname><d:resourcetype>");
                     if(item.dir)xml.append("<d:collection/>");
-                    xml.append("</d:resourcetype><d:getcontentlength>").append(item.size)
+                    xml.append("</d:resourcetype>");
+                    if(!item.dir)xml.append("<d:getcontenttype>").append(escapeXml(contentType(item)))
+                            .append("</d:getcontenttype>");
+                    xml.append("<d:getcontentlength>").append(item.size)
                        .append("</d:getcontentlength><d:getlastmodified>Fri, 06 Nov 2026 00:00:00 GMT</d:getlastmodified>")
                        .append("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>");
                 }
@@ -473,7 +483,7 @@ public final class TianyiCloud {
                 c.disconnect();error(out,502);return;
             }
             long length=c.getContentLengthLong();
-            StringBuilder extra=new StringBuilder("Content-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\n");
+            StringBuilder extra=new StringBuilder("Content-Type: "+contentType(f)+"\r\nAccept-Ranges: bytes\r\n");
             if(length>=0)extra.append("Content-Length: ").append(length).append("\r\n");
             if(c.getHeaderField("Content-Range")!=null)extra.append("Content-Range: ").append(c.getHeaderField("Content-Range")).append("\r\n");
             TianyiDiag.event(range!=null?"DAV_RANGE":davEvent,"OK",status,diagStart,length);
@@ -495,6 +505,25 @@ public final class TianyiCloud {
         }finally{
             try { socket.close(); }catch(Exception ignoredAgain){}
         }
+    }
+    private static String contentType(FileObj file) {
+        if(file.dir)return "httpd/unix-directory";
+        String name=file.name==null?"":file.name.toLowerCase(Locale.US);
+        if(name.endsWith(".mp4")||name.endsWith(".m4v"))return "video/mp4";
+        if(name.endsWith(".mkv"))return "video/x-matroska";
+        if(name.endsWith(".avi"))return "video/x-msvideo";
+        if(name.endsWith(".m2ts")||name.endsWith(".mts")||name.endsWith(".ts"))return "video/mp2t";
+        if(name.endsWith(".mov"))return "video/quicktime";
+        if(name.endsWith(".webm"))return "video/webm";
+        if(name.endsWith(".wmv"))return "video/x-ms-wmv";
+        if(name.endsWith(".flv"))return "video/x-flv";
+        if(name.endsWith(".rmvb")||name.endsWith(".rm"))return "application/vnd.rn-realmedia";
+        if(name.endsWith(".mpeg")||name.endsWith(".mpg")||name.endsWith(".vob"))return "video/mpeg";
+        if(name.endsWith(".iso"))return "application/x-iso9660-image";
+        if(name.endsWith(".srt"))return "application/x-subrip";
+        if(name.endsWith(".ass")||name.endsWith(".ssa"))return "text/plain";
+        String guess=URLConnection.guessContentTypeFromName(name);
+        return guess==null?"application/octet-stream":guess;
     }
     private static String encodeSegment(String s) throws Exception {
         return URLEncoder.encode(s,"UTF-8").replace("+","%20");

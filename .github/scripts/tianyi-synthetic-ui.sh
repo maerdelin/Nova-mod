@@ -124,63 +124,19 @@ echo 'MOCK_CALLBACK_AUTO_CLOSE_LIST_REFRESH=PASS' | tee reports/refresh.txt
 tap "$SHORTCUT_LABEL"
 sleep 5
 dump_ui
-# NOVA sometimes shows a one-time "integrate content of this folder"
-# tutorial the first time a network folder is opened. Dismiss the tutorial
-# before asserting the DAV directory contents (not a WebDAV success).
+# Dismiss NOVA's one-time network-folder tutorial before DAV assertions.
 if grep -qi 'Press this menu item to integrate the content' reports/current-ui.xml; then
-  tap '^OK
-assert_text reports/root-before-restart.xml 'QA Root Folder'
-echo 'MOCK_DAV_ROOT_BEFORE_RESTART=PASS' | tee reports/root.txt
-
-adb shell am force-stop "$PACKAGE"
-adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
-sleep 6
-enter_network
-capture 'after-process-restart'
-assert_text reports/after-process-restart.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
-check_log SAVED_DAV_BOUND
-tap "$SHORTCUT_LABEL"
-sleep 8
-capture 'root-after-process-restart'
-assert_text reports/root-after-process-restart.xml 'QA Root Folder'
-echo 'MOCK_DAV_ROOT_AFTER_APP_RESTART=PASS' | tee reports/app-restart.txt
-
-# Full Android reboot while preserving the app's private SharedPreferences,
-# encrypted token, stable local path, and NOVA ShortcutDb record.
-adb reboot
-adb wait-for-device
-for i in $(seq 1 90); do
-  if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; then break; fi
-  sleep 2
-done
-test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
-adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
-sleep 7
-enter_network
-capture 'after-system-reboot'
-assert_text reports/after-system-reboot.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
-tap "$SHORTCUT_LABEL"
-sleep 8
-capture 'root-after-system-reboot'
-assert_text reports/root-after-system-reboot.xml 'QA Root Folder'
-echo 'MOCK_DAV_ROOT_AFTER_SYSTEM_REBOOT=PASS' | tee reports/system-reboot.txt
-
-adb logcat -d -v threadtime > reports/logcat.txt
-if grep -E -A 20 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
-  echo 'SYNTHETIC_AUTH_RUNTIME=FAIL'
-  exit 1
-fi
-if grep -q 'TIANYI_SHORTCUT_NAME=FAIL' reports/name-result.txt; then
-  echo 'TIANYI_SHORTCUT_NAME=FAIL; OTHER_GATES_RECORDED' | tee reports/result.txt
-  exit 1
-fi
-echo 'NOVA_TIANYI_MOCK_INTEGRATION=PASS' | tee reports/result.txt
-
+  tap '^OK$'
   sleep 3
 fi
 capture 'root-before-restart'
 assert_text reports/root-before-restart.xml 'QA Root Folder'
 echo 'MOCK_DAV_ROOT_BEFORE_RESTART=PASS' | tee reports/root.txt
+tap 'QA Root Folder'
+sleep 5
+capture 'video-leaf-before-restart'
+assert_text reports/video-leaf-before-restart.xml 'QA Video.mp4'
+echo 'MOCK_DAV_VIDEO_LEAF=PASS' | tee reports/video-leaf.txt
 
 adb shell am force-stop "$PACKAGE"
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
@@ -195,8 +151,6 @@ capture 'root-after-process-restart'
 assert_text reports/root-after-process-restart.xml 'QA Root Folder'
 echo 'MOCK_DAV_ROOT_AFTER_APP_RESTART=PASS' | tee reports/app-restart.txt
 
-# Full Android reboot while preserving the app's private SharedPreferences,
-# encrypted token, stable local path, and NOVA ShortcutDb record.
 adb reboot
 adb wait-for-device
 for i in $(seq 1 90); do
@@ -214,7 +168,6 @@ sleep 8
 capture 'root-after-system-reboot'
 assert_text reports/root-after-system-reboot.xml 'QA Root Folder'
 echo 'MOCK_DAV_ROOT_AFTER_SYSTEM_REBOOT=PASS' | tee reports/system-reboot.txt
-
 adb logcat -d -v threadtime > reports/logcat.txt
 if grep -E -A 20 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
   echo 'SYNTHETIC_AUTH_RUNTIME=FAIL'
