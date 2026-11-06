@@ -1,0 +1,56 @@
+name: NOVA Tianyi Android 11 installation smoke
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['.github/workflows/tianyi-smoke.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download signed Tianyi APK built from validated MOD
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p testapk
+          gh run download 42176254523 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
+          test -s testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
+          (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
+      - name: Install on clean Android 11 emulator and launch phone plus TV
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            mkdir -p reports
+            adb install -r testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk | tee reports/install.txt
+            adb shell monkey -p org.courville.nova -c android.intent.category.LAUNCHER 1
+            sleep 8
+            adb shell pidof org.courville.nova | tee reports/phone-pid.txt
+            adb shell am force-stop org.courville.nova
+            adb shell monkey -p org.courville.nova -c android.intent.category.LEANBACK_LAUNCHER 1
+            sleep 8
+            adb shell pidof org.courville.nova | tee reports/tv-pid.txt
+            adb logcat -d -v brief > reports/logcat.txt
+            if grep -E -A15 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -E 'org.courville.nova|com.archos|TianyiCloud|TianyiUi|TianyiStore'; then
+              echo "ANDROID11_TIAN YI_RUNTIME=FAIL" && exit 1
+            fi
+            echo "NOVA_TIANYI_ANDROID11_INSTALL_START=PASS" | tee reports/result.txt
+      - name: Upload Android 11 smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-Tianyi-Android11-Smoke
+          path: reports/
+          retention-days: 7
