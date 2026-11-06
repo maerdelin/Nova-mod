@@ -135,9 +135,12 @@ def patch_network_on_resume(root):
     # The optimized APK can add a synthetic constructor marker argument.
     # Never guess: derive exact Smali descriptor from the decoded baseline.
     signatures=re.findall(r"(?m)^\.method[^\n]* constructor <init>\(([^)]*)\)V$",loader_code)
-    if len(signatures)!=1:
-        raise RuntimeError(f"Expected one network loader constructor, got {signatures}")
-    ctor=signatures[0]
+    # R8 may retain both the normal inner-class constructor and a synthetic
+    # extra-int overload. Prefer the normal constructor whenever present.
+    candidates=[sig for sig in signatures if sig in (cls,cls+"I")]
+    if not candidates:
+        raise RuntimeError(f"Unsupported network loader constructors: {signatures}")
+    ctor=cls if cls in candidates else cls+"I"
     if ctor==cls:
         arguments="{v0, p0}"
         init_regs=""
