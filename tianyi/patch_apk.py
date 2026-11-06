@@ -37,14 +37,14 @@ def patch_resources(root):
     values.write_text("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string-array name="nova_tianyi_protocol_types">
-    <item>WebDAV</item>
-    <item>SMB</item>
-    <item>天翼云盘</item>
     <item>FTP</item>
     <item>SFTP</item>
     <item>FTPS</item>
     <item>SSHJ</item>
+    <item>SMB</item>
+    <item>天翼云盘</item>
     <item>SMBJ</item>
+    <item>WebDAV</item>
     <item>WebDAVS</item>
   </string-array>
 </resources>
