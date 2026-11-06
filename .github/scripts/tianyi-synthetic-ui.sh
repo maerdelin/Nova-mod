@@ -101,7 +101,12 @@ assert_text reports/after-synthetic-authorized.xml '天翼云盘'
 assert_no_dialog reports/after-synthetic-authorized.xml
 check_log SHORTCUT_SAVED
 check_log DIALOG_DISMISS_CALLED
-check_log NETWORK_REFRESH_INVOKED
+# The leanback screen uses its original targeted loader. The phone UI
+# falls back to an Activity lifecycle reload when no leanback page exists.
+if ! (check_log NETWORK_REFRESH_INVOKED || check_log NETWORK_REFRESH_RECREATE); then
+  echo 'NO_NETWORK_REFRESH_PATH=FAIL'
+  exit 1
+fi
 echo 'MOCK_CALLBACK_AUTO_CLOSE_LIST_REFRESH=PASS' | tee reports/refresh.txt
 
 tap '^天翼云盘'
