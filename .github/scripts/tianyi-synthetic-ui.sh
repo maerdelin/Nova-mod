@@ -76,7 +76,7 @@ check_log() {
   adb logcat -d -v brief > reports/logcat-stage.txt
   grep -q "NOVA_TIANYI_QA.*$1" reports/logcat-stage.txt || {
     echo "QA_MISSING_LOG_MARKER=$1"
-    exit 1
+    return 1
   }
 }
 enter_network() {
