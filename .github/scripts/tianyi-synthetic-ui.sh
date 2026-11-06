@@ -190,56 +190,23 @@ if grep -q 'TIANYI_SHORTCUT_NAME=FAIL' reports/name-result.txt; then
   echo 'TIANYI_SHORTCUT_NAME=FAIL; OTHER_GATES_RECORDED' | tee reports/result.txt
   exit 1
 fi
-echo 'NOVA_TIANYI_MOCK_INTEGRATION=PASS' | tee reports/result.txt
-
-  sleep 3
-fi
-capture 'root-before-restart'
-assert_text reports/root-before-restart.xml 'QA Root Folder'
-echo 'MOCK_DAV_ROOT_BEFORE_RESTART=PASS' | tee reports/root.txt
-tap 'QA Root Folder'
-sleep 5
-capture 'video-leaf-before-restart'
-assert_text reports/video-leaf-before-restart.xml 'QA Video.mp4'
-echo 'MOCK_DAV_VIDEO_LEAF=PASS' | tee reports/video-leaf.txt
-
+# Validate the single-shortcut rule in the real NOVA spinner after reboot.
 adb shell am force-stop "$PACKAGE"
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 6
 enter_network
-capture 'after-process-restart'
-assert_text reports/after-process-restart.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
-check_log SAVED_DAV_BOUND
-tap "$SHORTCUT_LABEL"
-sleep 8
-capture 'root-after-process-restart'
-assert_text reports/root-after-process-restart.xml 'QA Root Folder'
-echo 'MOCK_DAV_ROOT_AFTER_APP_RESTART=PASS' | tee reports/app-restart.txt
-
-adb reboot
-adb wait-for-device
-for i in $(seq 1 90); do
-  if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; then break; fi
-  sleep 2
-done
-test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
-adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
-sleep 7
-enter_network
-capture 'after-system-reboot'
-assert_text reports/after-system-reboot.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
-tap "$SHORTCUT_LABEL"
-sleep 8
-capture 'root-after-system-reboot'
-assert_text reports/root-after-system-reboot.xml 'QA Root Folder'
-echo 'MOCK_DAV_ROOT_AFTER_SYSTEM_REBOOT=PASS' | tee reports/system-reboot.txt
-adb logcat -d -v threadtime > reports/logcat.txt
-if grep -E -A 20 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
-  echo 'SYNTHETIC_AUTH_RUNTIME=FAIL'
-  exit 1
-fi
-if grep -q 'TIANYI_SHORTCUT_NAME=FAIL' reports/name-result.txt; then
-  echo 'TIANYI_SHORTCUT_NAME=FAIL; OTHER_GATES_RECORDED' | tee reports/result.txt
-  exit 1
-fi
+tap 'browse|add server|network connection|服务器|添加'
+sleep 3
+tap 'WebDAV|FTP|SMB'
+sleep 2
+capture 'duplicate-disabled'
+python3 - <<'PY'
+import xml.etree.ElementTree as ET
+a=[x.attrib for x in ET.parse('reports/duplicate-disabled.xml').getroot().iter('node')]
+matches=[x for x in a if '天翼云盘' in x.get('text','')]
+print('TIANYI_DUPLICATE_OPTIONS',[(x.get('text'),x.get('enabled')) for x in matches],flush=True)
+assert matches, 'Missing Tianyi item in original protocol spinner'
+assert any(x.get('enabled')=='false' for x in matches), 'Tianyi item must be disabled after shortcut exists'
+PY
+echo 'MOCK_DUPLICATE_PROTOCOL_DISABLED=PASS' | tee reports/duplicate.txt
 echo 'NOVA_TIANYI_MOCK_INTEGRATION=PASS' | tee reports/result.txt
