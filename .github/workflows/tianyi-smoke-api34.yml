@@ -31,7 +31,7 @@ jobs:
           sudo chmod 666 /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           ls -l /dev/kvm
-      - name: Install on clean Android 11 emulator and launch phone plus TV
+      - name: Install and visually verify phone + Leanback on Android 14 with granted permissions
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
