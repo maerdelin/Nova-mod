@@ -369,7 +369,7 @@ public final class TianyiUi {
         // Reload ONCE after its transition instead of immediately loading
         // and cancelling that task 500 ms later (which loses adapter results).
         dismissAuthorizedDialog(fragment);
-        scheduleNetworkRefresh(0);
+        scheduleNetworkRefresh(0,activity);
         Toast.makeText(activity,"天翼云盘已保存，正在更新网络列表",Toast.LENGTH_SHORT).show();
     }
 
@@ -397,14 +397,23 @@ public final class TianyiUi {
         TianyiDiag.event("QR_DIALOG","FAIL",-1);
     }
 
-    private static void scheduleNetworkRefresh(int attempt) {
+    private static void scheduleNetworkRefresh(int attempt,Activity owner) {
         MAIN.postDelayed(()->{
             boolean ready=false;
             try { ready=refreshNetworkPage(); }
             catch(Exception ignored) { TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1); }
-            // Retry only if the page/loader was not available. Do NOT cancel
-            // an already-running NetworkShortcutsLoaderTask with another load.
-            if(!ready && attempt<5) scheduleNetworkRefresh(attempt+1);
+            if(ready)return;
+            // In some original NOVA phone layouts the active Network page
+            // is not NetworkRootFragment (the leanback class we patched).
+            // The original activity lifecycle will reload ShortcutDb after
+            // a single recreate. This avoids a dead shortcut list and is
+            // ONLY used when the targeted loader was unavailable.
+            if(attempt<2) {
+                scheduleNetworkRefresh(attempt+1,owner);
+            } else if(owner!=null && !owner.isFinishing() && !owner.isDestroyed()) {
+                TianyiDiag.event("NETWORK_REFRESH","RECREATE",0);
+                owner.recreate();
+            }
         },attempt==0?350:400);
     }
 
