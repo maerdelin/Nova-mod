@@ -297,6 +297,32 @@ def patch_phone_shortcut_secondary_uri(root):
     p.write_text(t[:start]+body+t[end:])
     print("NOVA_TIANYI_PHONE_SECONDARY_URI=PATCHED")
 
+def patch_actual_phone_shortcut_adapter(root):
+    # Verified on official NOVA v6.6.4: the PHONE/TABLET shortcut card is
+    # rendered in ShortcutAdapter.onBindViewHolder, not RootFragmentAdapter.
+    # That class extracts Uri.getPath() and directly calls setName(v3).
+    # Keep the original URI (v2) for click and playback, translate ONLY v3.
+    p=unique(root,"com/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter.smali")
+    t=p.read_text()
+    head=".method public onBindViewHolder(Landroidx/recyclerview/widget/o;I)V"
+    start=t.index(head)
+    end=t.index(".end method",start)
+    body=t[start:end]
+    anchor="""    :cond_1
+    :goto_0
+    invoke-virtual {p1, v3}, Lcom/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder;->setName(Ljava/lang/String;)V"""
+    replacement=f"""    :cond_1
+    :goto_0
+    # NOVA_TIANYI_ACTUAL_PHONE_SHORTCUT_NAME: typed URI is not modified.
+    invoke-virtual {{v2}}, Landroid/net/Uri;->toString()Ljava/lang/String;
+    move-result-object v4
+    invoke-static {{v4, v3}}, {UI}->displayCloudShortcutName(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v3
+    invoke-virtual {{p1, v3}}, Lcom/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder;->setName(Ljava/lang/String;)V"""
+    body=once(body,anchor,replacement,"actual phone shortcut display")
+    p.write_text(t[:start]+body+t[end:])
+    print("NOVA_TIANYI_ACTUAL_PHONE_SHORTCUT_NAME=PATCHED")
+
 def patch_shortcut_model(root):
     # Both phone and leanback lists may construct the same shortcut object
     # through different cursor mappers. Patch the shared constructor so all
@@ -392,6 +418,7 @@ def main():
     patch_phone_shortcut_title(a.decoded)
     patch_phone_shortcut_secondary_uri(a.decoded)
     patch_shared_shortcut_getname(a.decoded)
+    patch_actual_phone_shortcut_adapter(a.decoded)
     patch_application_restore(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
