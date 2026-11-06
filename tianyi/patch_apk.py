@@ -229,7 +229,27 @@ def patch_application_restore(root):
     p=unique(root,name.replace(".","/")+".smali")
     t=p.read_text()
     m=re.search(r"(?ms)^\\.method[^\\n]* onCreate\\(\\)V\\n.*?^\\.end method",t)
-    if not m: raise RuntimeError("CustomApplication onCreate missing")
+    if not m:
+        # This optimized NOVA build may inherit Application.onCreate
+        # unchanged. Install a normal override that keeps the parent's
+        # initialization and schedules the saved DAV restore afterwards.
+        if "onCreate()V" in t:
+            raise RuntimeError("Unsupported custom Application.onCreate format")
+        parent=re.search(r"(?m)^\\.super (L[^\\s]+;)$",t)
+        if not parent:
+            raise RuntimeError("Could not identify Application superclass")
+        method=f"""
+.method public onCreate()V
+    .locals 0
+    invoke-super {{p0}}, {parent.group(1)}->onCreate()V
+    # NOVA_TIANYI_RESTORE_APP_START: background-only saved DAV restore.
+    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V
+    return-void
+.end method
+"""
+        p.write_text(t+"\\n"+method)
+        print("NOVA_TIANYI_APP_COLD_START_RESTORE=OVERRIDE",name)
+        return
     original=m.group()
     if "NOVA_TIANYI_RESTORE_APP_START" in original:
         raise RuntimeError("Application already patched")
