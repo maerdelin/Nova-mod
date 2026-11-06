@@ -106,21 +106,25 @@ def patch_dialog(root):
               "initial saved protocol index")
     p.write_text(t[:start]+body+t[end:])
 
-def patch_application(root):
-    p=unique(root,"com/archos/mediacenter/video/CustomApplication.smali")
+def patch_network_on_resume(root):
+    # Do not load the optional cloud bridge in CustomApplication.onCreate.
+    # An optional cloud feature must never risk the player's cold start.
+    # NetworkRootFragment is the sole lazy restoration trigger.
+    p=unique(root,"com/archos/mediacenter/video/leanback/network/NetworkRootFragment.smali")
     t=p.read_text()
-    m=re.search(r"(?ms)^\.method (?:public|protected) onCreate\(\)V\n.*?^\.end method",t)
-    if not m:raise RuntimeError("CustomApplication.onCreate absent")
+    m=re.search(r"(?ms)^\.method public onResume\(\)V\n.*?^\.end method",t)
+    if not m:raise RuntimeError("NetworkRootFragment.onResume missing")
     body=m.group()
-    # The optimized NOVA v6.6.4 app has multiple legitimate exit points.
-    # Instrument all return sites to avoid skipping startup on some paths.
-    exits=body.count("    return-void")
-    if not 1 <= exits <= 5:
-        raise RuntimeError(f"Unexpected CustomApplication.onCreate return paths: {exits}")
-    body=body.replace("    return-void",
-        "    # NOVA_TIANYI_COLD_BOOT_V1\n"
-        f"    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V\n"
-        "    return-void")
+    if ".locals 2" not in body:raise RuntimeError("NetworkRootFragment register layout changed")
+    anchor="    invoke-super {p0}, Lzd;->onResume()V"
+    inject=f"""    # NOVA_TIANYI_LAZY_DAV_V2: restore on network page only.
+    invoke-virtual {{p0}}, Landroidx/fragment/app/q;->getActivity()Landroidx/fragment/app/v;
+    move-result-object v0
+    if-eqz v0, :nova_tianyi_no_activity
+    invoke-static {{v0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V
+    :nova_tianyi_no_activity
+"""
+    body=once(body,anchor,anchor+"\n"+inject,"network resume lazy DAV")
     p.write_text(t[:m.start()]+body+t[m.end():])
 
 def main():
@@ -131,7 +135,7 @@ def main():
     patch_listener(a.decoded)
     patch_ok_listener(a.decoded)
     patch_dialog(a.decoded)
-    patch_application(a.decoded)
+    patch_network_on_resume(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
 if __name__=="__main__":
