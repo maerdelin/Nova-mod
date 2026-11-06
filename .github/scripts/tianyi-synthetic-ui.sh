@@ -97,7 +97,15 @@ capture 'protocol-list'
 tap '天翼云盘'
 sleep 12
 capture 'after-synthetic-authorized'
-assert_text reports/after-synthetic-authorized.xml '天翼云盘'
+if assert_text reports/after-synthetic-authorized.xml '天翼云盘'; then
+  echo 'TIANYI_SHORTCUT_NAME=PASS' > reports/name-result.txt
+  SHORTCUT_LABEL='天翼云盘'
+else
+  echo 'TIANYI_SHORTCUT_NAME=FAIL' > reports/name-result.txt
+  # Diagnostic fallback ONLY: continue testing real local DAV navigation
+  # through the random capability row, never silently pass the name gate.
+  SHORTCUT_LABEL='[a-f0-9]{48}/'
+fi
 assert_no_dialog reports/after-synthetic-authorized.xml
 check_log SHORTCUT_SAVED
 check_log DIALOG_DISMISS_CALLED
@@ -109,7 +117,7 @@ if ! (check_log NETWORK_REFRESH_INVOKED || check_log NETWORK_REFRESH_RECREATE); 
 fi
 echo 'MOCK_CALLBACK_AUTO_CLOSE_LIST_REFRESH=PASS' | tee reports/refresh.txt
 
-tap '^天翼云盘'
+tap "$SHORTCUT_LABEL"
 sleep 8
 capture 'root-before-restart'
 assert_text reports/root-before-restart.xml 'QA Root Folder'
@@ -120,9 +128,9 @@ adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 6
 enter_network
 capture 'after-process-restart'
-assert_text reports/after-process-restart.xml '天翼云盘'
+assert_text reports/after-process-restart.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
 check_log SAVED_DAV_BOUND
-tap '^天翼云盘'
+tap "$SHORTCUT_LABEL"
 sleep 8
 capture 'root-after-process-restart'
 assert_text reports/root-after-process-restart.xml 'QA Root Folder'
@@ -141,8 +149,8 @@ adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 7
 enter_network
 capture 'after-system-reboot'
-assert_text reports/after-system-reboot.xml '天翼云盘'
-tap '^天翼云盘'
+assert_text reports/after-system-reboot.xml "$([ "$SHORTCUT_LABEL" = '天翼云盘' ] && echo '天翼云盘' || echo '/')"
+tap "$SHORTCUT_LABEL"
 sleep 8
 capture 'root-after-system-reboot'
 assert_text reports/root-after-system-reboot.xml 'QA Root Folder'
@@ -151,6 +159,10 @@ echo 'MOCK_DAV_ROOT_AFTER_SYSTEM_REBOOT=PASS' | tee reports/system-reboot.txt
 adb logcat -d -v threadtime > reports/logcat.txt
 if grep -E -A 20 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
   echo 'SYNTHETIC_AUTH_RUNTIME=FAIL'
+  exit 1
+fi
+if grep -q 'TIANYI_SHORTCUT_NAME=FAIL' reports/name-result.txt; then
+  echo 'TIANYI_SHORTCUT_NAME=FAIL; OTHER_GATES_RECORDED' | tee reports/result.txt
   exit 1
 fi
 echo 'NOVA_TIANYI_MOCK_INTEGRATION=PASS' | tee reports/result.txt
