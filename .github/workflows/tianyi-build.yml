@@ -39,8 +39,12 @@ jobs:
           # Discover the exact phone and Leanback shortcut text binders
           # from the pinned decoded APK, not guesses from upstream source.
           echo 'TIANYI_UI_MODEL_DISCOVERY_BEGIN'
-          find work/decode -name '*.smali' -print0 | xargs -0 grep -lE 'shortcut_name|friendly_uri|GenericNetworkShortcut;->getName|Shortcut;->getName' | head -n 70
-          find work/decode -name '*Shortcut*smali' | grep -E 'Network|Shortcut|Presenter|Mapper' | head -n 100
+          find work/decode -name '*.smali' -print0 | xargs -0 grep -lE 'shortcut_name|friendly_uri|GenericNetworkShortcut;->getName|Shortcut;->getName' | head -n 70 || true
+          find work/decode -name '*Shortcut*smali' | grep -E 'Network|Shortcut|Presenter|Mapper' | head -n 100 || true
+          for unit in 'browser/filebrowsing/network/RootFragmentAdapter.smali' 'browser/filebrowsing/network/NewRootFragment.smali' 'browser/ShortcutDb.smali'; do
+             echo "DISCOVER_FILE=$unit"
+             find work/decode -path "*/com/archos/mediacenter/video/$unit" -exec sed -n '1,320p' {} \;
+          done
           echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
           python3 tianyi/patch_apk.py --decoded work/decode
