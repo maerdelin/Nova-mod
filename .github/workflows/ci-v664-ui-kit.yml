@@ -1,0 +1,29 @@
+name: NOVA v6.6.4 offline patch port kit
+on:
+  push:
+    branches: ['upgrade/nova-v6.6.4-official-20261105']
+    paths: ['.github/workflows/ci-v664-ui-kit.yml']
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch immutable official v6.6.4 universal APK and apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p offline-kit
+          curl -fL --retry 4 -o offline-kit/official-v664-universal.apk "https://github.com/nova-video-player/aos-AVP/releases/download/v6.6.4/org.courville.nova-2674303-6.6.4-20261104.0822-universal-release.apk"
+          echo "1aa2068ffec42a86efe4cee790a3f03e61194a01261405baff73ecdef1ca9ee4  offline-kit/official-v664-universal.apk" | sha256sum -c -
+          curl -fL --retry 3 -o offline-kit/apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar"
+          echo "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  offline-kit/apktool.jar" | sha256sum -c -
+          cp -a scripts patches tests baseline offline-kit/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nova-v664-offline-patch-port-kit
+          path: offline-kit/
+          retention-days: 3
+          compression-level: 0

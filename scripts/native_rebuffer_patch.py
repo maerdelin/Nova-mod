@@ -1963,11 +1963,16 @@ def patch_startup_trace(root: Path) -> None:
         "\t// Retrieve stream information\n",
         "trace stream info start",
     )
+    # Official v6.6.4 AVOS changed _parse_format() to accept FF_PRIV only.
+    # Preserve the exact probe-completion trace on both supported signatures.
+    trace_probe_anchor = ("\tif (_parse_format(ff_p)) goto ErrorExit4;"
+                          if "\tif (_parse_format(ff_p)) goto ErrorExit4;" in text
+                          else "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;")
     text = replace_once(
         text,
-        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;",
+        trace_probe_anchor,
         '\tserprintf("NOVA_STARTUP_TRACE probe_done t=%d streams=%d\\n", atime(), ff_p->fmt->nb_streams);\n'
-        "\tif (_parse_format(s->etype, ff_p)) goto ErrorExit4;",
+        + trace_probe_anchor,
         "trace probe complete",
     )
     text = replace_once(
@@ -2028,7 +2033,7 @@ def apply(
         "architecture": "one independent native raw-source producer before FFmpeg demux; no Java FIFO and no parallel downloader",
         "network_wall": "fixed 128MiB raw warehouse only",
         "raw_io_bytes": 128 * 1024,
-        "dynamic_buffer": "X=file bytes/duration seconds; playback low=2X, resume=5X; raw producer cap=fixed 128MiB",
+        "dynamic_buffer": "X=average source bytes/second; playback low=1.5X, resume=3X (clamped if needed); unknown-X fallback low=24MiB, resume=64MiB; raw cap=fixed 128MiB",
         "fallback": {
             "low_bytes": LOW_BYTES,
             "resume_bytes": RESUME_BYTES,

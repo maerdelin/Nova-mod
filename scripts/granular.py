@@ -395,7 +395,21 @@ TV_LIST_METHOD = ('onBindListViewHolder('
 TV_VIEW_OLD = 'Lqx0;->view:Landroid/view/View;'
 TV_VIEW_NEW = 'Lpx0;->view:Landroid/view/View;'
 
-def port_v66_tv_list_view(rule, changes):
+TV_VIEW_V664 = 'Lsx0;->view:Landroid/view/View;'
+
+def resolved_tv_view(index):
+    # The exact official 6.6.4 R8 rename is sx0; 6.6.2 used px0.
+    # Never write an unresolved field into the installed APK.
+    present = [v for v in (TV_VIEW_NEW, TV_VIEW_V664)
+               if v.split('->', 1)[0] in index and
+               member_available(v.split('->', 1)[0], 'view:Landroid/view/View;', index, {})]
+    if not present:
+        raise Conflict('TV list v6.6.2 target px0.view is missing; v6.6.4 sx0.view also missing')
+    if len(present) != 1:
+        raise Conflict('TV list ViewHolder field descriptor ambiguous: ' + repr(present))
+    return present[0]
+
+def port_v66_tv_list_view(rule, changes, target_view=TV_VIEW_NEW):
     """Map precisely the one inserted field access; reject future ambiguity."""
     if (rule['class'], rule['method']) != (TV_LIST_CLASS, TV_LIST_METHOD):
         return changes
@@ -406,7 +420,7 @@ def port_v66_tv_list_view(rule, changes):
         raise Conflict('TV list holder legacy field count changed: '+str(n))
     for h in fixed:
         for part in ('before','after','left','right','after_left','after_right'):
-            h[part] = [s.replace(TV_VIEW_OLD, TV_VIEW_NEW) for s in h[part]]
+            h[part] = [s.replace(TV_VIEW_OLD, target_view) for s in h[part]]
     return fixed
 
 def audit_tv_list_view(root: Path):
@@ -418,11 +432,10 @@ def audit_tv_list_view(root: Path):
     if TV_LIST_METHOD not in methods:
         raise Conflict('Missing TV onBindListViewHolder method')
     body = methods[TV_LIST_METHOD][0]
-    good = 'iget-object v3, p1, ' + TV_VIEW_NEW
+    view = resolved_tv_view(index)
+    good = 'iget-object v3, p1, ' + view
     if body.count(good) != 1 or TV_VIEW_OLD in body:
         raise Conflict('TV list ViewHolder field is stale/ambiguous in final smali')
-    if 'Lpx0;' not in index or not member_available('Lpx0;', 'view:Landroid/view/View;', index, {}):
-        raise Conflict('TV list v6.6.2 target px0.view is missing')
     return {'status':'PASS', 'scope':'decoded TV video list binding',
             'required_instruction': good, 'old_field_refs':0,
             'target_field_exists':True}
@@ -465,12 +478,34 @@ def apply(root: Path, patch: dict, report: Path | None=None):
                     if len(candidates)==1:
                         method_name=candidates[0]
                         print('NOVA_V66_NETWORK_TYPED_CALLBACK_REMAP '+rule['method']+' -> '+method_name,flush=True)
+                if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and method_name == 'lambda$new$2()V':
+                    proposed = 'lambda$new$0()V'
+                    if proposed in methods:
+                        probe = tokens(methods[proposed][0], symbols)
+                        marker = 'iput-object v0, p0, Lcom/archos/mediacenter/video/leanback/MainFragment;->mRowPendingSelection:Ljava/lang/Object;'
+                        if probe.count(marker) == 1 and register_line(probe) == '.locals 1':
+                            method_name = proposed
+                            print('NOVA_V664_VERIFIED_ROW_SELECTION_LAMBDA_REMAP '+method_name,flush=True)
+                if method_name not in methods and rule['class'] == 'Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask;' and method_name == 'lambda$execute$0(Landroid/database/Cursor;)V':
+                    proposed = 'lambda$execute$1(Landroid/database/Cursor;)V'
+                    if proposed in methods:
+                        probe = tokens(methods[proposed][0], symbols)
+                        if (register_line(probe) == '.locals 4' and
+                            sum('Landroid/database/Cursor;->moveToNext()Z' in q for q in probe) == 1 and
+                            sum('->isFinishing()Z' in q for q in probe) == 1):
+                            method_name = proposed
+                            print('NOVA_V664_VERIFIED_SHORTCUT_LOADER_CALLBACK_REMAP '+method_name,flush=True)
                 if method_name not in methods:
-                    print('NOVA_V66_AVAILABLE_METHODS '+repr(list(methods)),flush=True)
+                    print('NOVA_V664_MISSING_METHOD '+rule['class']+' '+method_name,flush=True)
+                    print('NOVA_V664_METHOD_CANDIDATES '+repr([x for x in methods if x.startswith('lambda')]),flush=True)
                     raise Conflict('Target method missing: '+rule['class']+'->'+rule['method'])
             expected_class_header=rule['class_header']
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/presenter/PosterImageCardPresenter;':
-                expected_class_header=[line.replace('.super Lsx0;', '.super Lrx0;') for line in rule['class_header']]
+                actual_header = class_header(text)
+                allowed_headers = [[line.replace('.super Lsx0;', '.super '+name+';') for line in rule['class_header']] for name in ('Lrx0', 'Lux0')]
+                if actual_header not in allowed_headers:
+                    raise Conflict('Unrecognized official poster class inheritance: '+repr(actual_header))
+                expected_class_header = actual_header
             if class_header(text)!=expected_class_header:
                 print('NOVA_V66_ACTUAL_CLASS_HEADER '+rule['class']+' -> '+repr(class_header(text)),flush=True)
                 print('NOVA_V66_OLD_CLASS_HEADER '+repr(rule['class_header']),flush=True)
@@ -479,7 +514,27 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if register_line(original) not in (rule['registers_before'],rule['registers_after']):
                 raise Conflict('Register allocation changed: '+rule['class']+'->'+rule['method'])
             projected,inverse=project(original,rule['shape_hashes'],rule['labels'],'upstream')
-            changes=port_v66_tv_list_view(rule, rule['hunks'])
+            view_target = resolved_tv_view(index) if (rule['class'], rule['method']) == (TV_LIST_CLASS, TV_LIST_METHOD) else TV_VIEW_NEW
+            changes=port_v66_tv_list_view(rule, rule['hunks'], target_view=view_target)
+            # The verified official v6.6.4 MainFragment moved the row-selection
+            # callback from lambda$new$2 to lambda$new$0. The method identity
+            # remap above also needs to port both hunk header anchors; otherwise
+            # the unchanged instruction body is rejected as missing context.
+            if (rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;'
+                    and rule['method'] == 'lambda$new$2()V'
+                    and method_name == 'lambda$new$0()V'):
+                import copy
+                changes = copy.deepcopy(changes)
+                old_header = '.method private synthetic lambda$new$2()V'
+                new_header = '.method private synthetic lambda$new$0()V'
+                remapped_headers = 0
+                for h in changes:
+                    for part in ('before', 'after', 'left', 'right', 'after_left', 'after_right'):
+                        remapped_headers += h[part].count(old_header)
+                        h[part] = [new_header if line == old_header else line for line in h[part]]
+                if remapped_headers != 2:
+                    raise Conflict('Unexpected row-selection lambda hunk anchor count: ' + str(remapped_headers))
+                print('NOVA_V664_VERIFIED_ROW_SELECTION_HUNK_HEADER_REMAP ' + str(remapped_headers), flush=True)
             # v6.6 R8 changed this callback argument's obfuscated interface name
             # from Lhs1; to Ljs1;. The entire old onMenuItemSelected body is
             # removed by the existing patch. Require the new descriptor in the
@@ -487,13 +542,25 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if rule['class'] == 'Lcom/archos/mediacenter/video/browser/filebrowsing/BrowserByVideoFolder$1;' and rule['method'] == 'onMenuItemSelected(Landroid/view/MenuItem;)Z':
                 import copy
                 changes=copy.deepcopy(changes)
+                # v6.6.4 changed the callback's obfuscated interface again.
+                # Match the actual invocation from exactly this method; never
+                # rewrite unrelated instructions or guess across overloads.
+                real_callback = ('Lms1;' if
+                    sum('Ln4;->a(Ljava/lang/Object;Lms1;)V' in line for line in projected) == 1
+                    else 'Ljs1;')
                 for h in changes:
-                    h['before']=[s.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
-                                            'Ln4;->a(Ljava/lang/Object;Ljs1;)V') for s in h['before']]
+                    h['before']=[line.replace('Ln4;->a(Ljava/lang/Object;Lhs1;)V',
+                        'Ln4;->a(Ljava/lang/Object;' + real_callback + ')V')
+                        for line in h['before']]
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/filebrowsing/ListingFragment;' and rule['method'].startswith('openDetailsActivity('):
                 import copy
                 changes=copy.deepcopy(changes)
-                mapping=[('Lqx0;', 'Lpx0;'), ('Lhs1;', 'Ljs1;')]
+                # The release's obfuscator changes typed ViewHolder and
+                # ActivityOptions descriptors without changing this callback's
+                # purpose. Match each against this exact decoded method.
+                holder = 'Lsx0;' if 'Lsx0;->view:Landroid/view/View;' in text else 'Lpx0;'
+                options = 'Lms1;' if 'Lms1;->' in text else 'Ljs1;'
+                mapping=[('Lqx0;', holder), ('Lhs1;', options)]
                 for h in changes:
                     for field in ('before','after','left','right','after_left','after_right'):
                         h[field]=[__import__('functools').reduce(lambda line,p:line.replace(*p),mapping,item)
@@ -501,17 +568,24 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$1;' and rule['method'].startswith('onItemClicked('):
                 import copy
                 changes=copy.deepcopy(changes)
+                callback = 'Lms1;' if 'Lms1;->' in text else 'Ljs1;'
                 for h in changes:
                     for field in ('before','after','left','right','after_left','after_right'):
-                        h[field]=[line.replace('Lhs1;', 'Ljs1;') for line in h[field]]
+                        h[field]=[line.replace('Lhs1;', callback) for line in h[field]]
             # R8 remapped Leanback presenter descriptors in official v6.6.2.
             # Port all affected instruction/context tokens for this one method;
             # retain the 6 original UI edits and their overlap checks.
             if rule['class'] == 'Lcom/archos/mediacenter/video/leanback/MainFragment;' and rule['method'] == 'loadRows()V':
                 import copy
                 changes=copy.deepcopy(changes)
-                mapping=[('Lp41;', 'Lo41;'), ('Lm41;', 'Ll41;'),
-                         ('Lsx0;', 'Lrx0;'), ('Ltx0;', 'Lsx0;')]
+                if 'Lr41;->setHeaderPresenter(Lo41;)V' in text:
+                    # Exact, observed R8 descriptors from the official 6.6.4
+                    # MainFragment, not from the previous 6.6.2 binary.
+                    mapping=[('Lp41;', 'Lr41;'), ('Lm41;', 'Lo41;'),
+                             ('Lsx0;', 'Lux0;'), ('Ltx0;', 'Lsx0;')]
+                else:
+                    mapping=[('Lp41;', 'Lo41;'), ('Lm41;', 'Ll41;'),
+                             ('Lsx0;', 'Lrx0;'), ('Ltx0;', 'Lsx0;')]
                 for h in changes:
                     for field in ('before','after','left','right','after_left','after_right'):
                         h[field]=[__import__('functools').reduce(lambda s,p:s.replace(*p),mapping,line)
@@ -530,7 +604,7 @@ def apply(root: Path, patch: dict, report: Path | None=None):
             check_labels(restored)
             replacement=materialize(restored,symbols)
             if rule['class'] == TV_LIST_CLASS and rule['method'] == TV_LIST_METHOD:
-                if replacement.count('iget-object v3, p1, ' + TV_VIEW_NEW) != 1 or TV_VIEW_OLD in replacement:
+                if replacement.count('iget-object v3, p1, ' + view_target) != 1 or TV_VIEW_OLD in replacement:
                     raise Conflict('TV list ViewHolder field migration lost in materialize')
             pending[path]=text[:match.start()]+replacement+text[match.end():]
             statuses.append({'class':rule['class'],'method':rule['method'],'status':status,'hunks':len(rule['hunks'])})
@@ -554,6 +628,16 @@ def apply(root: Path, patch: dict, report: Path | None=None):
         ('Lp41;', 'setHeaderPresenter(Lm41;)V'): ('Lo41;', 'setHeaderPresenter(Ll41;)V'),
         ('Lqx0;', 'view:Landroid/view/View;'): ('Lpx0;', 'view:Landroid/view/View;'),
     }
+    # Official 6.6.4 uses a third, verified R8 descriptor set. Resolve
+    # this exact group only when all three target declarations exist.
+    v664_deps = {
+        ('Ln4;', 'a(Ljava/lang/Object;Lhs1;)V'): ('Ln4;', 'a(Ljava/lang/Object;Lms1;)V'),
+        ('Lp41;', 'setHeaderPresenter(Lm41;)V'): ('Lr41;', 'setHeaderPresenter(Lo41;)V'),
+        ('Lqx0;', 'view:Landroid/view/View;'): ('Lsx0;', 'view:Landroid/view/View;'),
+    }
+    if all(c in index and member_available(c, m, index, pending) for c, m in v664_deps.values()):
+        dep_renames.update(v664_deps)
+        print('NOVA_V664_VERIFIED_R8_DEPENDENCY_REMAP=PASS', flush=True)
     for dep in patch.get('dependencies',[]):
         c,m=dep_renames.get((dep['class'],dep['member']),(dep['class'],dep['member']))
         if c not in index or not member_available(c,m,index,pending):
