@@ -57,7 +57,12 @@ public final class TianyiCloud {
     public static void startIfSaved(Context c) {
         TianyiCloud cloud=get(c);
         cloud.workers.execute(() -> {
-            try {if(!cloud.store.read().refreshToken.isEmpty())cloud.startServer();}catch(Exception ignored){}
+            try {
+                if(!cloud.store.read().refreshToken.isEmpty()) {
+                    cloud.startServer();
+                    TianyiDiag.event("DAV_RESTORE","OK",0);
+                }
+            }catch(Exception ignored){TianyiDiag.event("DAV_RESTORE","FAIL",-1);}
         });
     }
     public void startServer() throws Exception {
@@ -67,13 +72,14 @@ public final class TianyiCloud {
             sock.setReuseAddress(true);
             sock.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),PORT),32);
             started=true;
+            TianyiDiag.event("DAV_BIND","OK",PORT);
             Thread acceptor=new Thread(()->{
                 while(!sock.isClosed()) {
                     try {
                         Socket client=sock.accept();
                         client.setSoTimeout(25000);
                         workers.execute(()->handle(client));
-                    }catch(Exception ignored){}
+                    }catch(Exception ignored){TianyiDiag.event("DAV_ACCEPT","FAIL",-1);}
                 }
             },"nova-tianyi-dav");
             acceptor.setDaemon(true);
@@ -81,10 +87,13 @@ public final class TianyiCloud {
             // OpenList's PC driver periodically pings its authenticated session.
             // Android can suspend the timer; every DAV request can also refresh.
             keepAlive.scheduleWithFixedDelay(() -> {
+                long diagStart=TianyiDiag.tick();
                 try {
                     if(!store.read().refreshToken.isEmpty())
                         apiGet("/keepUserSession.action",new LinkedHashMap<String,String>());
+                    TianyiDiag.event("KEEPALIVE","OK",0,diagStart,0L);
                 } catch(Exception e) {
+                    TianyiDiag.event("KEEPALIVE","FAIL",-1,diagStart,0L);
                     nextRefresh=0;
                     try{ensureSession();}catch(Exception ignored){}
                 }
@@ -97,6 +106,8 @@ public final class TianyiCloud {
     }
     public void beginLogin(QrListener listener, Callable<Boolean> alive) {
         workers.execute(()->{
+            long diagStart=TianyiDiag.tick();
+            TianyiDiag.event("QR_START","BEGIN",0);
             try {
                 String finger=store.getOrCreateFinger();
                 String ts=Long.toString(System.currentTimeMillis());
@@ -122,6 +133,7 @@ public final class TianyiCloud {
                 JSONObject qr=json(request("POST",AUTH+"/api/logbox/oauth2/getUUID.do",null,map("appId",APP_ID),headers,true).body);
                 String uuid=qr.optString("uuid",""), enc=qr.optString("encryuuid","");
                 if(uuid.isEmpty())throw new IOException("QR challenge unavailable");
+                TianyiDiag.event("QR_CREATE","OK",0,diagStart,0L);
                 listener.onCode(uuid);
                 final long until=System.currentTimeMillis()+180000L;
                 while(System.currentTimeMillis()<until && Boolean.TRUE.equals(alive.call())) {
@@ -135,7 +147,7 @@ public final class TianyiCloud {
                     JSONObject status=json(request("POST",AUTH+"/api/logbox/oauth2/qrcodeLoginState.do",
                             null,form,headers,true).body);
                     int state=status.optInt("status",-100);
-                    if(state==0){
+                    if(state==0){TianyiDiag.event("QR_POLL","AUTHORIZED",state);
                         String redirect=status.optString("redirectUrl","");
                         if(redirect.isEmpty())throw new IOException("Missing QR authorization redirect");
                         JSONObject token=json(request("POST",API+"/getSessionForPC.action",
@@ -144,18 +156,29 @@ public final class TianyiCloud {
                         String access=token.optString("accessToken",""),refresh=token.optString("refreshToken","");
                         if(access.isEmpty()||refresh.isEmpty())throw new IOException("QR token exchange failed");
                         store.saveTokens(access,refresh);
+                        TianyiDiag.event("QR_TOKEN","OK",0,diagStart,0L);
                         setSession(token);
                         ensureSession();
                         list("-11"); // Do not create a shortcut until the actual root listing succeeds.
+                        TianyiDiag.event("QR_ROOT","OK",0,diagStart,0L);
                         listener.onAuthorized(rootUri());
                         return;
                     }
-                    if(state==-11001)throw new IOException("QR expired");
-                    if(state==-11002)listener.onStatus("请在手机上确认登录");
+                    if(state==-11001){
+                        TianyiDiag.event("QR_POLL","EXPIRED",state);
+                        throw new IOException("QR expired");
+                    }
+                    if(state==-11002){
+                        TianyiDiag.event("QR_POLL","CONFIRM",state);
+                        listener.onStatus("请在手机上确认登录");
+                    }
                     else if(state!=-106)throw new IOException("QR authorization rejected ("+state+")");
                 }
                 if(Boolean.TRUE.equals(alive.call()))listener.onStatus("二维码已过期，请重新选择天翼云盘");
-            }catch(Exception e) {if(safeAlive(alive))listener.onStatus("天翼云盘登录失败："+cleanError(e));}
+            }catch(Exception e) {
+                TianyiDiag.event("QR_LOGIN","FAIL",-1,diagStart,0L);
+                if(safeAlive(alive))listener.onStatus("天翼云盘登录失败："+cleanError(e));
+            }
         });
     }
     private static boolean safeAlive(Callable<Boolean> c) {try{return c.call();}catch(Exception e){return false;}}
@@ -173,6 +196,8 @@ public final class TianyiCloud {
     public void ensureSession() throws Exception {
         synchronized(sessionLock){
             if(!sessionKey.isEmpty()&&System.currentTimeMillis()<nextRefresh)return;
+            long diagStart=TianyiDiag.tick();
+            TianyiDiag.event("SESSION","BEGIN",0);
             TianyiStore.Saved saved=store.read();
             if(saved.refreshToken.isEmpty())throw new IOException("Please scan the Tianyi QR code");
             JSONObject data=null;
@@ -188,12 +213,17 @@ public final class TianyiCloud {
                 String access=refreshed.optString("accessToken",""), refresh=refreshed.optString("refreshToken","");
                 if(access.isEmpty()||refresh.isEmpty())throw new IOException("Please re-scan Tianyi QR code");
                 store.saveTokens(access,refresh);
+                TianyiDiag.event("TOKEN_REFRESH","OK",0,diagStart,0L);
                 data=json(request("GET",API+"/getSessionForPC.action",
                         suffix(map("appId",APP_ID,"accessToken",access,"returnType","JSON")),
                         null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
             }
             setSession(data);
-            if(sessionKey.isEmpty())throw new IOException("Cannot initialize Tianyi session");
+            if(sessionKey.isEmpty()) {
+                TianyiDiag.event("SESSION","FAIL",-1,diagStart,0L);
+                throw new IOException("Cannot initialize Tianyi session");
+            }
+            TianyiDiag.event("SESSION","OK",0,diagStart,0L);
         }
     }
     private Map<String,String> signedHeaders(String path) throws Exception {
@@ -227,6 +257,7 @@ public final class TianyiCloud {
         String name,id,parent;long size,mtime;boolean dir;
     }
     private List<FileObj> list(String folderId) throws Exception {
+        long diagStart=TianyiDiag.tick();
         List<FileObj> out=new ArrayList<>();
         for(int page=1;page<=200;page++){
             JSONObject r=apiGet("/listFiles.action",map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
@@ -240,6 +271,7 @@ public final class TianyiCloud {
             if(files!=null)for(int i=0;i<files.length();i++){JSONObject j=files.getJSONObject(i);out.add(obj(j,false,folderId));count++;}
             if(count<1000)break;
         }
+        TianyiDiag.event("DIRECTORY","OK",0,diagStart,out.size());
         return out;
     }
     private static FileObj obj(JSONObject j,boolean dir,String parent){
@@ -264,15 +296,18 @@ public final class TianyiCloud {
         return cursor;
     }
     private String downloadUrl(FileObj f) throws Exception {
+        long diagStart=TianyiDiag.tick();
         JSONObject data=apiGet("/getFileDownloadUrl.action",map("fileId",f.id,"dt","3","flag","1"));
         String url=data.optString("fileDownloadUrl","");
         if(url.isEmpty())throw new IOException("No download URL");
         url=url.replace("&amp;","&").replaceFirst("^http://","https://");
         if(url.startsWith("//"))url="https:"+url;
         if(!url.startsWith("https://"))throw new IOException("Insecure cloud download URL");
+        TianyiDiag.event("FILE_LINK","OK",0,diagStart,f.size);
         return url;
     }
     private void handle(Socket socket){
+        long diagStart=TianyiDiag.tick();
         try(Socket s=socket){
             BufferedInputStream in=new BufferedInputStream(s.getInputStream());
             OutputStream out=new BufferedOutputStream(s.getOutputStream());
@@ -281,6 +316,8 @@ public final class TianyiCloud {
             String[] fields=request.split(" ");
             if(fields.length<2){error(out,400);return;}
             String method=fields[0], raw=fields[1];
+            final String davEvent = method.equals("PROPFIND")?"DAV_PROPFIND":
+                    method.equals("GET")?"DAV_GET":method.equals("HEAD")?"DAV_HEAD":"DAV_OTHER";
             Map<String,String> headers=new HashMap<>();
             for(int n=0;n<80;n++){
                 String line=readLine(in);if(line==null||line.isEmpty())break;
@@ -315,7 +352,9 @@ public final class TianyiCloud {
                 xml.append("</d:multistatus>");
                 byte[] body=xml.toString().getBytes(StandardCharsets.UTF_8);
                 respond(out,207,"Content-Type: application/xml; charset=utf-8\r\nContent-Length: "+body.length+"\r\n");
-                out.write(body);out.flush();return;
+                out.write(body);out.flush();
+                TianyiDiag.event("DAV_PROPFIND","OK",207,diagStart,items.size());
+                return;
             }
             if(f.dir){error(out,405);return;}
             String url=downloadUrl(f);
@@ -328,18 +367,24 @@ public final class TianyiCloud {
             c.setRequestMethod("GET");
             int status=c.getResponseCode();
             if(status!=200&&status!=206){c.disconnect();error(out,502);return;}
-            if(range!=null&&status!=206){c.disconnect();error(out,502);return;}
+            if(range!=null&&status!=206){
+                TianyiDiag.event("DAV_RANGE","FAIL",status,diagStart,0L);
+                c.disconnect();error(out,502);return;
+            }
             long length=c.getContentLengthLong();
             StringBuilder extra=new StringBuilder("Content-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\n");
             if(length>=0)extra.append("Content-Length: ").append(length).append("\r\n");
             if(c.getHeaderField("Content-Range")!=null)extra.append("Content-Range: ").append(c.getHeaderField("Content-Range")).append("\r\n");
+            TianyiDiag.event(range!=null?"DAV_RANGE":davEvent,"OK",status,diagStart,length);
             respond(out,status,extra.toString());
             if(method.equals("HEAD")){c.disconnect();return;}
             try(InputStream source=c.getInputStream()){
                 byte[] buf=new byte[65536];int n;
                 while((n=source.read(buf))!=-1){out.write(buf,0,n);out.flush();}
             }finally{c.disconnect();}
-        }catch(Exception ignored){}
+        }catch(Exception ignored){
+            TianyiDiag.event("DAV_REQUEST","FAIL",-1,diagStart,0L);
+        }
     }
     private static String encodeSegment(String s) throws Exception {
         return URLEncoder.encode(s,"UTF-8").replace("+","%20");
@@ -413,7 +458,9 @@ public final class TianyiCloud {
             c.setRequestProperty("Content-Type","application/x-www-form-urlencoded;charset=UTF-8");
             try(OutputStream o=c.getOutputStream()){o.write(data);}
         }
+        long diagStart=TianyiDiag.tick();
         int status=c.getResponseCode();
+        TianyiDiag.event("CLOUD_HTTP",status>=400?"FAIL":"OK",status,diagStart,0L);
         cookies.put(target.toURI(),c.getHeaderFields());
         if(status>=300&&status<400&&redirect){
             String location=c.getHeaderField("Location");
