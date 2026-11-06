@@ -366,7 +366,7 @@ public final class TianyiCloud {
         List<FileObj> out=new ArrayList<>();
         for(int page=1;page<=200;page++){
             JSONObject r=apiGet("/listFiles.action",map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
-                    "pageNum",Integer.toString(page),"pageSize","1000","recursive","0","mediaType","0",
+                    "pageNum",Integer.toString(page),"pageSize","1000","recursive","0",
                     "orderBy","filename","descending","false"));
             JSONObject arr=r.optJSONObject("fileListAO");
             if(arr==null)throw new IOException("Cloud folder list unavailable");
