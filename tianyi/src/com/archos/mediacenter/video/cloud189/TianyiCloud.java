@@ -194,7 +194,15 @@ public final class TianyiCloud {
                 if(Boolean.TRUE.equals(alive.call()))listener.onStatus("二维码已过期，请重新选择天翼云盘");
             }catch(Exception e) {
                 TianyiDiag.event("QR_LOGIN_"+phase[0],"FAIL",-1,diagStart,0L);
-                if(safeAlive(alive))listener.onStatus("天翼云盘 "+phase[0]+" 失败 ("+e.getClass().getSimpleName()+")，点击重试");
+                if(safeAlive(alive)) {
+                    String cause=e.getClass().getSimpleName();
+                    // Crypto errors use only a static stage name, not provider messages
+                    // which might reveal internal device/Keystore details.
+                    if("SECURE_STORE".equals(phase[0]) && e instanceof IOException
+                            && e.getMessage()!=null && e.getMessage().matches("CRYPTO_[A-Z_]+[A-Za-z]+Exception"))
+                        cause=e.getMessage();
+                    listener.onStatus("天翼云盘 "+phase[0]+" 失败 ("+cause+")，点击重试");
+                }
             }
         });
     }
