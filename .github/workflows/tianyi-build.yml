@@ -36,6 +36,12 @@ jobs:
           # Read-only inspection of optimized NOVA network shortcut rendering
           find work/decode -name 'NetworkShortcutPresenter.smali' -exec grep -n -A 90 'onBindViewHolder' {} \; || true
           find work/decode -name 'GenericNetworkShortcutMapper.smali' -exec grep -n -A 75 'bind(Landroid/database/Cursor;)' {} \; || true
+          # Discover the exact phone and Leanback shortcut text binders
+          # from the pinned decoded APK, not guesses from upstream source.
+          echo 'TIANYI_UI_MODEL_DISCOVERY_BEGIN'
+          find work/decode -name '*.smali' -print0 | xargs -0 grep -lE 'shortcut_name|friendly_uri|GenericNetworkShortcut;->getName|Shortcut;->getName' | head -n 70
+          find work/decode -name '*Shortcut*smali' | grep -E 'Network|Shortcut|Presenter|Mapper' | head -n 100
+          echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
           python3 tianyi/patch_apk.py --decoded work/decode
           # Assert the patched adapter really retains original IDs and only
