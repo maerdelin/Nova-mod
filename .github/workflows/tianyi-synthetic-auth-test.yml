@@ -1,28 +1,33 @@
 name: NOVA Tianyi synthetic authorization UI integration test
 on:
-  push:
+  workflow_run:
+    workflows: ['NOVA Tianyi Cloud test APK']
+    types: [completed]
     branches: ['feat/tianyi-cloud-webdav-20261106']
-    paths: ['.github/workflows/tianyi-synthetic-auth-test.yml', '.github/scripts/tianyi-synthetic-ui.sh', 'tianyi/qa_mock_auth_patch.py']
 permissions:
   contents: read
   actions: read
 jobs:
   synthetic-auth-ui:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Download production candidate for QA-only DEX replacement
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}"
           mkdir -p work tools reports
-          gh run download 42200696148 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir work/source
+          gh run download "${{ github.event.workflow_run.id }}" --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir work/source
           (cd work/source/dist && sha256sum -c SHA256SUMS.txt)
           curl -fL --retry 3 -o tools/zxing-core.jar https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
-      - name: Recompile ONLY Tianyi DEX with a mock authorization callback
+      - name: Recompile ONLY Tianyi DEX with mock auth and simulated root directory
         shell: bash
         run: |
           set -euo pipefail
@@ -62,7 +67,7 @@ jobs:
           test -c /dev/kvm
           sudo chmod 666 /dev/kvm
           test -w /dev/kvm
-      - name: Test callback close, shortcut refresh and process restart
+      - name: Test callback close, refresh, root list, app restart and full Android reboot
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
