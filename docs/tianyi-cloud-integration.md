@@ -4,7 +4,7 @@
 
 用户提供的实际“服务器”弹窗截图是本功能的权威布局参照。
 
-- 左侧协议列表的显示顺序：FTP、SFTP、FTPS、SSHJ、SMB、**天翼云盘**、SMBJ、WebDAV、WebDAVS。
+- 左侧协议列表**以用户截图实际显示顺序为准**：WebDAV、SMB、**天翼云盘**、FTP、SFTP、FTPS、SSHJ、SMBJ、WebDAVS。不要按上游 resources 数组顺序强制重排其余协议。
 - 切换到“天翼云盘”后，右侧连接配置区域**仅显示一个天翼云盘登录二维码**。隐藏服务器地址、端口、路径、用户名、密码、域、显示密码及保存密码等所有原输入框。
 - 必须在二维码旁/下方不干扰扫码的位置呈现最小必要的状态文字：等待扫码、手机确认中、登录成功、二维码过期（可刷新）、网络异常、需要重新登录。若用户明确要求二维码单独显示，初始状态应只显示二维码；临时反馈可通过 Toast。
 - 手机用天翼云盘客户端扫码确认。成功后**自动**添加名称为“天翼云盘”的网络快捷方式；不要求再点“确定”，也不要求输入地址、端口、账号或密码。
@@ -25,7 +25,7 @@
 7 WebDAVS
 ```
 
-新数组插入索引 5，仅改变**视觉选择索引**，不能改变其余代码原有协议类型的持久编号：
+注意：用户 APK 的实际弹出列表以 WebDAV 开头，和上游资源数组不一致（可能是现有补丁或适配器排序）；**必须先检查 v6.6.4 最终解包资源和 Spinner 绑定逻辑**，然后将天翼云盘插到实际显示的 SMB 后面，绝不能盲目以资源数组索引 5 实施。以下只是资源数组未重排时的参考映射，不是可直接使用的最终代码：
 
 ```java
 static final int UI_TIANYI_INDEX = 5;
@@ -41,7 +41,7 @@ int legacyProtocolTypeToUiIndex(int legacyType) {
 }
 ```
 
-这些转换至少覆盖 `NetworkServerCredentialsDialog` 的初始选择、onItemSelected、确认按钮、最后一次协议选择的 SharedPreferences、`NetworkRootFragment` 的回调、移动端 `ServerCredentialsDialog`、`UriUtils` 以及其他直接读取 `@array/protocol_types` 索引的路径。不要在未审核所有调用点前将新 UI 索引传给 `UriUtils.getTypeUri`，因为索引 5 原先代表 SMBJ。
+上面的转换只有在实际 Spinner 采用上游 `protocol_types` 未重排数组时才成立。如果 APK 中显示顺序已变，必须重建 `UI index -> legacy protocol ID` 映射并编写验证测试。无论如何，这些转换至少覆盖 `NetworkServerCredentialsDialog` 的初始选择、onItemSelected、确认按钮、最后一次协议选择的 SharedPreferences、`NetworkRootFragment` 的回调、移动端 `ServerCredentialsDialog`、`UriUtils` 以及其他直接读取 `@array/protocol_types` 索引的路径。不要在未审核所有调用点前将新 UI 索引传给 `UriUtils.getTypeUri`，因为索引 5 原先代表 SMBJ。
 
 ## OpenList 源码基线（截至 2026-11-06）
 
