@@ -28,6 +28,7 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 
 import java.lang.reflect.Method;
+import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -203,40 +204,9 @@ public final class TianyiUi {
                 });
             }
             public void onAuthorized(String uri) {
-                MAIN.post(()->{
-                    if(guard.get()!=current || !isShowing(fragment))return;
-                    try{
-                        Uri rootUri=Uri.parse(uri);
-                        if(!"webdav".equals(rootUri.getScheme())
-                                ||!"127.0.0.1".equals(rootUri.getHost()))
-                            throw new SecurityException("Invalid local WebDAV root");
-                        Class<?> dbType=Class.forName("com.archos.mediacenter.video.browser.ShortcutDb");
-                        @SuppressWarnings({"rawtypes","unchecked"})
-                        Object db=Enum.valueOf((Class<? extends Enum>)dbType,"STATIC");
-                        long existing=((Number)dbType.getMethod("isShortcut",Context.class,String.class)
-                                .invoke(db,activity,uri)).longValue();
-                        if(existing<0) {
-                            Object inserted=dbType.getMethod("insertShortcut",Context.class,
-                                    Uri.class,String.class,String.class)
-                                    .invoke(db,activity,rootUri,"天翼云盘","天翼云盘");
-                            if(!Boolean.TRUE.equals(inserted))
-                                throw new IllegalStateException("shortcut insert returned false");
-                        }
-                        TianyiDiag.event("SHORTCUT_CREATE","OK",0);
-                        guard.incrementAndGet();
-                        // Refresh the existing network shortcuts row directly;
-                        // don't attempt to launch an unrelated ListingActivity
-                        // that may not exist in this optimized v6.6.4 APK.
-                        refreshNetworkPage(fragment);
-                        fragment.getClass().getMethod("dismiss").invoke(fragment);
-                        Toast.makeText(activity,"天翼云盘已添加到网络存储",Toast.LENGTH_SHORT).show();
-                    }catch(Exception e) {
-                        TianyiDiag.event("SHORTCUT_CREATE","FAIL",-1);
-                        showError(target,"添加快捷方式失败，点击重试");
-                        Toast.makeText(activity,"授权成功，但网络快捷方式保存失败",Toast.LENGTH_LONG).show();
-                    }
-                });
+                MAIN.post(()->saveAuthorizedShortcut(fragment,activity,target,guard,current,uri));
             }
+
         },()->guard.get()==current && isShowing(fragment));
         return true;
     }
@@ -288,21 +258,115 @@ public final class TianyiUi {
         p.message.setText(message);
         p.message.setVisibility(View.VISIBLE);
     }
-    private static void refreshNetworkPage(Object dialog) throws Exception {
-        Object manager=dialog.getClass().getMethod("getParentFragmentManager").invoke(dialog);
-        if(manager==null)throw new IllegalStateException("No FragmentManager");
-        Object out=manager.getClass().getMethod("getFragments").invoke(manager);
-        if(!(out instanceof List))throw new IllegalStateException("No active fragments");
-        for(Object f:(List<?>)out) {
-            if(f!=null && "com.archos.mediacenter.video.leanback.network.NetworkRootFragment"
-                    .equals(f.getClass().getName())) {
-                Method refresh=f.getClass().getMethod("novaTianyiRefreshShortcuts");
-                refresh.invoke(f);
-                TianyiDiag.event("NETWORK_REFRESH","OK",0);
+    // The FragmentManager APIs were renamed in this optimized NOVA build.
+    // The network page registers itself from its real onResume Smali hook.
+    // Keep only a weak reference: this must not leak an Activity.
+    private static volatile WeakReference<Object> activeNetworkPage=new WeakReference<>(null);
+
+    public static void registerNetworkPage(Object page) {
+        if(page!=null)activeNetworkPage=new WeakReference<>(page);
+    }
+
+    /**
+     * Saves the verified local DAV URI in NOVA's existing ShortcutDb.
+     * A previously saved URI is success (idempotent, no duplicate shortcut).
+     */
+    public static boolean installCloudShortcut(Context ctx,String rawUri) throws Exception {
+        Uri uri=Uri.parse(rawUri);
+        if(!"webdav".equals(uri.getScheme())
+                ||!"127.0.0.1".equals(uri.getHost())
+                ||uri.getPort()!=27989
+                ||uri.getPathSegments().isEmpty()
+                ||uri.getPathSegments().get(0).length()<32)
+            throw new SecurityException("Invalid local cloud DAV address");
+        Class<?> cls=Class.forName("com.archos.mediacenter.video.browser.ShortcutDb");
+        @SuppressWarnings({"rawtypes","unchecked"})
+        Object db=Enum.valueOf((Class<? extends Enum>)cls,"STATIC");
+        Method exists=cls.getMethod("isShortcut",Context.class,String.class);
+        long already=((Number)exists.invoke(db,ctx,rawUri)).longValue();
+        if(already>=0)return true;
+        Object result=cls.getMethod("insertShortcut",Context.class,
+                Uri.class,String.class,String.class)
+                .invoke(db,ctx,uri,"天翼云盘","天翼云盘");
+        if(!Boolean.TRUE.equals(result))throw new IllegalStateException("ShortcutDb insert failed");
+        long persisted=((Number)exists.invoke(db,ctx,rawUri)).longValue();
+        if(persisted<0)throw new IllegalStateException("ShortcutDb persistence check failed");
+        return true;
+    }
+
+    private static void saveAuthorizedShortcut(Object fragment,Activity activity,
+                                                QrPanel panel,AtomicInteger guard,
+                                                int generation,String uri) {
+        if(guard.get()!=generation || !isShowing(fragment))return;
+        try {
+            installCloudShortcut(activity,uri);
+            TianyiDiag.event("SHORTCUT_SAVE","OK",0);
+        }catch(Exception saveError) {
+            TianyiDiag.event("SHORTCUT_SAVE","FAIL",-1);
+            // The phone is already authorized. Retrying a local database
+            // operation must NEVER start a second cloud QR login request.
+            showError(panel,"授权成功，保存失败，点击重试");
+            panel.surface.setTag("retry-save");
+            panel.surface.setOnClickListener(v->{
+                if("retry-save".equals(v.getTag()))
+                    saveAuthorizedShortcut(fragment,activity,panel,guard,generation,uri);
+            });
+            Toast.makeText(activity,"授权已成功，重新保存不需要扫码",Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Invalidate pending QR callbacks before any asynchronous list reload.
+        guard.incrementAndGet();
+        boolean refreshScheduled=false;
+        try {
+            refreshScheduled=refreshNetworkPage();
+        }catch(Exception refreshError) {
+            TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);
+        }
+        // Never report a successful insert as a failure merely because
+        // refresh or dismissal failed. Always try closing the QR dialog.
+        dismissAuthorizedDialog(fragment);
+        Toast.makeText(activity,
+                refreshScheduled?"天翼云盘已添加到网络存储":
+                                 "天翼云盘已保存，网络列表稍后更新",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private static void dismissAuthorizedDialog(Object fragment) {
+        try {
+            fragment.getClass().getMethod("dismiss").invoke(fragment);
+            TianyiDiag.event("QR_DIALOG","DISMISSED",0);
+            return;
+        }catch(Exception ignored){}
+        try {
+            fragment.getClass().getMethod("dismissAllowingStateLoss").invoke(fragment);
+            TianyiDiag.event("QR_DIALOG","DISMISSED",0);
+            return;
+        }catch(Exception ignored){}
+        // Works with the original DialogFragment even when its AndroidX
+        // library methods have been renamed by the APK optimizer.
+        try {
+            Object dialog=fragment.getClass().getMethod("getDialog").invoke(fragment);
+            if(dialog instanceof Dialog) {
+                ((Dialog)dialog).dismiss();
+                TianyiDiag.event("QR_DIALOG","DISMISSED",0);
                 return;
             }
+        }catch(Exception ignored){}
+        TianyiDiag.event("QR_DIALOG","FAIL",-1);
+    }
+
+    private static boolean refreshNetworkPage() throws Exception {
+        WeakReference<Object> ref=activeNetworkPage;
+        Object page=ref==null?null:ref.get();
+        if(page==null) {
+            TianyiDiag.event("NETWORK_REFRESH","UNAVAILABLE",0);
+            return false;
         }
-        throw new IllegalStateException("Network page not active");
+        // Smali bridge runs the SAME NetworkShortcutsLoaderTask that NOVA
+        // uses on onResume; reuses its existing adapter and thread handling.
+        page.getClass().getMethod("novaTianyiRefreshShortcuts").invoke(page);
+        TianyiDiag.event("NETWORK_REFRESH","OK",0);
+        return true;
     }
     private static boolean isShowing(Object fragment) {
         try {
