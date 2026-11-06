@@ -183,7 +183,19 @@ public final class TianyiUi {
                         Toast.makeText(activity,"请在手机天翼云盘中确认授权",Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    showError(target,msg.length()<85 ? msg : "登录失败，点击重试");
+                    // Never blank an already-rendered QR for a later network
+                    // or account-state error. Keep it visible until the scan
+                    // challenge expires; the message remains separately visible.
+                    boolean qrVisible=target.image.getVisibility()==View.VISIBLE;
+                    if(qrVisible) {
+                        target.surface.setTag("retry");
+                        target.spinner.setVisibility(View.GONE);
+                        target.message.setText(msg.length()<85 ? msg : "网络异常，点击重试");
+                        target.message.setVisibility(View.VISIBLE);
+                        target.message.bringToFront();
+                    } else {
+                        showError(target,msg.length()<85 ? msg : "登录失败，点击重试");
+                    }
                     TianyiDiag.event("QR_STATUS","ERROR",0);
                     // Error details are reported by the cloud driver as
                     // privacy-safe diagnostic phase/class labels.
