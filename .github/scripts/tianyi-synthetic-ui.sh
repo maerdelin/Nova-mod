@@ -8,8 +8,29 @@ adb logcat -c || true
 trap 'adb logcat -d -v threadtime > reports/logcat.txt 2>/dev/null || true' EXIT
 
 dump_ui() {
-  adb shell uiautomator dump /sdcard/nova-tianyi-test-ui.xml >/dev/null
-  adb exec-out cat /sdcard/nova-tianyi-test-ui.xml > reports/current-ui.xml
+  # UiTestAutomationBridge sometimes returns a NULL root while a fresh
+  # emulator/App layout is still settling. Never parse an error as XML.
+  local n
+  for n in $(seq 1 12); do
+    adb shell uiautomator dump /sdcard/nova-tianyi-test-ui.xml > reports/ui-dump-last.txt 2>&1 || true
+    adb exec-out cat /sdcard/nova-tianyi-test-ui.xml > reports/current-ui.xml 2>/dev/null || true
+    if python3 - <<'PY'
+import xml.etree.ElementTree as ET
+try:
+    tree=ET.parse('reports/current-ui.xml')
+    assert tree.getroot().tag == 'hierarchy'
+except (ET.ParseError, AssertionError, OSError):
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 3
+  done
+  adb exec-out screencap -p > reports/ui-automation-failure.png || true
+  cat reports/ui-dump-last.txt
+  echo 'UI_HIERARCHY_NOT_READY_AFTER_12_ATTEMPTS' >&2
+  return 1
 }
 tap() {
   dump_ui
@@ -64,7 +85,7 @@ enter_network() {
 }
 
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
-sleep 5
+sleep 9
 enter_network
 tap 'browse|add server|network connection|服务器|添加'
 sleep 3
