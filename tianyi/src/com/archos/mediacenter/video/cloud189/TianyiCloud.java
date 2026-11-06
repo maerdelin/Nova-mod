@@ -79,8 +79,13 @@ public final class TianyiCloud {
                         try {
                             cloud.ensureSession();
                             TianyiDiag.event("DAV_RESTORE_SESSION","OK",0);
+                            // Restoration is only usable when the original
+                            // account can list its personal cloud root.
+                            long startedAt=TianyiDiag.tick();
+                            java.util.List<FileObj> entries=cloud.list("-11");
+                            TianyiDiag.event("DAV_RESTORE_ROOT","OK",207,startedAt,entries.size());
                         } catch(Exception restoreError) {
-                            TianyiDiag.event("DAV_RESTORE_SESSION","FAIL",-1);
+                            TianyiDiag.event("DAV_RESTORE_ROOT","FAIL",-1);
                         }
                     }
                 }
