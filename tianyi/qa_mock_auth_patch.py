@@ -43,7 +43,11 @@ replacements={
     '            TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);':
       '            TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);\n            android.util.Log.i("NOVA_TIANYI_QA","REFRESH_ERROR "+refreshError.getClass().getSimpleName());',
     '        dismissAuthorizedDialog(fragment);':
-      '        dismissAuthorizedDialog(fragment);\n        android.util.Log.i("NOVA_TIANYI_QA","DISMISS_CALLED");'
+      '        dismissAuthorizedDialog(fragment);\n        android.util.Log.i("NOVA_TIANYI_QA","DISMISS_CALLED");',
+    '        if(page!=null)activeNetworkPage=new WeakReference<>(page);':
+      '        if(page!=null)activeNetworkPage=new WeakReference<>(page);\n        android.util.Log.i("NOVA_TIANYI_QA","REGISTER_NETWORK_PAGE");',
+    '        Object page=ref==null?null:ref.get();':
+      '        Object page=ref==null?null:ref.get();\n        android.util.Log.i("NOVA_TIANYI_QA","REFRESH_HAS_PAGE_"+(page!=null));'
 }
 for old,new in replacements.items():
     if ui.count(old)!=1:raise SystemExit("QA UI anchor mismatch: "+old)
