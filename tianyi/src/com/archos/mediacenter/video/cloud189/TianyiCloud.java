@@ -51,6 +51,19 @@ public final class TianyiCloud {
     private volatile boolean started=false;
 
     private TianyiCloud(Context c) {app=c.getApplicationContext();store=new TianyiStore(app);}
+    /** Match only THIS installation's persisted random DAV capability.
+     * R8-optimized phone mappers may supply a path label rather than its
+     * full webdav:// URI; do not rename arbitrary 48-character strings. */
+    public static boolean isOwnShortcutLabel(String label) {
+        if(label==null)return false;
+        TianyiCloud cloud=INSTANCE;
+        if(cloud==null)return false;
+        String capability=cloud.store.existingPathKey();
+        if(capability==null || !capability.matches("[0-9a-fA-F]{48}"))return false;
+        String s=label.trim();
+        return s.equals(capability) || s.equals(capability+"/")
+                || s.equals("/"+capability) || s.equals("/"+capability+"/");
+    }
     public static synchronized TianyiCloud get(Context c) {
         if(INSTANCE==null) INSTANCE=new TianyiCloud(c);
         return INSTANCE;
