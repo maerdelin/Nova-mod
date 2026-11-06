@@ -63,8 +63,26 @@ public final class TianyiCloud {
         cloud.workers.execute(() -> {
             try {
                 if(!cloud.store.existingPathKey().isEmpty()) {
+                    // The shortcut survives reboot independently of this
+                    // process. Rebind its existing port and capability, never
+                    // generate a fresh key or make a second shortcut.
                     cloud.startServer();
                     TianyiDiag.event("DAV_RESTORE","OK",0);
+                    TianyiStore.Saved saved=cloud.store.read();
+                    if(saved.refreshToken.isEmpty()) {
+                        TianyiDiag.event("DAV_RESTORE_TOKEN","MISSING",0);
+                    } else {
+                        TianyiDiag.event("DAV_RESTORE_TOKEN","PRESENT",0);
+                        // Validate the restored session in the background,
+                        // before a directory-open request needs it. A failed
+                        // validation must not delete persistent credentials.
+                        try {
+                            cloud.ensureSession();
+                            TianyiDiag.event("DAV_RESTORE_SESSION","OK",0);
+                        } catch(Exception restoreError) {
+                            TianyiDiag.event("DAV_RESTORE_SESSION","FAIL",-1);
+                        }
+                    }
                 }
             }catch(Exception ignored){
                 TianyiDiag.event("DAV_RESTORE","FAIL",-1);
