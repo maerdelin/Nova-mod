@@ -14,7 +14,7 @@ collect_logs() {
 trap collect_logs EXIT
 
 echo "NOVA_TIANYI_INSTALL_BEGIN"
-adb install -r "$APK" | tee reports/install.txt
+adb install -r -g "$APK" | tee reports/install.txt
 grep -q 'Success' reports/install.txt
 echo "NOVA_TIANYI_INSTALL_PASS"
 
@@ -33,6 +33,8 @@ if grep -E -q 'FATAL EXCEPTION|Fatal signal.*org.courville.nova' reports/logcat.
   exit 1
 fi
 adb exec-out screencap -p > reports/phone-coldboot.png || true
+adb shell uiautomator dump /sdcard/tianyi-test-ui.xml >/dev/null 2>&1 || true
+adb pull /sdcard/tianyi-test-ui.xml reports/phone-ui.xml >/dev/null 2>&1 || true
  echo "NOVA_TIANYI_PHONE_COLD_BOOT_PASS"
 
 echo "NOVA_TIANYI_PHONE_RESTART_BEGIN"
