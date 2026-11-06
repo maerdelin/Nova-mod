@@ -31,6 +31,9 @@ jobs:
           curl -fL --retry 3 -o tools/zxing-core.jar https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
           java -Xmx5g -jar tools/apktool.jar d -f --no-debug-info inputs/Nova_Video_Player_mod_SIGNED.apk -o work/decode
           find work/decode -name 'NetworkServerCredentialsDialog$1.smali' -exec sed -n '1,140p' {} \;
+          # Read-only inspection of optimized NOVA network shortcut rendering
+          find work/decode -name 'NetworkShortcutPresenter.smali' -exec grep -n -A 90 'onBindViewHolder' {} \; || true
+          find work/decode -name 'GenericNetworkShortcutMapper.smali' -exec grep -n -A 75 'bind(Landroid/database/Cursor;)' {} \; || true
           python3 tianyi/patch_apk.py --decoded work/decode
           java -Xmx5g -jar tools/apktool.jar b work/decode -o work/ui-unsigned.apk
       - name: Compile Tianyi driver and QR encoder into Android DEX
