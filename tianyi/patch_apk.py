@@ -216,12 +216,12 @@ def patch_shortcut_model(root):
     # renderers see the friendly name, while its real URI remains unchanged.
     p=unique(root,"com/archos/mediacenter/video/leanback/adapter/object/GenericNetworkShortcut.smali")
     t=p.read_text()
-    m=re.search(r"(?ms)^\\.method[^\\n]* constructor <init>\\(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;\\)V\\n.*?^\\.end method",t)
+    m=re.search(r"(?ms)^\.method[^\n]* constructor <init>\(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;\)V\n.*?^\.end method",t)
     if not m: raise RuntimeError("GenericNetworkShortcut constructor signature missing")
     body=m.group()
     if "NOVA_TIANYI_SHARED_SHORTCUT_NAME" in body:
         raise RuntimeError("Model shortcut already patched")
-    call=re.search(r"(?m)^    invoke-direct(?:/range)? [^\\n]+$",body)
+    call=re.search(r"(?m)^    invoke-direct(?:/range)? [^\n]+$",body)
     if not call: raise RuntimeError("GenericNetworkShortcut parent constructor missing")
     # p3 is the original WebDAV URI, p4 is the list display title. No extra
     # registers are required, and the token/capability remains in p3.
