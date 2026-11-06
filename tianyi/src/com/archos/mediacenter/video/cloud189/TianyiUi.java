@@ -20,9 +20,9 @@ import com.google.zxing.BarcodeFormat;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 
-/** One visual-only spinner item inserted immediately after the original SMB. */
+/** One visual-only spinner item inserted after the original SMB (index 1 in MOD v6.6.4). */
 public final class TianyiUi {
-    public static final int NEW_UI_INDEX=5;
+    public static final int NEW_UI_INDEX=2;
     private static final Handler MAIN=new Handler(Looper.getMainLooper());
     private static final Map<Object,AtomicInteger> GENERATIONS=Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<View,ImageView> IMAGES=Collections.synchronizedMap(new WeakHashMap<>());
