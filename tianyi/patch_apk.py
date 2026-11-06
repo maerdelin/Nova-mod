@@ -124,7 +124,7 @@ def patch_network_on_resume(root):
     invoke-static {{v0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V
     :nova_tianyi_no_activity
 """
-    body=once(body,anchor,anchor+"\n"+inject,"network resume lazy DAV")
+    body=once(body,anchor,anchor+"\n"+inject+"    invoke-static {p0}, "+UI+"->registerNetworkPage(Ljava/lang/Object;)V\n","network resume lazy DAV")
     # The successful QR authorization inserts a NOVA ShortcutDb row.
     # Re-run the same original async network shortcut loader immediately,
     # rather than opening an unrelated activity or waiting for navigation.
