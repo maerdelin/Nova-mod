@@ -57,6 +57,12 @@ jobs:
           find work/decode -name 'ShortcutDbAdapter$Shortcut.smali' -exec sed -n '1,300p' {} \;
           echo 'TIANYI_SHORTCUT_OBJECT_END'
           echo 'TIANYI_PHONE_GETNAME_CALLERS_END'
+          echo 'TIANYI_ACTUAL_PHONE_SHORTCUT_ADAPTER_BEGIN'
+          for class in 'ShortcutAdapter.smali' 'ShortcutRootFragment.smali' 'ShortcutAdapter$ShortcutViewHolder.smali'; do
+             echo "ACTUAL_PHONE_SHORTCUT_FILE=$class"
+             find work/decode -path "*/com/archos/mediacenter/video/browser/filebrowsing/network/$class" -exec sed -n '1,440p' {} \;
+          done
+          echo 'TIANYI_ACTUAL_PHONE_SHORTCUT_ADAPTER_END'
           echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
           python3 tianyi/patch_apk.py --decoded work/decode
