@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p testapk
-          gh run download 42176822312 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
+          gh run download 42180997027 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
           test -s testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
           (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
       - name: Install on clean Android 11 emulator and launch phone plus TV
@@ -41,6 +41,11 @@ jobs:
             adb shell monkey -p org.courville.nova -c android.intent.category.LAUNCHER 1
             sleep 8
             adb shell pidof org.courville.nova | tee reports/phone-pid.txt || true
+            if ! grep -q '[0-9]' reports/phone-pid.txt; then
+              echo 'ANDROID11_PHONE_COLD_START=FAIL' | tee reports/result.txt
+              adb logcat -d -v threadtime > reports/logcat.txt
+              exit 1
+            fi
             adb shell am force-stop org.courville.nova
             adb shell monkey -p org.courville.nova -c android.intent.category.LEANBACK_LAUNCHER 1
             sleep 8
