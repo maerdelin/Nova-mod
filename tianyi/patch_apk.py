@@ -37,14 +37,14 @@ def patch_resources(root):
     values.write_text("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string-array name="nova_tianyi_protocol_types">
+    <item>WebDAV</item>
+    <item>天翼云盘</item>
+    <item>SMB</item>
     <item>FTP</item>
     <item>SFTP</item>
     <item>FTPS</item>
     <item>SSHJ</item>
-    <item>SMB</item>
-    <item>天翼云盘</item>
     <item>SMBJ</item>
-    <item>WebDAV</item>
     <item>WebDAVS</item>
   </string-array>
 </resources>
@@ -58,7 +58,7 @@ def patch_listener(root):
     body=t[start:end]
     body=once(body,"    .locals 0","    .locals 2","onItemSelected registers")
     anchor="    const/4 p1, 0x1"
-    snippet=f"""    # NOVA_TIANYI_UI_PROTOCOL_V1: visible index 5 is not a legacy protocol.
+    snippet=f"""    # NOVA_TIANYI_UI_PROTOCOL_V2: index 1 is inserted Tianyi; other UI indexes map back to the original Always-new IDs.
     iget-object v0, p0, {ROOT[:-1]}$1;->this$0:{ROOT}
     iget-object v1, p0, {ROOT[:-1]}$1;->val$v:Landroid/view/View;
     invoke-static {{v0, v1, p3}}, {UI}->onSelection(Ljava/lang/Object;Landroid/view/View;I)Z
