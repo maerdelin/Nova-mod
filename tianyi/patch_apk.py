@@ -210,6 +210,39 @@ def patch_shortcut_display(root):
     p.write_text(t[:start]+method+t[end:])
     print("NOVA_TIANYI_SHORTCUT_NAME=PATCHED")
 
+def patch_application_restore(root):
+    # The Android process is recreated after every OS reboot. A ShortcutDb
+    # row alone cannot keep a localhost socket alive. Restore the same
+    # persisted port/path and encrypted credentials on EVERY app cold launch.
+    # startIfSaved queues all socket and cloud operations on a background
+    # executor, so startup never waits for a cloud request.
+    import xml.etree.ElementTree as ET
+    manifest=ET.parse(root / "AndroidManifest.xml").getroot()
+    app=manifest.find("application")
+    if app is None: raise RuntimeError("Application element missing")
+    name=app.get("{http://schemas.android.com/apk/res/android}name","")
+    if not name: raise RuntimeError("Application class name missing")
+    if name.startswith("."):
+        name=manifest.attrib["package"]+name
+    elif "." not in name:
+        name=manifest.attrib["package"]+"."+name
+    p=unique(root,name.replace(".","/")+".smali")
+    t=p.read_text()
+    m=re.search(r"(?ms)^\\.method[^\\n]* onCreate\\(\\)V\\n.*?^\\.end method",t)
+    if not m: raise RuntimeError("CustomApplication onCreate missing")
+    original=m.group()
+    if "NOVA_TIANYI_RESTORE_APP_START" in original:
+        raise RuntimeError("Application already patched")
+    returns=original.count("    return-void")
+    if returns<1 or returns>8:
+        raise RuntimeError(f"Unexpected application onCreate returns: {returns}")
+    hook=f"""    # NOVA_TIANYI_RESTORE_APP_START: use existing saved WebDAV capability.
+    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V
+    return-void"""
+    patched=original.replace("    return-void",hook)
+    p.write_text(t[:m.start()]+patched+t[m.end():])
+    print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,returns)
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
@@ -220,6 +253,7 @@ def main():
     patch_dialog(a.decoded)
     patch_network_on_resume(a.decoded)
     patch_shortcut_display(a.decoded)
+    patch_application_restore(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
 if __name__=="__main__":
