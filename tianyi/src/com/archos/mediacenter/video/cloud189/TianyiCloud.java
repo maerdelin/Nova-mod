@@ -139,13 +139,15 @@ public final class TianyiCloud {
                 JSONObject qr=json(request("POST",AUTH+"/api/logbox/oauth2/getUUID.do",null,map("appId",APP_ID),headers,true).body);
                 String uuid=qr.optString("uuid",""), enc=qr.optString("encryuuid","");
                 if(uuid.isEmpty())throw new IOException("QR challenge unavailable");
-                TianyiDiag.event("QR_CREATE","OK",0,diagStart,0L);
-                listener.onCode(uuid);
-                // A real scan must not succeed only to lose rotating tokens:
-                // verify secure token persistence before waiting for approval.
+                // Preflight secret persistence BEFORE rendering the QR, so a
+                // storage failure cannot flash a QR then replace it immediately.
+                // Only actual login tokens are encrypted and committed.
                 phase[0]="SECURE_STORE";
                 store.verifyCrypto();
                 TianyiDiag.event("SECURE_STORE","OK",0);
+                phase[0]="QR_DISPLAY";
+                TianyiDiag.event("QR_CREATE","OK",0,diagStart,0L);
+                listener.onCode(uuid);
                 final long until=System.currentTimeMillis()+180000L;
                 while(System.currentTimeMillis()<until && Boolean.TRUE.equals(alive.call())) {
                     Thread.sleep(2000);
