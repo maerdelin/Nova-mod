@@ -12,13 +12,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Download validated NOVA v6.6.4 Run1236
+      - name: Download validated NOVA v6.6.4 Run1234
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p inputs tools work dist reports
-          gh run download 42169925006 --repo "$GITHUB_REPOSITORY" --name Nova-installable-signed-1236 --dir inputs
+          gh run download 42158388079 --repo "$GITHUB_REPOSITORY" --name Nova-installable-signed-1234 --dir inputs
           test -s inputs/Nova_Video_Player_mod_SIGNED.apk
       - name: Install pinned tools and decode baseline
         run: |
