@@ -45,6 +45,11 @@ jobs:
              echo "DISCOVER_FILE=$unit"
              find work/decode -path "*/com/archos/mediacenter/video/$unit" -exec sed -n '1,320p' {} \;
           done
+          echo 'TIANYI_PHONE_GETNAME_CALLERS_BEGIN'
+          grep -Rl -F 'ShortcutDbAdapter$Shortcut;->getName()Ljava/lang/String;' work/decode/smali* || true
+          grep -Rl -F 'ShortcutDbAdapter$Shortcut;->getUri()Ljava/lang/String;' work/decode/smali* || true
+          grep -Rl -F 'ShortcutDbAdapter$Shortcut;->getFriendlyUri()Ljava/lang/String;' work/decode/smali* || true
+          echo 'TIANYI_PHONE_GETNAME_CALLERS_END'
           echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
           python3 tianyi/patch_apk.py --decoded work/decode
