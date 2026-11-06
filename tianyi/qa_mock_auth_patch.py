@@ -98,6 +98,8 @@ replacements={
     '        activeNetworkPage=new WeakReference<>(page);\n        android.util.Log.i("NOVA_TIANYI_QA","NETWORK_PAGE_REGISTERED="+page.getClass().getName());',
     '            catch(Exception ignored) { TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1); }':
     '            catch(Exception ignored) { TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1); android.util.Log.e("NOVA_TIANYI_QA","NETWORK_REFRESH_FAILED",ignored); }',
+    '                owner.recreate();':
+    '                android.util.Log.i("NOVA_TIANYI_QA","NETWORK_REFRESH_RECREATE");\n                owner.recreate();',
 }
 for old,new in replacements.items():
     if u.count(old)!=1: raise SystemExit("QA UI anchor drift: "+old)
