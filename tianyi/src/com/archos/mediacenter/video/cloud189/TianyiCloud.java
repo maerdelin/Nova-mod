@@ -109,10 +109,12 @@ public final class TianyiCloud {
         workers.execute(()->{
             long diagStart=TianyiDiag.tick();
             TianyiDiag.event("QR_START","BEGIN",0);
+            final String[] phase=new String[]{"FINGER"};
             try {
                 String finger=store.getOrCreateFinger();
                 String ts=Long.toString(System.currentTimeMillis());
                 Map<String,String> start=map("appId",APP_ID,"clientType",CLIENT_TYPE,"returnURL",RETURN_URL,"timeStamp",ts);
+                phase[0]="INIT_LOGIN";
                 Reply initial=request("GET",WEB+"/api/portal/unifyLoginForPC.action",start,null,null,true);
                 String endpoint=initial.url;
                 String lt=param(endpoint,"lt"), reqId=param(endpoint,"reqId");
@@ -126,11 +128,13 @@ public final class TianyiCloud {
                 if(lt.isEmpty()||reqId.isEmpty())throw new IOException("Login challenge unavailable");
                 Map<String,String> headers=map("REQID",reqId,"lt",lt,"user-finger",finger,"Referer",ref);
                 if(paramId.isEmpty()){
+                    phase[0]="APP_CONF";
                     JSONObject conf=json(request("POST",AUTH+"/api/logbox/oauth2/appConf.do",null,
                             map("version","2.0","appKey",APP_ID),headers,true).body);
                     paramId=conf.optJSONObject("data")==null?"":conf.getJSONObject("data").optString("paramId","");
                 }
                 if(paramId.isEmpty())throw new IOException("Missing login parameter");
+                phase[0]="GET_UUID";
                 JSONObject qr=json(request("POST",AUTH+"/api/logbox/oauth2/getUUID.do",null,map("appId",APP_ID),headers,true).body);
                 String uuid=qr.optString("uuid",""), enc=qr.optString("encryuuid","");
                 if(uuid.isEmpty())throw new IOException("QR challenge unavailable");
@@ -145,22 +149,26 @@ public final class TianyiCloud {
                             "paramId",paramId,"uuid",uuid,"encryuuid",enc,"cb_SaveName","3",
                             "isOauth2","false","state","","date",date,"timeStamp",
                             Long.toString(System.currentTimeMillis()));
+                    phase[0]="QR_POLL";
                     JSONObject status=json(request("POST",AUTH+"/api/logbox/oauth2/qrcodeLoginState.do",
                             null,form,headers,true).body);
                     int state=status.optInt("status",-100);
                     if(state==0){TianyiDiag.event("QR_POLL","AUTHORIZED",state);
                         String redirect=status.optString("redirectUrl","");
                         if(redirect.isEmpty())throw new IOException("Missing QR authorization redirect");
+                        phase[0]="GET_SESSION";
                         JSONObject token=json(request("POST",API+"/getSessionForPC.action",
                                 suffix(map("redirectURL",redirect,"returnType","JSON")),
                                 null,null,true).body);
                         String access=token.optString("accessToken",""),refresh=token.optString("refreshToken","");
                         if(access.isEmpty()||refresh.isEmpty())throw new IOException("QR token exchange failed");
+                        phase[0]="TOKEN_SAVE";
                         store.saveTokens(access,refresh);
                         TianyiDiag.event("QR_TOKEN","OK",0,diagStart,0L);
                         setSession(token);
                         ensureSession();
-                        list("-11"); // Do not create a shortcut until the actual root listing succeeds.
+                        phase[0]="ROOT_LIST";
+                        list("-11"); // Verify root directory before creating a shortcut.
                         TianyiDiag.event("QR_ROOT","OK",0,diagStart,0L);
                         listener.onAuthorized(rootUri());
                         return;
@@ -177,8 +185,8 @@ public final class TianyiCloud {
                 }
                 if(Boolean.TRUE.equals(alive.call()))listener.onStatus("二维码已过期，请重新选择天翼云盘");
             }catch(Exception e) {
-                TianyiDiag.event("QR_LOGIN","FAIL",-1,diagStart,0L);
-                if(safeAlive(alive))listener.onStatus("天翼云盘登录失败："+cleanError(e));
+                TianyiDiag.event("QR_LOGIN_"+phase[0],"FAIL",-1,diagStart,0L);
+                if(safeAlive(alive))listener.onStatus("天翼云盘 "+phase[0]+" 失败 ("+e.getClass().getSimpleName()+")，点击重试");
             }
         });
     }
