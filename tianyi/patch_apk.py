@@ -253,13 +253,17 @@ def patch_application_restore(root):
     original=m.group()
     if "NOVA_TIANYI_RESTORE_APP_START" in original:
         raise RuntimeError("Application already patched")
-    returns=original.count("    return-void")
-    if returns<1 or returns>8:
-        raise RuntimeError(f"Unexpected application onCreate returns: {returns}")
-    hook=f"""    # NOVA_TIANYI_RESTORE_APP_START: use existing saved WebDAV capability.
-    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V
-    return-void"""
-    patched=original.replace("    return-void",hook)
+    # IMPORTANT: CustomApplication.onCreate is R8-optimized. The method
+    # reuses p0/vN for other Object values near return-void. Injecting there
+    # triggers Android VerifyError (wrong Context type). Hook immediately
+    # AFTER the verified invoke-super, while p0 remains an Application.
+    ancestor=re.search(r"(?m)^    invoke-super \\{p0\\}, L[^\\s]+;->onCreate\\(\\)V$",original)
+    if not ancestor:
+        raise RuntimeError("Cannot find typed Application.onCreate super call")
+    hook=f"""
+    # NOVA_TIANYI_RESTORE_APP_START: queue saved DAV restore after super.
+    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V"""
+    patched=original[:ancestor.end()]+hook+original[ancestor.end():]
     p.write_text(t[:m.start()]+patched+t[m.end():])
     print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,returns)
 
