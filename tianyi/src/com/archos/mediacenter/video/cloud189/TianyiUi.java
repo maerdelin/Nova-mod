@@ -183,7 +183,7 @@ public final class TianyiUi {
                         Toast.makeText(activity,"请在手机天翼云盘中确认授权",Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    showError(target,"二维码加载失败，点击重试");
+                    showError(target,msg.length()<85 ? msg : "登录失败，点击重试");
                     TianyiDiag.event("QR_STATUS","ERROR",0);
                     // Error details are reported by the cloud driver as
                     // privacy-safe diagnostic phase/class labels.
