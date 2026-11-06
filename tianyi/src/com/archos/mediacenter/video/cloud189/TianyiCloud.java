@@ -370,7 +370,9 @@ public final class TianyiCloud {
     }
     private void handle(Socket socket){
         long diagStart=TianyiDiag.tick();
-        try(Socket s=socket){
+        boolean responseStarted=false;
+        try{
+            Socket s=socket;
             BufferedInputStream in=new BufferedInputStream(s.getInputStream());
             OutputStream out=new BufferedOutputStream(s.getOutputStream());
             String request=readLine(in);
@@ -413,6 +415,7 @@ public final class TianyiCloud {
                 }
                 xml.append("</d:multistatus>");
                 byte[] body=xml.toString().getBytes(StandardCharsets.UTF_8);
+                responseStarted=true;
                 respond(out,207,"Content-Type: application/xml; charset=utf-8\r\nContent-Length: "+body.length+"\r\n");
                 out.write(body);out.flush();
                 TianyiDiag.event("DAV_PROPFIND","OK",207,diagStart,items.size());
@@ -438,6 +441,7 @@ public final class TianyiCloud {
             if(length>=0)extra.append("Content-Length: ").append(length).append("\r\n");
             if(c.getHeaderField("Content-Range")!=null)extra.append("Content-Range: ").append(c.getHeaderField("Content-Range")).append("\r\n");
             TianyiDiag.event(range!=null?"DAV_RANGE":davEvent,"OK",status,diagStart,length);
+            responseStarted=true;
             respond(out,status,extra.toString());
             if(method.equals("HEAD")){c.disconnect();return;}
             try(InputStream source=c.getInputStream()){
@@ -446,6 +450,14 @@ public final class TianyiCloud {
             }finally{c.disconnect();}
         }catch(Exception ignored){
             TianyiDiag.event("DAV_REQUEST","FAIL",-1,diagStart,0L);
+            // A lost cloud session must not leave the NOVA directory spinner
+            // waiting for the socket timeout. Return a finite WebDAV error
+            // before closing a request whose headers have not been sent.
+            if(!responseStarted) {
+                try { error(socket.getOutputStream(),503); }catch(Exception ignoredAgain){}
+            }
+        }finally{
+            try { socket.close(); }catch(Exception ignoredAgain){}
         }
     }
     private static String encodeSegment(String s) throws Exception {
