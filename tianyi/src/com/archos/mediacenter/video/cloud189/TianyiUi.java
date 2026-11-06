@@ -79,6 +79,16 @@ public final class TianyiUi {
 
     /** Called from the actual Smali Spinner onItemSelected listener. */
     public static boolean onSelection(Object fragment,View root,int selected) {
+        try {
+            return onSelectionInner(fragment,root,selected);
+        } catch(RuntimeException ex) {
+            TianyiDiag.event("UI_UNCAUGHT","FAIL",-1);
+            Activity ctx=activity(fragment);
+            if(ctx!=null)Toast.makeText(ctx,"天翼云盘界面初始化失败，请退出重试",Toast.LENGTH_LONG).show();
+            return selected==NEW_UI_INDEX;
+        }
+    }
+    private static boolean onSelectionInner(Object fragment,View root,int selected) {
         final boolean tianyi=selected==NEW_UI_INDEX;
         Activity activity=activity(fragment);
         if(activity==null || !(root instanceof LinearLayout)) {
