@@ -53,6 +53,9 @@ jobs:
           for class in 'NewRootFragment.smali' 'ShortcutDbAdapter.smali' 'RootFragmentAdapter.smali'; do
             find work/decode -name "$class" -exec grep -n -B 35 -A 45 -F 'ShortcutDbAdapter$Shortcut;->getName()Ljava/lang/String;' {} \; || true
           done
+          echo 'TIANYI_SHORTCUT_OBJECT_SOURCE'
+          find work/decode -name 'ShortcutDbAdapter$Shortcut.smali' -exec sed -n '1,300p' {} \;
+          echo 'TIANYI_SHORTCUT_OBJECT_END'
           echo 'TIANYI_PHONE_GETNAME_CALLERS_END'
           echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
