@@ -132,6 +132,21 @@ final class TianyiStore {
         write(saved);
     }
 
+    /** Exercise the same AndroidKeyStore AES/GCM path needed to persist
+     * AccessToken and RefreshToken. Uses a dummy payload, never a real token. */
+    synchronized void verifyCrypto() throws Exception {
+        SecretKey savedKey=key();
+        byte[] nonce=new byte[12];RNG.nextBytes(nonce);
+        Cipher enc=Cipher.getInstance("AES/GCM/NoPadding");
+        enc.init(Cipher.ENCRYPT_MODE,savedKey,new GCMParameterSpec(128,nonce));
+        byte[] ciphertext=enc.doFinal("NOVA_KEYSTORE_TEST".getBytes(StandardCharsets.UTF_8));
+        Cipher dec=Cipher.getInstance("AES/GCM/NoPadding");
+        dec.init(Cipher.DECRYPT_MODE,savedKey,new GCMParameterSpec(128,nonce));
+        String recovered=new String(dec.doFinal(ciphertext),StandardCharsets.UTF_8);
+        if(!"NOVA_KEYSTORE_TEST".equals(recovered))
+            throw new SecurityException("AndroidKeyStore roundtrip mismatch");
+    }
+
     private static SecretKey key() throws Exception {
         KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
         ks.load(null);
