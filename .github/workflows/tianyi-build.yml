@@ -49,6 +49,10 @@ jobs:
           grep -Rl -F 'ShortcutDbAdapter$Shortcut;->getName()Ljava/lang/String;' work/decode/smali* || true
           grep -Rl -F 'ShortcutDbAdapter$Shortcut;->getUri()Ljava/lang/String;' work/decode/smali* || true
           grep -Rl -F 'ShortcutDbAdapter$Shortcut;->getFriendlyUri()Ljava/lang/String;' work/decode/smali* || true
+          echo 'TIANYI_PHONE_GETNAME_BINDING'
+          for class in 'NewRootFragment.smali' 'ShortcutDbAdapter.smali' 'RootFragmentAdapter.smali'; do
+            find work/decode -name "$class" -exec grep -n -B 35 -A 45 -F 'ShortcutDbAdapter$Shortcut;->getName()Ljava/lang/String;' {} \; || true
+          done
           echo 'TIANYI_PHONE_GETNAME_CALLERS_END'
           echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
