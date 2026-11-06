@@ -37,14 +37,14 @@ def patch_resources(root):
     values.write_text("""<?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string-array name="nova_tianyi_protocol_types">
+    <item>WebDAV</item>
+    <item>SMB</item>
+    <item>天翼云盘</item>
     <item>FTP</item>
     <item>SFTP</item>
     <item>FTPS</item>
     <item>SSHJ</item>
-    <item>SMB</item>
-    <item>天翼云盘</item>
     <item>SMBJ</item>
-    <item>WebDAV</item>
     <item>WebDAVS</item>
   </string-array>
 </resources>
@@ -57,7 +57,7 @@ def patch_listener(root):
     start=t.index(head); end=t.index(".end method",start)
     body=t[start:end]
     body=once(body,"    .locals 0","    .locals 2","onItemSelected registers")
-    anchor="    invoke-static {p3}, Lcom/archos/mediacenter/filecoreextension/UriUtils;->requiresDomain(I)Z"
+    anchor="    const/4 p1, 0x1"
     snippet=f"""    # NOVA_TIANYI_UI_PROTOCOL_V1: visible index 5 is not a legacy protocol.
     iget-object v0, p0, {ROOT[:-1]}$1;->this$0:{ROOT}
     iget-object v1, p0, {ROOT[:-1]}$1;->val$v:Landroid/view/View;
