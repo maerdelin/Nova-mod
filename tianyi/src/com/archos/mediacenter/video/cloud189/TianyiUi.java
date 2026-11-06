@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * inside the original RelativeLayout, side by side.
  */
 public final class TianyiUi {
-    public static final int NEW_UI_INDEX=2; // Screenshot: WebDAV, SMB, Tianyi, FTP...
+    public static final int NEW_UI_INDEX=5; // NOVA original array indexes: FTP,SFTP,FTPS,SSHJ,SMB,Tianyi,SMBJ,WebDAV,WebDAVS
     private static final Handler MAIN=new Handler(Looper.getMainLooper());
     private static final Map<Object,AtomicInteger> GENERATIONS =
             Collections.synchronizedMap(new WeakHashMap<>());
