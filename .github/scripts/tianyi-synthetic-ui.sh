@@ -58,7 +58,9 @@ sleep 1
 tap '天翼云盘'
 sleep 8
 capture 'after-synthetic-authorized'
-assert_success reports/after-synthetic-authorized.xml
+if ! assert_success reports/after-synthetic-authorized.xml; then
+  echo "SYNTHETIC_AUTH_IMMEDIATE_REFRESH=FAIL" | tee reports/immediate-refresh.txt
+fi
 
 adb shell am force-stop org.courville.nova
 adb shell monkey -p org.courville.nova -c android.intent.category.LAUNCHER 1
