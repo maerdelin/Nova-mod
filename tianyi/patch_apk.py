@@ -125,9 +125,32 @@ def patch_network_on_resume(root):
     :nova_tianyi_no_activity
 """
     body=once(body,anchor,anchor+"\n"+inject,"network resume lazy DAV")
-    p.write_text(t[:m.start()]+body+t[m.end():])
+    # The successful QR authorization inserts a NOVA ShortcutDb row.
+    # Re-run the same original async network shortcut loader immediately,
+    # rather than opening an unrelated activity or waiting for navigation.
+    cls="Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment;"
+    loader="Lcom/archos/mediacenter/video/leanback/network/NetworkRootFragment$NetworkShortcutsLoaderTask;"
+    refresh=f"""
+.method public novaTianyiRefreshShortcuts()V
+    .locals 2
 
-def main():
+    iget-object v0, p0, {cls}->mNetworkShortcutsLoaderTask:{loader}
+    if-eqz v0, :nova_tianyi_new_loader
+    invoke-virtual {{v0}}, {loader}->cancel()V
+
+    :nova_tianyi_new_loader
+    new-instance v0, {loader}
+    const/4 v1, 0x0
+    invoke-direct {{v0, p0, v1}}, {loader}-><init>({cls}I)V
+    iput-object v0, p0, {cls}->mNetworkShortcutsLoaderTask:{loader}
+    invoke-virtual {{v0}}, {loader}->execute()V
+    return-void
+.end method
+"""
+    if "novaTianyiRefreshShortcuts" in t:
+        raise RuntimeError("Already injected network refresh")
+    p.write_text(t[:m.start()]+body+t[m.end():]+"\n"+refresh)
+\ndef main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
     a=p.parse_args()
