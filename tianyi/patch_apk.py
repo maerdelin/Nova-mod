@@ -150,7 +150,8 @@ def patch_network_on_resume(root):
     if "novaTianyiRefreshShortcuts" in t:
         raise RuntimeError("Already injected network refresh")
     p.write_text(t[:m.start()]+body+t[m.end():]+"\n"+refresh)
-\ndef main():
+
+def main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
     a=p.parse_args()
