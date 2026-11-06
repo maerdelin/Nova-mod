@@ -57,17 +57,19 @@ public final class TianyiCloud {
     }
     public static void startIfSaved(Context c) {
         TianyiCloud cloud=get(c);
-        // Bind loopback immediately when opening the Network page so a
-        // restored shortcut is never clickable before the server exists.
-        // No network call or AndroidKeyStore operation is needed for binding.
-        try {
-            if(!cloud.store.existingPathKey().isEmpty()) {
-                cloud.startServer();
-                TianyiDiag.event("DAV_RESTORE","OK",0);
+        // Schedule binding immediately when the network page resumes.
+        // Do not perform socket operations on the Android UI thread; unlike
+        // the old implementation we no longer decrypt tokens before binding.
+        cloud.workers.execute(() -> {
+            try {
+                if(!cloud.store.existingPathKey().isEmpty()) {
+                    cloud.startServer();
+                    TianyiDiag.event("DAV_RESTORE","OK",0);
+                }
+            }catch(Exception ignored){
+                TianyiDiag.event("DAV_RESTORE","FAIL",-1);
             }
-        }catch(Exception ignored){
-            TianyiDiag.event("DAV_RESTORE","FAIL",-1);
-        }
+        });
     }
 
     private void resetIfShortcutWasDeleted() {
