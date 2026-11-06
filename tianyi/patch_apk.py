@@ -257,7 +257,7 @@ def patch_application_restore(root):
     # reuses p0/vN for other Object values near return-void. Injecting there
     # triggers Android VerifyError (wrong Context type). Hook immediately
     # AFTER the verified invoke-super, while p0 remains an Application.
-    ancestor=re.search(r"(?m)^    invoke-super \\{p0\\}, L[^\\s]+;->onCreate\\(\\)V$",original)
+    ancestor=re.search(r"(?m)^    invoke-super \{p0\}, L[^\s]+;->onCreate\(\)V$",original)
     if not ancestor:
         raise RuntimeError("Cannot find typed Application.onCreate super call")
     hook=f"""
@@ -265,7 +265,7 @@ def patch_application_restore(root):
     invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V"""
     patched=original[:ancestor.end()]+hook+original[ancestor.end():]
     p.write_text(t[:m.start()]+patched+t[m.end():])
-    print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,returns)
+    print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,"AFTER_SUPER")
 
 def main():
     p=argparse.ArgumentParser()
