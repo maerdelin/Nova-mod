@@ -102,6 +102,11 @@ final class TianyiStore {
         return finger;
     }
 
+    synchronized String existingPathKey() {
+        String value=prefs.getString("local_dav_capability_v2","");
+        return value==null?"":value;
+    }
+
     synchronized String getOrCreatePathKey() throws Exception {
         String pathKey = prefs.getString("local_dav_capability_v2", "");
         if (pathKey != null && !pathKey.isEmpty()) return pathKey;
@@ -133,6 +138,16 @@ final class TianyiStore {
         saved.accessToken = "";
         saved.refreshToken = "";
         write(saved);
+    }
+
+    /** Remove only the Tianyi cloud account and local DAV capability state. */
+    synchronized void resetAfterShortcutDeletion() throws Exception {
+        if(!prefs.edit()
+                .remove(RECORD)
+                .remove("login_fingerprint_v2")
+                .remove("local_dav_capability_v2")
+                .commit())
+            throw new IllegalStateException("Tianyi account reset failed");
     }
 
     /** Exercise the same AndroidKeyStore AES/GCM path needed to persist
