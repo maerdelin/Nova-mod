@@ -80,10 +80,23 @@ check_log() {
   }
 }
 enter_network() {
-  tap '^Network\s*$'
-  sleep 5
+  # A fresh emulator can show NOVA onboarding or a system launcher briefly.
+  # Retry rather than declaring a Tianyi functional failure prematurely.
+  local attempt
+  for attempt in $(seq 1 15); do
+    dump_ui
+    if tap '^Network\s*$'; then
+      sleep 5
+      return 0
+    fi
+    adb shell input keyevent KEYCODE_BACK || true
+    sleep 3
+  done
+  capture 'network-navigation-timeout' || true
+  adb logcat -d -v threadtime > reports/logcat-network-navigation.txt || true
+  echo 'NOVA_NETWORK_NAVIGATION_TIMEOUT_AFTER_15_ATTEMPTS' >&2
+  return 1
 }
-
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 9
 enter_network
