@@ -1,0 +1,397 @@
+package com.archos.mediacenter.video.cloud189;
+
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.os.Handler;
+import android.os.Looper;
+import android.net.Uri;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.*;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.json.*;
+
+/**
+ * Minimal read-only 189CloudPC -> loopback WebDAV bridge.
+ * Source reference: OpenListTeam/OpenList v4.2.9 drivers/189pc.
+ * There is no listener on a LAN address. No login token is put in DAV URLs.
+ */
+public final class TianyiCloud {
+    public interface QrListener {
+        void onCode(String code);
+        void onStatus(String status);
+        void onAuthorized(String davUri);
+    }
+
+    private static final String APP_ID="9317140619", CLIENT_TYPE="10020";
+    private static final String QR_CLIENT_TYPE="1", RETURN_URL="https://m.cloud.189.cn/zhuanti/2020/loginErrorPc/index.html";
+    private static final String WEB="https://cloud.189.cn", AUTH="https://open.e.189.cn", API="https://api.cloud.189.cn";
+    private static final String PC="TELEPC", VERSION="7.2.4.0", CHANNEL="web_cloud.189.cn";
+    private static final int PORT=27989;
+    private static volatile TianyiCloud INSTANCE;
+    private final TianyiStore store;
+    private final Context app;
+    private final ExecutorService workers=Executors.newFixedThreadPool(8, r -> {
+        Thread t=new Thread(r,"nova-tianyi"); t.setDaemon(true); return t;
+    });
+    private final CookieManager cookies=new CookieManager(null,CookiePolicy.ACCEPT_ALL);
+    private final SecureRandom rng=new SecureRandom();
+    private final Object sessionLock=new Object();
+    private volatile String sessionKey="", sessionSecret="";
+    private volatile long nextRefresh=0L;
+    private volatile boolean started=false;
+
+    private TianyiCloud(Context c) {app=c.getApplicationContext();store=new TianyiStore(app);}
+    public static synchronized TianyiCloud get(Context c) {
+        if(INSTANCE==null) INSTANCE=new TianyiCloud(c);
+        return INSTANCE;
+    }
+    public static void startIfSaved(Context c) {
+        TianyiCloud cloud=get(c);
+        cloud.workers.execute(() -> {
+            try {if(!cloud.store.read().refreshToken.isEmpty())cloud.startServer();}catch(Exception ignored){}
+        });
+    }
+    public void startServer() throws Exception {
+        synchronized(this) {
+            if(started)return;
+            ServerSocket sock=new ServerSocket();
+            sock.setReuseAddress(true);
+            sock.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),PORT),32);
+            started=true;
+            Thread acceptor=new Thread(()->{
+                while(!sock.isClosed()) {
+                    try {
+                        Socket client=sock.accept();
+                        client.setSoTimeout(25000);
+                        workers.execute(()->handle(client));
+                    }catch(Exception ignored){}
+                }
+            },"nova-tianyi-dav");
+            acceptor.setDaemon(true);
+            acceptor.start();
+        }
+    }
+    public String rootUri() throws Exception {
+        startServer();
+        return "webdav://127.0.0.1:"+PORT+"/"+store.getOrCreatePathKey()+"/";
+    }
+    public void beginLogin(QrListener listener, Callable<Boolean> alive) {
+        workers.execute(()->{
+            try {
+                String finger=store.getOrCreateFinger();
+                String ts=Long.toString(System.currentTimeMillis());
+                Map<String,String> start=map("appId",APP_ID,"clientType",CLIENT_TYPE,"returnURL",RETURN_URL,"timeStamp",ts);
+                Reply initial=request("GET",WEB+"/api/portal/unifyLoginForPC.action",start,null,null,true);
+                String endpoint=initial.url;
+                String lt=param(endpoint,"lt"), reqId=param(endpoint,"reqId");
+                String ref=endpoint;
+                String paramId="";
+                if(lt.isEmpty()||reqId.isEmpty()) {
+                    lt=match(initial.body,"lt = \"([^\"]+)\"");
+                    reqId=match(initial.body,"reqId = \"([^\"]+)\"");
+                    paramId=match(initial.body,"paramId = \"([^\"]+)\"");
+                }
+                if(lt.isEmpty()||reqId.isEmpty())throw new IOException("Login challenge unavailable");
+                Map<String,String> headers=map("REQID",reqId,"lt",lt,"user-finger",finger,"Referer",ref);
+                if(paramId.isEmpty()){
+                    JSONObject conf=json(request("POST",AUTH+"/api/logbox/oauth2/appConf.do",null,
+                            map("version","2.0","appKey",APP_ID),headers,true).body);
+                    paramId=conf.optJSONObject("data")==null?"":conf.getJSONObject("data").optString("paramId","");
+                }
+                if(paramId.isEmpty())throw new IOException("Missing login parameter");
+                JSONObject qr=json(request("POST",AUTH+"/api/logbox/oauth2/getUUID.do",null,map("appId",APP_ID),headers,true).body);
+                String uuid=qr.optString("uuid",""), enc=qr.optString("encryuuid","");
+                if(uuid.isEmpty())throw new IOException("QR challenge unavailable");
+                listener.onCode(uuid);
+                final long until=System.currentTimeMillis()+180000L;
+                while(System.currentTimeMillis()<until && Boolean.TRUE.equals(alive.call())) {
+                    Thread.sleep(2000);
+                    Date now=new Date();
+                    String date=new SimpleDateFormat("yyyy-MM-ddHH:mm:ss.SSS",Locale.US).format(now);
+                    Map<String,String> form=map("appId",APP_ID,"clientType",QR_CLIENT_TYPE,"returnUrl",RETURN_URL,
+                            "paramId",paramId,"uuid",uuid,"encryuuid",enc,"cb_SaveName","3",
+                            "isOauth2","false","state","","date",date,"timeStamp",
+                            Long.toString(System.currentTimeMillis()));
+                    JSONObject status=json(request("POST",AUTH+"/api/logbox/oauth2/qrcodeLoginState.do",
+                            null,form,headers,true).body);
+                    int state=status.optInt("status",-100);
+                    if(state==0){
+                        String redirect=status.optString("redirectUrl","");
+                        if(redirect.isEmpty())throw new IOException("Missing QR authorization redirect");
+                        JSONObject token=json(request("POST",API+"/getSessionForPC.action",
+                                suffix(map("redirectURL",redirect,"X-Request-ID",UUID.randomUUID().toString())),
+                                null,null,true).body);
+                        String access=token.optString("accessToken",""),refresh=token.optString("refreshToken","");
+                        if(access.isEmpty()||refresh.isEmpty())throw new IOException("QR token exchange failed");
+                        store.saveTokens(access,refresh);
+                        setSession(token);
+                        ensureSession();
+                        listener.onAuthorized(rootUri());
+                        return;
+                    }
+                    if(state==-11001)throw new IOException("QR expired");
+                    if(state==-11002)listener.onStatus("请在手机上确认登录");
+                    else if(state!=-106)throw new IOException("QR authorization rejected ("+state+")");
+                }
+                if(Boolean.TRUE.equals(alive.call()))listener.onStatus("二维码已过期，请重新选择天翼云盘");
+            }catch(Exception e) {if(safeAlive(alive))listener.onStatus("天翼云盘登录失败："+cleanError(e));}
+        });
+    }
+    private static boolean safeAlive(Callable<Boolean> c) {try{return c.call();}catch(Exception e){return false;}}
+    private static String cleanError(Exception e) {
+        String s=e.getMessage();if(s==null)return "网络异常";
+        if(s.length()>110)s=s.substring(0,110);
+        return s.replaceAll("(?i)(accessToken|refreshToken|sessionSecret)=[^ &]+","$1=[hidden]");
+    }
+    private void setSession(JSONObject token) {
+        String k=token.optString("sessionKey",""),s=token.optString("sessionSecret","");
+        if(!k.isEmpty()&&!s.isEmpty()) {
+            sessionKey=k;sessionSecret=s;nextRefresh=System.currentTimeMillis()+15*60*1000L;
+        }
+    }
+    public void ensureSession() throws Exception {
+        synchronized(sessionLock){
+            if(!sessionKey.isEmpty()&&System.currentTimeMillis()<nextRefresh)return;
+            TianyiStore.Saved saved=store.read();
+            if(saved.refreshToken.isEmpty())throw new IOException("Please scan the Tianyi QR code");
+            JSONObject data=null;
+            if(!saved.accessToken.isEmpty()) {
+                data=json(request("GET",API+"/getSessionForPC.action",
+                        suffix(map("appId",APP_ID,"accessToken",saved.accessToken)),
+                        null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
+            }
+            if(data==null || data.optString("sessionKey","").isEmpty()){
+                JSONObject refreshed=json(request("POST",AUTH+"/api/oauth2/refreshToken.do",
+                        null,map("clientId",APP_ID,"refreshToken",saved.refreshToken,"grantType","refresh_token","format","json"),
+                        null,true).body);
+                String access=refreshed.optString("accessToken",""), refresh=refreshed.optString("refreshToken","");
+                if(access.isEmpty()||refresh.isEmpty())throw new IOException("Please re-scan Tianyi QR code");
+                store.saveTokens(access,refresh);
+                data=json(request("GET",API+"/getSessionForPC.action",
+                        suffix(map("appId",APP_ID,"accessToken",access)),
+                        null,map("X-Request-ID",UUID.randomUUID().toString()),true).body);
+            }
+            setSession(data);
+            if(sessionKey.isEmpty())throw new IOException("Cannot initialize Tianyi session");
+        }
+    }
+    private Map<String,String> signedHeaders(String path) throws Exception {
+        ensureSession();
+        String date=new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'",Locale.US) {{
+            setTimeZone(TimeZone.getTimeZone("GMT"));
+        }}.format(new Date());
+        String message="SessionKey="+sessionKey+"&Operate=GET&RequestURI="+path+"&Date="+date;
+        Mac mac=Mac.getInstance("HmacSHA1");
+        mac.init(new SecretKeySpec(sessionSecret.getBytes(StandardCharsets.UTF_8),"HmacSHA1"));
+        StringBuilder hex=new StringBuilder();
+        for(byte b:mac.doFinal(message.getBytes(StandardCharsets.UTF_8)))hex.append(String.format(Locale.US,"%02X",b&255));
+        return map("SessionKey",sessionKey,"Date",date,"Signature",hex.toString(),"X-Request-ID",UUID.randomUUID().toString());
+    }
+    private Map<String,String> suffix(Map<String,String> query) {
+        query.put("clientType",PC);query.put("version",VERSION);query.put("channelId",CHANNEL);
+        query.put("rand",Integer.toString(rng.nextInt(100000))+"_"+Long.toString(Math.abs(rng.nextLong()%10000000000L)));
+        return query;
+    }
+    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
+        Map<String,String> query=suffix(params);
+        Reply r=request("GET",API+path,query,null,signedHeaders(path),true);
+        JSONObject data=json(r.body);
+        if(data.has("res_code")&&data.optInt("res_code",0)!=0) {
+            nextRefresh=0;
+            throw new IOException("Tianyi API rejected request");
+        }
+        return data;
+    }
+    private static final class FileObj {
+        String name,id,parent;long size,mtime;boolean dir;
+    }
+    private List<FileObj> list(String folderId) throws Exception {
+        List<FileObj> out=new ArrayList<>();
+        for(int page=1;page<=200;page++){
+            JSONObject r=apiGet("/listFiles.action",map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
+                    "pageNum",Integer.toString(page),"pageSize","1000","recursive","0",
+                    "orderBy","filename","descending","false"));
+            JSONObject arr=r.optJSONObject("fileListAO");
+            if(arr==null)throw new IOException("Cloud folder list unavailable");
+            JSONArray folders=arr.optJSONArray("folderList"),files=arr.optJSONArray("fileList");
+            int count=0;
+            if(folders!=null)for(int i=0;i<folders.length();i++){JSONObject j=folders.getJSONObject(i);out.add(obj(j,true,folderId));count++;}
+            if(files!=null)for(int i=0;i<files.length();i++){JSONObject j=files.getJSONObject(i);out.add(obj(j,false,folderId));count++;}
+            if(count<1000)break;
+        }
+        return out;
+    }
+    private static FileObj obj(JSONObject j,boolean dir,String parent){
+        FileObj f=new FileObj();f.name=j.optString("name","");f.id=j.optString("id","");f.dir=dir;
+        f.size=dir?0:j.optLong("size",0L);f.parent=parent;f.mtime=System.currentTimeMillis();return f;
+    }
+    private FileObj resolve(String rel) throws Exception {
+        FileObj root=new FileObj();root.dir=true;root.id="-11";root.name="";root.parent="";
+        if(rel.isEmpty())return root;
+        FileObj cursor=root;
+        String[] parts=rel.split("/");
+        for(String p:parts){
+            if(p.isEmpty())continue;
+            if(!cursor.dir)throw new FileNotFoundException();
+            String target=URLDecoder.decode(p.replace("+","%2B"),"UTF-8");
+            if(target.equals("..")||target.equals(".")||target.contains("/"))throw new FileNotFoundException();
+            FileObj next=null;
+            for(FileObj child:list(cursor.id))if(child.name.equals(target)){next=child;break;}
+            if(next==null)throw new FileNotFoundException();
+            cursor=next;
+        }
+        return cursor;
+    }
+    private String downloadUrl(FileObj f) throws Exception {
+        JSONObject data=apiGet("/getFileDownloadUrl.action",map("fileId",f.id,"dt","3","flag","1"));
+        String url=data.optString("fileDownloadUrl","");
+        if(url.isEmpty())throw new IOException("No download URL");
+        url=url.replace("&amp;","&").replaceFirst("^http://","https://");
+        if(url.startsWith("//"))url="https:"+url;
+        if(!url.startsWith("https://"))throw new IOException("Insecure cloud download URL");
+        return url;
+    }
+    private void handle(Socket socket){
+        try(Socket s=socket){
+            BufferedInputStream in=new BufferedInputStream(s.getInputStream());
+            OutputStream out=new BufferedOutputStream(s.getOutputStream());
+            String request=readLine(in);
+            if(request==null)return;
+            String[] fields=request.split(" ");
+            if(fields.length<2){error(out,400);return;}
+            String method=fields[0], raw=fields[1];
+            Map<String,String> headers=new HashMap<>();
+            for(int n=0;n<80;n++){
+                String line=readLine(in);if(line==null||line.isEmpty())break;
+                int c=line.indexOf(':');if(c>0)headers.put(line.substring(0,c).trim().toLowerCase(Locale.US),line.substring(c+1).trim());
+            }
+            if(!raw.startsWith("/")){error(out,400);return;}
+            String rawPath=raw.split("\\?",2)[0], key=store.getOrCreatePathKey();
+            if(!rawPath.startsWith("/"+key+"/")){error(out,404);return;}
+            String rel=rawPath.substring(key.length()+2);
+            if(rel.contains("\\")||rel.length()>4096){error(out,400);return;}
+            if(method.equals("OPTIONS")){
+                respond(out,200,"DAV: 1\r\nAllow: OPTIONS, PROPFIND, GET, HEAD\r\nContent-Length: 0\r\n");return;
+            }
+            if(!method.equals("PROPFIND")&&!method.equals("GET")&&!method.equals("HEAD")){error(out,405);return;}
+            FileObj f=resolve(rel);
+            if(method.equals("PROPFIND")){
+                ArrayList<FileObj> items=new ArrayList<>();items.add(f);
+                if(f.dir&&!"0".equals(headers.get("depth")))items.addAll(list(f.id));
+                String base="/"+key+"/"+rel;
+                if(f.dir&&!base.endsWith("/"))base+="/";
+                StringBuilder xml=new StringBuilder("<?xml version=\"1.0\" encoding=\"utf-8\"?><d:multistatus xmlns:d=\"DAV:\">");
+                for(int i=0;i<items.size();i++){
+                    FileObj item=items.get(i);
+                    String href=i==0?base:base+encodeSegment(item.name)+(item.dir?"/":"");
+                    xml.append("<d:response><d:href>").append(escapeXml(href)).append("</d:href><d:propstat><d:prop><d:displayname>")
+                      .append(escapeXml(item.name)).append("</d:displayname><d:resourcetype>");
+                    if(item.dir)xml.append("<d:collection/>");
+                    xml.append("</d:resourcetype><d:getcontentlength>").append(item.size)
+                       .append("</d:getcontentlength><d:getlastmodified>Fri, 06 Nov 2026 00:00:00 GMT</d:getlastmodified>")
+                       .append("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>");
+                }
+                xml.append("</d:multistatus>");
+                byte[] body=xml.toString().getBytes(StandardCharsets.UTF_8);
+                respond(out,207,"Content-Type: application/xml; charset=utf-8\r\nContent-Length: "+body.length+"\r\n");
+                out.write(body);out.flush();return;
+            }
+            if(f.dir){error(out,405);return;}
+            String url=downloadUrl(f);
+            HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();
+            c.setConnectTimeout(10000);c.setReadTimeout(30000);
+            c.setRequestProperty("User-Agent","Mozilla/5.0");
+            String range=headers.get("range");
+            if(range!=null)c.setRequestProperty("Range",range);
+            c.setInstanceFollowRedirects(true);
+            c.setRequestMethod("GET");
+            int status=c.getResponseCode();
+            if(status!=200&&status!=206){c.disconnect();error(out,502);return;}
+            if(range!=null&&status!=206){c.disconnect();error(out,502);return;}
+            long length=c.getContentLengthLong();
+            StringBuilder extra=new StringBuilder("Content-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\n");
+            if(length>=0)extra.append("Content-Length: ").append(length).append("\r\n");
+            if(c.getHeaderField("Content-Range")!=null)extra.append("Content-Range: ").append(c.getHeaderField("Content-Range")).append("\r\n");
+            respond(out,status,extra.toString());
+            if(method.equals("HEAD")){c.disconnect();return;}
+            try(InputStream source=c.getInputStream()){
+                byte[] buf=new byte[65536];int n;
+                while((n=source.read(buf))!=-1){out.write(buf,0,n);out.flush();}
+            }finally{c.disconnect();}
+        }catch(Exception ignored){}
+    }
+    private static String encodeSegment(String s) throws Exception {
+        return URLEncoder.encode(s,"UTF-8").replace("+","%20");
+    }
+    private static String escapeXml(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
+    private static String readLine(InputStream in)throws IOException {
+        ByteArrayOutputStream b=new ByteArrayOutputStream();
+        for(int i=0;i<8192;i++){int x=in.read();if(x==-1)break;if(x=='\n')break;if(x!='\r')b.write(x);}
+        return b.toString("UTF-8");
+    }
+    private static void respond(OutputStream out,int status,String headers)throws IOException{
+        String text=status==207?"Multi-Status":status==206?"Partial Content":status==200?"OK":"Error";
+        out.write(("HTTP/1.1 "+status+" "+text+"\r\nConnection: close\r\n"+headers+"\r\n").getBytes(StandardCharsets.US_ASCII));out.flush();
+    }
+    private static void error(OutputStream out,int code)throws IOException{respond(out,code,"Content-Length: 0\r\n");}
+    private static Map<String,String> map(String... kv){
+        LinkedHashMap<String,String> m=new LinkedHashMap<>();for(int i=0;i<kv.length;i+=2)m.put(kv[i],kv[i+1]);return m;
+    }
+    private static String query(Map<String,String> m) throws Exception {
+        if(m==null)return "";
+        StringBuilder b=new StringBuilder();
+        for(Map.Entry<String,String> e:m.entrySet()){
+            if(b.length()>0)b.append('&');
+            b.append(URLEncoder.encode(e.getKey(),"UTF-8")).append('=').append(URLEncoder.encode(e.getValue(),"UTF-8"));
+        }return b.toString();
+    }
+    private static String param(String u,String key){
+        try{String s=new URL(u).getQuery();if(s==null)return "";for(String p:s.split("&")){String[]kv=p.split("=",2);if(URLDecoder.decode(kv[0],"UTF-8").equals(key))return kv.length>1?URLDecoder.decode(kv[1],"UTF-8"):"";}}catch(Exception ignored){}return "";
+    }
+    private static String match(String s,String re){
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile(re).matcher(s);return m.find()?m.group(1):"";
+    }
+    private static JSONObject json(String text)throws JSONException {
+        JSONObject j=new JSONObject(text);return j.optJSONObject("data")!=null&&j.optString("accessToken","").isEmpty()?
+                (j.has("fileListAO")?j:j):j;
+    }
+    private static final class Reply{
+        String body,url;
+        Reply(String b,String u){body=b;url=u;}
+    }
+    private Reply request(String method,String url,Map<String,String> params,Map<String,String> form,Map<String,String> headers,boolean redirect)throws Exception {
+        String q=query(params);
+        URL target=new URL(url+(q.isEmpty()?"":(url.contains("?")?"&":"?")+q));
+        HttpURLConnection c=(HttpURLConnection)target.openConnection();
+        c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setInstanceFollowRedirects(redirect);
+        c.setRequestMethod(method);
+        c.setRequestProperty("Accept","application/json;charset=UTF-8");
+        c.setRequestProperty("User-Agent","Mozilla/5.0");
+        if(headers!=null)for(Map.Entry<String,String> e:headers.entrySet())if(!e.getKey().equals("X-Request-ID")||!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),e.getValue());
+        // Preserve server-issued DEVICEID and anti-CSRF cookies across QR exchanges.
+        try{Map<String,List<String>> sent=cookies.get(target.toURI(),Collections.emptyMap());for(Map.Entry<String,List<String>> e:sent.entrySet())if(e.getKey()!=null&&!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),String.join("; ",e.getValue()));}catch(Exception ignored){}
+        if(form!=null){
+            byte[] data=query(form).getBytes(StandardCharsets.UTF_8);c.setDoOutput(true);
+            c.setRequestProperty("Content-Type","application/x-www-form-urlencoded;charset=UTF-8");
+            try(OutputStream o=c.getOutputStream()){o.write(data);}
+        }
+        int status=c.getResponseCode();
+        try{cookies.put(target.toURI(),c.getHeaderFields());}catch(Exception ignored){}
+        String finalUrl=c.getURL().toString();
+        InputStream stream=status>=400?c.getErrorStream():c.getInputStream();
+        String body="";
+        if(stream!=null)try(InputStream in=stream){
+            ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n;
+            while((n=in.read(buf))!=-1){out.write(buf,0,n);if(out.size()>4*1024*1024)throw new IOException("Oversize API response");}
+            body=out.toString("UTF-8");
+        }finally{c.disconnect();}
+        if(status>=400)throw new IOException("Tianyi service HTTP "+status);
+        return new Reply(body,finalUrl);
+    }
+}
