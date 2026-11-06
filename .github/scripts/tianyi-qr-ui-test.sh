@@ -58,7 +58,9 @@ tap_match '天翼云盘'
 sleep 20
 screenshot "tianyi-panel"
 adb logcat -d -v threadtime > reports/logcat.txt
-if grep -Eq 'Attempt to get length of null array|FATAL EXCEPTION|NoClassDefFoundError|VerifyError' reports/logcat.txt; then
+# Only treat a fatal crash of the NOVA process as a crash. System
+# components can independently log the same NPE text and are irrelevant.
+if grep -E -A 16 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
   echo "NOVA_TIANYI_QR_TEST=FAIL" | tee reports/result.txt
   exit 1
 fi
@@ -68,6 +70,7 @@ root=ET.parse('reports/tianyi-panel.xml').getroot()
 nodes=[n.attrib for n in root.iter('node')]
 assert any('天翼云盘' in n.get('text','') for n in nodes), 'Tianyi protocol not selected'
 assert any(n.get('class','').endswith('ImageView') and n.get('bounds')!='[0,0][0,0]' for n in nodes), 'QR image widget not found'
+assert not any(('失败' in n.get('text','') or '重试' in n.get('text','')) for n in nodes), 'Cloud login failed; QR panel shows error'
 print('NOVA_TIANYI_QR_PANEL_WIDGET=PASS')
 PY
 echo "NOVA_TIANYI_QR_PANEL=DISPLAYED" | tee reports/result.txt
