@@ -10,7 +10,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@v4
       - name: Download signed Tianyi APK built from validated MOD
@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p testapk
-          gh run download 42176254523 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
+          gh run download 42176822312 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
           test -s testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
           (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
       - name: Install on clean Android 11 emulator and launch phone plus TV
@@ -32,21 +32,31 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
+            bash <<'NOVA_SMOKE_BASH'
             set -euo pipefail
             mkdir -p reports
+            adb logcat -c
+            trap 'adb logcat -d -v threadtime > reports/logcat.txt 2>/dev/null || true' EXIT
             adb install -r testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk | tee reports/install.txt
             adb shell monkey -p org.courville.nova -c android.intent.category.LAUNCHER 1
             sleep 8
-            adb shell pidof org.courville.nova | tee reports/phone-pid.txt
+            adb shell pidof org.courville.nova | tee reports/phone-pid.txt || true
             adb shell am force-stop org.courville.nova
             adb shell monkey -p org.courville.nova -c android.intent.category.LEANBACK_LAUNCHER 1
             sleep 8
-            adb shell pidof org.courville.nova | tee reports/tv-pid.txt
-            adb logcat -d -v brief > reports/logcat.txt
-            if grep -E -A15 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -E 'org.courville.nova|com.archos|TianyiCloud|TianyiUi|TianyiStore'; then
-              echo "ANDROID11_TIAN YI_RUNTIME=FAIL" && exit 1
+            adb shell pidof org.courville.nova | tee reports/tv-pid.txt || true
+            adb logcat -d -v threadtime > reports/logcat.txt
+            grep -E -A 18 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError|UnsatisfiedLinkError|Unable to create application' reports/logcat.txt | tail -n 120 | tee reports/fatal-summary.txt || true
+            if grep -q 'FATAL EXCEPTION' reports/logcat.txt; then
+              echo 'ANDROID11_TIANYI_RUNTIME=FAIL' | tee reports/result.txt
+              exit 1
+            fi
+            if ! adb shell pidof org.courville.nova | grep -q '[0-9]'; then
+              echo 'ANDROID11_TIANYI_PROCESS_NOT_RUNNING=FAIL' | tee reports/result.txt
+              exit 1
             fi
             echo "NOVA_TIANYI_ANDROID11_INSTALL_START=PASS" | tee reports/result.txt
+            NOVA_SMOKE_BASH
       - name: Upload Android 11 smoke report
         if: always()
         uses: actions/upload-artifact@v4
