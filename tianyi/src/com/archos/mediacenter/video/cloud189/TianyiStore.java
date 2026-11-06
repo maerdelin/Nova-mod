@@ -71,10 +71,13 @@ final class TianyiStore {
         obj.put("refresh", value.refreshToken);
         obj.put("finger", value.userFinger);
         obj.put("path", value.pathKey);
-        byte[] nonce = new byte[12];
-        RNG.nextBytes(nonce);
+        // AndroidKeyStore AES/GCM keys disallow caller-provided encryption IVs
+        // when randomized encryption is required. Use the provider-generated IV.
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+        byte[] nonce = cipher.getIV();
+        if (nonce == null || nonce.length != 12)
+            throw new SecurityException("Missing AndroidKeyStore GCM IV");
         cipher.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
         byte[] ciphertext = cipher.doFinal(obj.toString().getBytes(StandardCharsets.UTF_8));
         String packed = Base64.encodeToString(nonce, Base64.NO_WRAP) + ":" +
@@ -135,16 +138,30 @@ final class TianyiStore {
     /** Exercise the same AndroidKeyStore AES/GCM path needed to persist
      * AccessToken and RefreshToken. Uses a dummy payload, never a real token. */
     synchronized void verifyCrypto() throws Exception {
-        SecretKey savedKey=key();
-        byte[] nonce=new byte[12];RNG.nextBytes(nonce);
-        Cipher enc=Cipher.getInstance("AES/GCM/NoPadding");
-        enc.init(Cipher.ENCRYPT_MODE,savedKey,new GCMParameterSpec(128,nonce));
-        byte[] ciphertext=enc.doFinal("NOVA_KEYSTORE_TEST".getBytes(StandardCharsets.UTF_8));
-        Cipher dec=Cipher.getInstance("AES/GCM/NoPadding");
-        dec.init(Cipher.DECRYPT_MODE,savedKey,new GCMParameterSpec(128,nonce));
-        String recovered=new String(dec.doFinal(ciphertext),StandardCharsets.UTF_8);
-        if(!"NOVA_KEYSTORE_TEST".equals(recovered))
-            throw new SecurityException("AndroidKeyStore roundtrip mismatch");
+        String stage = "LOAD_KEY";
+        try {
+            SecretKey existingKey = key();
+            stage = "INIT_ENCRYPT";
+            Cipher enc = Cipher.getInstance("AES/GCM/NoPadding");
+            enc.init(Cipher.ENCRYPT_MODE, existingKey);
+            byte[] nonce = enc.getIV();
+            if (nonce == null || nonce.length != 12)
+                throw new SecurityException("Invalid provider-generated AES IV");
+            stage = "ENCRYPT";
+            enc.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
+            byte[] ciphertext = enc.doFinal("NOVA_KEYSTORE_TEST".getBytes(StandardCharsets.UTF_8));
+            stage = "INIT_DECRYPT";
+            Cipher dec = Cipher.getInstance("AES/GCM/NoPadding");
+            dec.init(Cipher.DECRYPT_MODE, existingKey, new GCMParameterSpec(128, nonce));
+            dec.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
+            stage = "DECRYPT";
+            String recovered = new String(dec.doFinal(ciphertext), StandardCharsets.UTF_8);
+            if (!"NOVA_KEYSTORE_TEST".equals(recovered))
+                throw new SecurityException("AndroidKeyStore AES roundtrip mismatch");
+        } catch (Exception ex) {
+            // Static phase identifier only; never reveal keys, plaintext or ciphertext.
+            throw new java.io.IOException("CRYPTO_"+stage+"_"+ex.getClass().getSimpleName(),ex);
+        }
     }
 
     private static SecretKey key() throws Exception {
