@@ -264,7 +264,13 @@ public final class TianyiUi {
     private static volatile WeakReference<Object> activeNetworkPage=new WeakReference<>(null);
 
     public static void registerNetworkPage(Object page) {
-        if(page!=null)activeNetworkPage=new WeakReference<>(page);
+        if(page==null)return;
+        activeNetworkPage=new WeakReference<>(page);
+        // The optimized NetworkRootFragment does not reliably dispatch
+        // onResume after a cold start. Trigger asynchronous DAV restore when
+        // the network page is first created, too.
+        Activity owner=activity(page);
+        if(owner!=null)TianyiCloud.startIfSaved(owner);
     }
 
     /**
@@ -330,15 +336,19 @@ public final class TianyiUi {
         }
         // Invalidate pending QR callbacks before any asynchronous list reload.
         guard.incrementAndGet();
+        // Keep the working QR dialog dismissal behavior; refresh after it
+        // closes so the original network page can update its adapter.
+        dismissAuthorizedDialog(fragment);
         boolean refreshScheduled=false;
         try {
             refreshScheduled=refreshNetworkPage();
         }catch(Exception refreshError) {
             TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);
         }
-        // Never report a successful insert as a failure merely because
-        // refresh or dismissal failed. Always try closing the QR dialog.
-        dismissAuthorizedDialog(fragment);
+        MAIN.postDelayed(()->{
+            try { refreshNetworkPage(); }
+            catch(Exception ignored){TianyiDiag.event("NETWORK_REFRESH_RETRY","FAIL",-1);}
+        },500);
         Toast.makeText(activity,
                 refreshScheduled?"天翼云盘已添加到网络存储":
                                  "天翼云盘已保存，网络列表稍后更新",
