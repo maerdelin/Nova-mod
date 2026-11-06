@@ -132,6 +132,7 @@ public final class TianyiCloud {
                         store.saveTokens(access,refresh);
                         setSession(token);
                         ensureSession();
+                        list("-11"); // Do not create a shortcut until the actual root listing succeeds.
                         listener.onAuthorized(rootUri());
                         return;
                     }
@@ -343,6 +344,7 @@ public final class TianyiCloud {
     private static Map<String,String> map(String... kv){
         LinkedHashMap<String,String> m=new LinkedHashMap<>();for(int i=0;i<kv.length;i+=2)m.put(kv[i],kv[i+1]);return m;
     }
+    private static String joinCookie(List<String> cookies){StringBuilder b=new StringBuilder();for(String c:cookies){if(b.length()>0)b.append("; ");b.append(c);}return b.toString();}
     private static String query(Map<String,String> m) throws Exception {
         if(m==null)return "";
         StringBuilder b=new StringBuilder();
@@ -375,7 +377,7 @@ public final class TianyiCloud {
         c.setRequestProperty("User-Agent","Mozilla/5.0");
         if(headers!=null)for(Map.Entry<String,String> e:headers.entrySet())if(!e.getKey().equals("X-Request-ID")||!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),e.getValue());
         // Preserve server-issued DEVICEID and anti-CSRF cookies across QR exchanges.
-        try{Map<String,List<String>> sent=cookies.get(target.toURI(),Collections.emptyMap());for(Map.Entry<String,List<String>> e:sent.entrySet())if(e.getKey()!=null&&!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),String.join("; ",e.getValue()));}catch(Exception ignored){}
+        try{Map<String,List<String>> sent=cookies.get(target.toURI(),Collections.emptyMap());for(Map.Entry<String,List<String>> e:sent.entrySet())if(e.getKey()!=null&&!e.getValue().isEmpty())c.setRequestProperty(e.getKey(),joinCookie(e.getValue()));}catch(Exception ignored){}
         if(form!=null){
             byte[] data=query(form).getBytes(StandardCharsets.UTF_8);c.setDoOutput(true);
             c.setRequestProperty("Content-Type","application/x-www-form-urlencoded;charset=UTF-8");
