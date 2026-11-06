@@ -210,6 +210,30 @@ def patch_shortcut_display(root):
     p.write_text(t[:start]+method+t[end:])
     print("NOVA_TIANYI_SHORTCUT_NAME=PATCHED")
 
+def patch_shortcut_model(root):
+    # Both phone and leanback lists may construct the same shortcut object
+    # through different cursor mappers. Patch the shared constructor so all
+    # renderers see the friendly name, while its real URI remains unchanged.
+    p=unique(root,"com/archos/mediacenter/video/leanback/adapter/object/GenericNetworkShortcut.smali")
+    t=p.read_text()
+    m=re.search(r"(?ms)^\\.method[^\\n]* constructor <init>\\(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;\\)V\\n.*?^\\.end method",t)
+    if not m: raise RuntimeError("GenericNetworkShortcut constructor signature missing")
+    body=m.group()
+    if "NOVA_TIANYI_SHARED_SHORTCUT_NAME" in body:
+        raise RuntimeError("Model shortcut already patched")
+    call=re.search(r"(?m)^    invoke-direct(?:/range)? [^\\n]+$",body)
+    if not call: raise RuntimeError("GenericNetworkShortcut parent constructor missing")
+    # p3 is the original WebDAV URI, p4 is the list display title. No extra
+    # registers are required, and the token/capability remains in p3.
+    inserted=f"""    # NOVA_TIANYI_SHARED_SHORTCUT_NAME
+    invoke-static {{p3, p4}}, {UI}->displayCloudShortcutName(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+    move-result-object p4
+
+"""
+    body=body[:call.start()]+inserted+body[call.start():]
+    p.write_text(t[:m.start()]+body+t[m.end():])
+    print("NOVA_TIANYI_SHARED_SHORTCUT_NAME=PATCHED")
+
 def patch_application_restore(root):
     # The Android process is recreated after every OS reboot. A ShortcutDb
     # row alone cannot keep a localhost socket alive. Restore the same
@@ -277,6 +301,7 @@ def main():
     patch_dialog(a.decoded)
     patch_network_on_resume(a.decoded)
     patch_shortcut_display(a.decoded)
+    patch_shortcut_model(a.decoded)
     patch_application_restore(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
