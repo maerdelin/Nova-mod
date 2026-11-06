@@ -37,11 +37,38 @@ screenshot(){ adb exec-out screencap -p > "reports/$1.png"; dump_ui; cp reports/
 adb shell monkey -p org.courville.nova -c android.intent.category.LAUNCHER 1
 sleep 5
 screenshot "home"
-# Default app starts on internal storage. Drawer has a 'Network' item.
-tap_match 'draweropen|Open navigation drawer'
-sleep 1
+# NOVA first startup already has its navigation drawer open.
+# Tapping the drawer toggle here would CLOSE it, so select Network directly.
 screenshot "drawer"
-tap_match '^Network\s*$'
+tap_match '^Network\s*
+sleep 5
+screenshot "network"
+# The NetworkRootFragment displays "Browse network server" entry.
+tap_match 'browse|add server|add network|network connection|服务器|添加'
+sleep 3
+screenshot "dialog-before"
+tap_match 'WebDAV|FTP|SMB'
+sleep 1
+screenshot "protocol-list"
+tap_match '天翼云盘'
+sleep 20
+screenshot "tianyi-panel"
+adb logcat -d -v threadtime > reports/logcat.txt
+if grep -Eq 'Attempt to get length of null array|FATAL EXCEPTION|NoClassDefFoundError|VerifyError' reports/logcat.txt; then
+  echo "NOVA_TIANYI_QR_TEST=FAIL" | tee reports/result.txt
+  exit 1
+fi
+# At minimum the QR panel must exist in the actual screen hierarchy.
+python3 - <<'PY'
+import xml.etree.ElementTree as ET
+root=ET.parse('reports/tianyi-panel.xml').getroot()
+nodes=[n.attrib for n in root.iter('node')]
+assert any('天翼云盘' in n.get('text','') for n in nodes), 'Tianyi protocol not selected'
+assert any(n.get('class','').endswith('ImageView') and n.get('bounds')!='[0,0][0,0]' for n in nodes), 'QR image widget not found'
+print('NOVA_TIANYI_QR_PANEL_WIDGET=PASS')
+PY
+echo "NOVA_TIANYI_QR_PANEL=DISPLAYED" | tee reports/result.txt
+
 sleep 5
 screenshot "network"
 # The NetworkRootFragment displays "Browse network server" entry.
