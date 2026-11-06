@@ -55,6 +55,29 @@ public final class TianyiUi {
             Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<View,QrPanel> PANELS =
             Collections.synchronizedMap(new WeakHashMap<>());
+    // Restore the original Always-new layout after leaving Tianyi mode;
+    // do not make every protocol field VISIBLE (some are protocol-specific).
+    private static final Map<View,FormState> ORIGINAL_FORMS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final class FormState {
+        final int[] visibility;
+        final int addressVisibility;
+        final RelativeLayout.LayoutParams spinnerLayout;
+        FormState(LinearLayout form,View address,Spinner spinner) {
+            visibility=new int[form.getChildCount()];
+            for(int i=1;i<form.getChildCount();i++)
+                visibility[i]=form.getChildAt(i).getVisibility();
+            addressVisibility=address.getVisibility();
+            spinnerLayout=new RelativeLayout.LayoutParams(
+                    (RelativeLayout.LayoutParams)spinner.getLayoutParams());
+        }
+        void restore(LinearLayout form,View address,Spinner spinner) {
+            for(int i=1;i<form.getChildCount() && i<visibility.length;i++)
+                form.getChildAt(i).setVisibility(visibility[i]);
+            address.setVisibility(addressVisibility);
+            spinner.setLayoutParams(new RelativeLayout.LayoutParams(spinnerLayout));
+        }
+    }
 
     public static int toLegacyType(int uiIndex) {
         if(uiIndex==NEW_UI_INDEX)return 8;
@@ -124,22 +147,24 @@ public final class TianyiUi {
         final int current=gen.incrementAndGet();
         TianyiDiag.event("UI_PROTOCOL","SELECT",selected);
         QrPanel panel=PANELS.get(root);
-        for(int i=1;i<form.getChildCount();i++)form.getChildAt(i).setVisibility(tianyi?View.GONE:View.VISIBLE);
-        address.setVisibility(tianyi?View.GONE:View.VISIBLE);
-        RelativeLayout.LayoutParams spinnerLp=(RelativeLayout.LayoutParams)protocol.getLayoutParams();
-        if(tianyi) {
-            spinnerLp.removeRule(RelativeLayout.ALIGN_BASELINE);
-            spinnerLp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
-        } else {
-            spinnerLp.removeRule(RelativeLayout.ALIGN_PARENT_TOP);
-            spinnerLp.addRule(RelativeLayout.ALIGN_BASELINE,address.getId());
+        if(!tianyi) {
+            // Undo Tianyi-only UI changes, then let the ORIGINAL listener
+            // decide SMB/SMBJ domain and all legacy protocol state.
+            FormState original=ORIGINAL_FORMS.remove(root);
+            if(original!=null)original.restore(form,address,protocol);
+            if(panel!=null)panel.surface.setVisibility(View.GONE);
+            return false;
         }
+        if(!ORIGINAL_FORMS.containsKey(root))
+            ORIGINAL_FORMS.put(root,new FormState(form,address,protocol));
+        for(int i=1;i<form.getChildCount();i++)
+            form.getChildAt(i).setVisibility(View.GONE);
+        address.setVisibility(View.GONE);
+        RelativeLayout.LayoutParams spinnerLp=(RelativeLayout.LayoutParams)protocol.getLayoutParams();
+        spinnerLp.removeRule(RelativeLayout.ALIGN_BASELINE);
+        spinnerLp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
         protocol.setLayoutParams(spinnerLp);
 
-        if(!tianyi) {
-            if(panel!=null)panel.surface.setVisibility(View.GONE);
-            return false; // existing NOVA listener updates the SMB domain.
-        }
         if(panel==null) {
             panel=createPanel(activity,row,protocol);
             PANELS.put(root,panel);
