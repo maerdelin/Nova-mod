@@ -1,0 +1,35 @@
+name: NOVA Tianyi protocol inspection
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['.github/workflows/tianyi-inspect.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch exact official v6.6.4 APK and apktool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o official.apk "https://github.com/nova-video-player/aos-AVP/releases/download/v6.6.4/org.courville.nova-2674303-6.6.4-20261104.0822-universal-release.apk"
+          echo "1aa2068ffec42a86efe4cee790a3f03e61194a01261405baff73ecdef1ca9ee4  official.apk" | sha256sum -c -
+          curl -fL --retry 3 -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar"
+          echo "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  apktool.jar" | sha256sum -c -
+          java -Xmx5g -jar apktool.jar d --no-debug-info -f official.apk -o decoded
+          mkdir -p inspect
+          cp decoded/res/values/arrays.xml inspect/arrays.xml
+          cp decoded/res/layout/network_credential_layout.xml inspect/network_credential_layout.xml
+          cp decoded/AndroidManifest.xml inspect/AndroidManifest.xml
+          find decoded -name '*NetworkServerCredentialsDialog*.smali' -exec cp {} inspect/ \;
+          find decoded -name '*NetworkRootFragment*smali' -exec cp {} inspect/ \;
+          find decoded -name '*ServerCredentialsDialog*.smali' -exec cp {} inspect/ \;
+          find decoded -name 'UriUtils.smali' -exec cp {} inspect/ \;
+      - name: Upload inspected exact resources and class Smali
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-Tianyi-UI-Inspection
+          path: inspect/
+          retention-days: 2
