@@ -1,56 +1,100 @@
 #!/usr/bin/env python3
-"""QA-only, never included in release source or final APK.
+"""Simulator-only patch for actual NOVA UI, saved account, and loopback DAV.
 
-Replace exactly one Java beginLogin method entry with a nonconstant
-test-only branch that dispatches the same onAuthorized callback after
-creating a local loopback DAV URI; no cloud tokens or network calls.
+This script is deliberately NEVER called by tianyi-build.yml, only the separate
+QA test workflow. The production APK contains the real Tianyi driver.
 """
 from pathlib import Path
 import sys
-if len(sys.argv)!=2: raise SystemExit("usage: qa_mock_auth_patch.py TianyiCloud.java")
+if len(sys.argv) != 2:
+    raise SystemExit("usage: qa_mock_auth_patch.py TianyiCloud.java")
 p=Path(sys.argv[1])
 s=p.read_text(encoding="utf-8")
-old="""    public void beginLogin(QrListener listener, Callable<Boolean> alive) {
-        workers.execute(()->{"""
-new="""    public void beginLogin(QrListener listener, Callable<Boolean> alive) {
-        // SYNTHETIC AUTHORIZATION: QA APK ONLY. NEVER RELEASE.
+
+def replace_once(old, new, label):
+    global s
+    if s.count(old) != 1:
+        raise SystemExit("QA patch anchor drift: " + label)
+    s = s.replace(old, new, 1)
+
+replace_once(
+    """    public void beginLogin(QrListener listener, Callable<Boolean> alive) {
+        workers.execute(()->{""",
+    """    public void beginLogin(QrListener listener, Callable<Boolean> alive) {
+        // QA MOCK ONLY: a successful auth must persist credentials first.
+        workers.execute(()->{
+            try {
+                store.saveTokens("qa-access", "qa-refresh");
+                listener.onAuthorized(rootUri());
+                android.util.Log.i("NOVA_TIANYI_QA","AUTH_CALLBACK_OK");
+            }catch(Exception e){
+                android.util.Log.e("NOVA_TIANYI_QA","AUTH_CALLBACK_FAIL",e);
+            }
+        });
+        if(System.nanoTime()!=Long.MIN_VALUE)return;
+        workers.execute(()->{""",
+    "auth callback",
+)
+replace_once(
+    """    public void ensureSession() throws Exception {
+        synchronized(sessionLock){""",
+    """    public void ensureSession() throws Exception {
+        // QA MOCK ONLY: require the persisted encrypted refresh token.
         if(System.nanoTime()!=Long.MIN_VALUE) {
-            workers.execute(()->{
-                try {
-                    listener.onAuthorized(rootUri());
-                }catch(Exception e){
-                    listener.onStatus("QA synthetic callback failed");
-                }
-            });
+            if(store.read().refreshToken.isEmpty())
+                throw new java.io.IOException("Mock saved account missing");
+            sessionKey="qa-session";
+            sessionSecret="qa-secret";
+            nextRefresh=System.currentTimeMillis()+15*60*1000L;
+            android.util.Log.i("NOVA_TIANYI_QA","SAVED_SESSION_RESTORED");
             return;
         }
-        workers.execute(()->{"""
-if s.count(old)!=1: raise SystemExit("Unexpected beginLogin anchor")
-p.write_text(s.replace(old,new),encoding="utf-8")
-print("NOVA_TIANYI_QA_SYNTHETIC_AUTH=ENABLED_IN_TEST_ONLY")
+        synchronized(sessionLock){""",
+    "restored session",
+)
+replace_once(
+    """    private List<FileObj> list(String folderId) throws Exception {
+        long diagStart=TianyiDiag.tick();""",
+    """    private List<FileObj> list(String folderId) throws Exception {
+        // QA MOCK ONLY: real DAV HTTP requests should return this directory.
+        if(System.nanoTime()!=Long.MIN_VALUE) {
+            ensureSession();
+            java.util.ArrayList<FileObj> fixture=new java.util.ArrayList<>();
+            if("-11".equals(folderId)) {
+                FileObj folder=new FileObj();
+                folder.id="qa-folder"; folder.name="QA Root Folder";
+                folder.parent="-11"; folder.dir=true; folder.size=0L;
+                folder.mtime=System.currentTimeMillis();
+                fixture.add(folder);
+            }
+            android.util.Log.i("NOVA_TIANYI_QA","MOCK_ROOT_LIST_"+folderId);
+            return fixture;
+        }
+        long diagStart=TianyiDiag.tick();""",
+    "mock root listing",
+)
+replace_once(
+    """                    TianyiDiag.event("DAV_RESTORE","OK",0);""",
+    """                    TianyiDiag.event("DAV_RESTORE","OK",0);
+                    android.util.Log.i("NOVA_TIANYI_QA","SAVED_DAV_BOUND");""",
+    "restore listener",
+)
+p.write_text(s, encoding="utf-8")
+print("NOVA_TIANYI_QA_BACKEND_MOCK=ENABLED_IN_TEST_DEX_ONLY")
 
-# Also instrument the test-only UI callback stages, not any release source.
+# UI QA stage markers are emitted through android.util.Log only in QA DEX.
 q=p.with_name("TianyiUi.java")
-if not q.exists(): raise SystemExit("No TianyiUi.java beside cloud driver")
-ui=q.read_text(encoding="utf-8")
+u=q.read_text(encoding="utf-8")
 replacements={
     '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);':
-      '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVE_OK");\n            try { Class<?> dbClass=Class.forName("com.archos.mediacenter.video.browser.ShortcutDb"); Object db=java.lang.Enum.valueOf((Class)dbClass,"STATIC"); android.database.Cursor cursor=(android.database.Cursor)dbClass.getMethod("getCursorAllShortcuts",android.content.Context.class).invoke(db,activity); try { if(cursor.moveToFirst()) { for(String column:cursor.getColumnNames()) { if(column.toLowerCase(java.util.Locale.US).contains("name")||column.toLowerCase(java.util.Locale.US).contains("friendly")) { int index=cursor.getColumnIndex(column); android.util.Log.i("NOVA_TIANYI_QA","DB_FIELD_"+column+"="+cursor.getString(index)); } } } } finally { cursor.close(); } } catch(Exception ex) { android.util.Log.i("NOVA_TIANYI_QA","DB_INSPECT_FAIL_"+ex.getClass().getSimpleName()); }',
-    '            TianyiDiag.event("SHORTCUT_SAVE","FAIL",-1);':
-      '            TianyiDiag.event("SHORTCUT_SAVE","FAIL",-1);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVE_FAIL "+saveError.getClass().getSimpleName());',
-    '            refreshScheduled=refreshNetworkPage();':
-      '            refreshScheduled=refreshNetworkPage();\n            android.util.Log.i("NOVA_TIANYI_QA","REFRESH_RETURN_"+refreshScheduled);',
-    '            TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);':
-      '            TianyiDiag.event("NETWORK_REFRESH","FAIL",-1);\n            android.util.Log.i("NOVA_TIANYI_QA","REFRESH_ERROR "+refreshError.getClass().getSimpleName());',
+    '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVED");',
     '        dismissAuthorizedDialog(fragment);':
-      '        dismissAuthorizedDialog(fragment);\n        android.util.Log.i("NOVA_TIANYI_QA","DISMISS_CALLED");',
-    '        if(page!=null)activeNetworkPage=new WeakReference<>(page);':
-      '        if(page!=null)activeNetworkPage=new WeakReference<>(page);\n        android.util.Log.i("NOVA_TIANYI_QA","REGISTER_NETWORK_PAGE");',
-    '        Object page=ref==null?null:ref.get();':
-      '        Object page=ref==null?null:ref.get();\n        android.util.Log.i("NOVA_TIANYI_QA","REFRESH_HAS_PAGE_"+(page!=null));'
+    '        dismissAuthorizedDialog(fragment);\n        android.util.Log.i("NOVA_TIANYI_QA","DIALOG_DISMISS_CALLED");',
+    '        page.getClass().getMethod("novaTianyiRefreshShortcuts").invoke(page);':
+    '        page.getClass().getMethod("novaTianyiRefreshShortcuts").invoke(page);\n        android.util.Log.i("NOVA_TIANYI_QA","NETWORK_REFRESH_INVOKED");',
 }
 for old,new in replacements.items():
-    if ui.count(old)!=1:raise SystemExit("QA UI anchor mismatch: "+old)
-    ui=ui.replace(old,new)
-q.write_text(ui,encoding="utf-8")
-print("NOVA_TIANYI_QA_UI_STAGE_LOGGING=ENABLED_TEST_ONLY")
+    if u.count(old)!=1: raise SystemExit("QA UI anchor drift: "+old)
+    u=u.replace(old,new,1)
+q.write_text(u,encoding="utf-8")
+print("NOVA_TIANYI_QA_UI_MARKERS=ENABLED_IN_TEST_DEX_ONLY")
