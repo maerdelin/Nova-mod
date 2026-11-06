@@ -35,7 +35,7 @@ if not q.exists(): raise SystemExit("No TianyiUi.java beside cloud driver")
 ui=q.read_text(encoding="utf-8")
 replacements={
     '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);':
-      '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVE_OK");',
+      '            TianyiDiag.event("SHORTCUT_SAVE","OK",0);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVE_OK");\n            try { Class<?> dbClass=Class.forName("com.archos.mediacenter.video.browser.ShortcutDb"); Object db=java.lang.Enum.valueOf((Class)dbClass,"STATIC"); android.database.Cursor cursor=(android.database.Cursor)dbClass.getMethod("getCursorAllShortcuts",android.content.Context.class).invoke(db,activity); try { if(cursor.moveToFirst()) { for(String column:cursor.getColumnNames()) { if(column.toLowerCase(java.util.Locale.US).contains("name")||column.toLowerCase(java.util.Locale.US).contains("friendly")) { int index=cursor.getColumnIndex(column); android.util.Log.i("NOVA_TIANYI_QA","DB_FIELD_"+column+"="+cursor.getString(index)); } } } } finally { cursor.close(); } } catch(Exception ex) { android.util.Log.i("NOVA_TIANYI_QA","DB_INSPECT_FAIL_"+ex.getClass().getSimpleName()); }',
     '            TianyiDiag.event("SHORTCUT_SAVE","FAIL",-1);':
       '            TianyiDiag.event("SHORTCUT_SAVE","FAIL",-1);\n            android.util.Log.i("NOVA_TIANYI_QA","SHORTCUT_SAVE_FAIL "+saveError.getClass().getSimpleName());',
     '            refreshScheduled=refreshNetworkPage();':
