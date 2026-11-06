@@ -56,6 +56,11 @@ sleep 1
 screenshot "protocol-list"
 tap_match '天翼云盘'
 sleep 20
+screenshot "tianyi-panel-20s"
+# A cold Android 14 emulator may take longer to finish network auth
+# redirects and initialize the GCM keystore. Do not accept infinite
+# "loading": take a second screenshot at a bounded 60-second deadline.
+sleep 40
 screenshot "tianyi-panel"
 adb logcat -d -v threadtime > reports/logcat.txt
 # Only treat a fatal crash of the NOVA process as a crash. System
