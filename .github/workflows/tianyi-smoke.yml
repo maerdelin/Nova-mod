@@ -23,6 +23,14 @@ jobs:
           gh run download 42180997027 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
           test -s testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
           (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
+      - name: Enable KVM hardware acceleration (required for reliable Android runtime tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm || { echo "::error::GitHub runner has no /dev/kvm; emulator would run under unstable TCG"; exit 1; }
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          ls -l /dev/kvm
       - name: Install on clean Android 11 emulator and launch phone plus TV
         uses: reactivecircus/android-emulator-runner@v2
         with:
