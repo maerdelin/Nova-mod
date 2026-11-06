@@ -12,14 +12,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Download validated NOVA v6.6.4 Run1234
+      - name: Download hash-pinned NOVA v6.6.4 Release 1239
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p inputs tools work dist reports
-          gh run download 42158388079 --repo "$GITHUB_REPOSITORY" --name Nova-installable-signed-1234 --dir inputs
-          test -s inputs/Nova_Video_Player_mod_SIGNED.apk
+          # Pin to the latest verified MOD release instead of an Actions run
+          # (the repository removes old runs after 15 executions).
+          curl -fL --retry 4 --retry-delay 2 -o inputs/Nova_Video_Player_mod_SIGNED.apk \
+            "https://github.com/maerdelin/Nova-mod/releases/download/nova-mod-granular-433620675-1239-1/Nova_Video_Player_mod_SIGNED.apk"
+          echo "caf3f34aa0a0dd63ade2c86ffa42880cf449f233155c4303b16c741fdcef62de  inputs/Nova_Video_Player_mod_SIGNED.apk" | sha256sum -c -
       - name: Install pinned tools and decode baseline
         run: |
           set -euo pipefail
