@@ -45,7 +45,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * inside the original RelativeLayout, side by side.
  */
 public final class TianyiUi {
-    public static final int NEW_UI_INDEX=5; // NOVA original array indexes: FTP,SFTP,FTPS,SSHJ,SMB,Tianyi,SMBJ,WebDAV,WebDAVS
+    // Original Always-new protocol IDs: WebDAV=0, SMB=1, FTP=2,
+    // SFTP=3, FTPS=4, SSHJ=5, SMBJ=6, WebDAVS=7.
+    // The Tianyi UI item is inserted at position 1 (second); it never
+    // flows into NOVA's native UriUtils protocol handling.
+    public static final int NEW_UI_INDEX=1;
     private static final Handler MAIN=new Handler(Looper.getMainLooper());
     private static final Map<Object,AtomicInteger> GENERATIONS =
             Collections.synchronizedMap(new WeakHashMap<>());
