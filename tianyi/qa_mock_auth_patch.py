@@ -63,12 +63,12 @@ replace_once(
 )
 replace_once(
     """    private Reply request0(String method,String url,Map<String,String> params,
-                            Map<String,String> form,Map<String,String> headers,
-                            boolean redirect,int hops)throws Exception {
+                           Map<String,String> form,Map<String,String> headers,
+                           boolean redirect,int hops)throws Exception {
         if(hops>8)throw new IOException("Too many Tianyi login redirects");""",
     """    private Reply request0(String method,String url,Map<String,String> params,
-                            Map<String,String> form,Map<String,String> headers,
-                            boolean redirect,int hops)throws Exception {
+                           Map<String,String> form,Map<String,String> headers,
+                           boolean redirect,int hops)throws Exception {
         // QA MOCK ONLY: intercept 189Cloud HTTP response bodies. Production
         // apiGet and directory pagination remain unmodified and executed.
         if(System.nanoTime()!=Long.MIN_VALUE && url.startsWith(API+"/")) {
