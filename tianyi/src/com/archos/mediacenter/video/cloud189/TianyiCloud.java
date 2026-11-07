@@ -63,6 +63,9 @@ public final class TianyiCloud {
     private final ExecutorService lifecycle=Executors.newSingleThreadExecutor(r -> {
         Thread t=new Thread(r,"nova-tianyi-lifecycle");t.setDaemon(true);return t;
     });
+    private final ExecutorService listenerLifecycle=Executors.newSingleThreadExecutor(r -> {
+        Thread t=new Thread(r,"nova-tianyi-listener-start");t.setDaemon(true);return t;
+    });
     private final AtomicBoolean restoreInFlight=new AtomicBoolean(false);
 
     private TianyiCloud(Context c) {app=c.getApplicationContext();store=new TianyiStore(app);}
@@ -100,6 +103,17 @@ public final class TianyiCloud {
             TianyiDiag.event("DAV_SERVICE_START","FAIL",-1);
             cloud.stopServer();
         }
+    }
+
+    // Binding a ServerSocket on Android's Activity/Service main thread can
+    // trip StrictMode. The dedicated listener thread also avoids blocking
+    // behind a previous, still-running cloud token refresh.
+    void ensureListenerAsync() {
+        listenerLifecycle.execute(()->{
+            if(!serveAllowed)return;
+            try{startServer();}
+            catch(Exception bindFailure){TianyiDiag.event("DAV_BIND","FAIL",-1);}
+        });
     }
 
     void restoreAsync() {
