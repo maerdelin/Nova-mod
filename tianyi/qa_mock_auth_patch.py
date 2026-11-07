@@ -89,6 +89,10 @@ replace_once(
                                 .put("fileName","QA Nested.mkv").put("fileSize",4096));
                 } else if("qa-bulk".equals(folder)) {
                     total=137;
+                    // Synthetic proxy rejects large initial pages. Production
+                    // must restart the entire folder from page 1 at size 250.
+                    if(page==1 && Integer.parseInt(params.get("pageSize"))>250)
+                        throw new IOException("Oversize API response");
                     // Simulate a real frontend limiting a requested 100
                     // rows to 40. Previously Nova stopped after page one.
                     int from=(page-1)*40,until=Math.min(from+40,total);
