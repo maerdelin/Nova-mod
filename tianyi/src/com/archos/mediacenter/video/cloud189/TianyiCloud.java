@@ -560,8 +560,7 @@ public final class TianyiCloud {
         for(String p:parts){
             if(p.isEmpty())continue;
             if(!cursor.dir)throw new FileNotFoundException();
-            String target=URLDecoder.decode(p.replace("+","%2B"),"UTF-8");
-            if(target.equals("..")||target.equals(".")||target.contains("/"))throw new FileNotFoundException();
+            String target=TianyiDavPaths.decodeSegment(p);
             FileObj next=null;
             for(FileObj child:list(cursor.id))if(child.name.equals(target)){next=child;break;}
             if(next==null)throw new FileNotFoundException();
@@ -612,12 +611,15 @@ public final class TianyiCloud {
             if(method.equals("PROPFIND")){
                 ArrayList<FileObj> items=new ArrayList<>();items.add(f);
                 if(f.dir&&!"0".equals(headers.get("depth")))items.addAll(list(f.id));
-                String base="/"+key+"/"+rel;
-                if(f.dir&&!base.endsWith("/"))base+="/";
+                // IMPORTANT: the request target may contain raw '[' or ']'.
+                // Never echo it into WebDAV href: Sardine's DavResource
+                // constructs new URI(href), discarding any invalid resource.
+                // Canonicalize EVERY parent component, not only the leaf.
+                String base=TianyiDavPaths.canonicalBase(key,rel,f.dir);
                 StringBuilder xml=new StringBuilder("<?xml version=\"1.0\" encoding=\"utf-8\"?><d:multistatus xmlns:d=\"DAV:\">");
                 for(int i=0;i<items.size();i++){
                     FileObj item=items.get(i);
-                    String href=i==0?base:base+encodeSegment(item.name)+(item.dir?"/":"");
+                    String href=i==0?base:base+TianyiDavPaths.encodeSegment(item.name)+(item.dir?"/":"");
                     xml.append("<d:response><d:href>").append(escapeXml(href)).append("</d:href><d:propstat><d:prop><d:displayname>")
                       .append(escapeXml(item.name)).append("</d:displayname><d:resourcetype>");
                     if(item.dir)xml.append("<d:collection/>");
@@ -693,9 +695,6 @@ public final class TianyiCloud {
         if(name.endsWith(".ass")||name.endsWith(".ssa"))return "text/plain";
         String guess=URLConnection.guessContentTypeFromName(name);
         return guess==null?"application/octet-stream":guess;
-    }
-    private static String encodeSegment(String s) throws Exception {
-        return URLEncoder.encode(s,"UTF-8").replace("+","%20");
     }
     private static String escapeXml(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
     private static String readLine(InputStream in)throws IOException {

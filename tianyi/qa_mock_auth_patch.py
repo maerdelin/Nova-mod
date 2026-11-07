@@ -82,10 +82,12 @@ replace_once(
                 JSONArray folders=new JSONArray(),files=new JSONArray();
                 int total=0;
                 if("-11".equals(folder)) {
-                    total=2;
+                    total=3;
                     if(page==1) {
                         folders.put(new JSONObject().put("id","qa-folder").put("name","QA Root Folder"));
                         folders.put(new JSONObject().put("id","qa-bulk").put("name","QA Bulk Movies"));
+                        folders.put(new JSONObject().put("id","qa-unsafe")
+                                .put("name","[www.hmxz.org] QA [4K+] (2026)"));
                     }
                 } else if("qa-folder".equals(folder)) {
                     total=3;
@@ -99,6 +101,19 @@ replace_once(
                     if(page==1)
                         files.put(new JSONObject().put("fileId","qa-nested-file")
                                 .put("fileName","QA Nested.mkv").put("fileSize",4096));
+                } else if("qa-unsafe".equals(folder)) {
+                    total=2;
+                    if(page==1) {
+                        folders.put(new JSONObject().put("id","qa-unsafe-deep")
+                                .put("name","[Nested] QA"));
+                        files.put(new JSONObject().put("id","qa-unsafe-mkv")
+                                .put("name","[HDR+] QA Movie.mkv").put("size",2048));
+                    }
+                } else if("qa-unsafe-deep".equals(folder)) {
+                    total=1;
+                    if(page==1)
+                        files.put(new JSONObject().put("id","qa-unsafe-deep-mkv")
+                                .put("name","[Sample] Nested Movie.mkv").put("size",4096));
                 } else if("qa-bulk".equals(folder)) {
                     total=137;
                     if(page==1 && size>250)

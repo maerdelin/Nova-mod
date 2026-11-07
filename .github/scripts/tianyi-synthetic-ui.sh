@@ -186,6 +186,22 @@ adb shell input keyevent KEYCODE_BACK
 sleep 3
 capture 'root-with-bulk-folder'
 assert_text reports/root-with-bulk-folder.xml 'QA Bulk Movies'
+assert_text reports/root-with-bulk-folder.xml '[www.hmxz.org] QA [4K+] (2026)'
+# Verify the original bug in the actual NOVA browser: a raw square-bracket
+# parent folder must no longer cause Sardine to discard video children.
+tap '\[www\.hmxz\.org\] QA \[4K\+\] \(2026\)'
+sleep 4
+capture 'unsafe-parent-in-nova'
+assert_text reports/unsafe-parent-in-nova.xml '[HDR+] QA Movie.mkv'
+tap '\[Nested\] QA'
+sleep 4
+capture 'unsafe-nested-in-nova'
+assert_text reports/unsafe-nested-in-nova.xml '[Sample] Nested Movie.mkv'
+echo 'MOCK_NOVA_BRACKET_PARENT_MOVIES=PASS' | tee reports/bracket-ui.txt
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+adb shell input keyevent KEYCODE_BACK
+sleep 2
 tap 'QA Bulk Movies'
 sleep 6
 capture 'bulk-movies-in-nova'
@@ -260,6 +276,43 @@ conn.close()
 after=page_one_count()
 assert before==after, f'DAV cache refetched bulk directory pages: {before} -> {after}'
 print('MOCK_DAV_CACHE_NO_DUPLICATE_API_CALLS=PASS')
+
+# Reproduce the EXACT real-log trigger: NOVA sent a raw path with [www].
+# The server may accept that request line, but every emitted DAV:href MUST
+# be canonical; otherwise Sardine's new URI(href) drops the parent + files.
+bad_parent='/'+capability+'/[www.hmxz.org]%20QA%20[4K+]%20(2026)/'
+conn=http.client.HTTPConnection('127.0.0.1',32789,timeout=40)
+conn.request('PROPFIND',bad_parent,headers={'Depth':'1','Content-Length':'0'})
+response=conn.getresponse()
+raw=response.read()
+assert response.status==207, f'Unsafe-parent DAV failed: {response.status} {raw[:100]!r}'
+doc=ET.fromstring(raw)
+resources=doc.findall('{DAV:}response')
+assert len(resources)==3, f'Unsafe parent lost video: {len(resources)} responses'
+names=[r.findtext('.//{DAV:}displayname','') for r in resources]
+assert '[HDR+] QA Movie.mkv' in names
+assert '[Nested] QA' in names
+for resource in resources:
+    href=resource.findtext('{DAV:}href')
+    assert href is not None and '[' not in href and ']' not in href and ' ' not in href, f'Invalid DAV href: {href}'
+    assert '%5Bwww.hmxz.org%5D' in href, f'Parent was not encoded: {href}'
+    assert '%255B' not in href, f'Double encoding: {href}'
+conn.close()
+
+bad_nested=bad_parent+'[Nested]%20QA/'
+conn=http.client.HTTPConnection('127.0.0.1',32789,timeout=40)
+conn.request('PROPFIND',bad_nested,headers={'Depth':'1','Content-Length':'0'})
+nested=conn.getresponse()
+nested_body=nested.read()
+assert nested.status==207, f'Nested unsafe path failed: {nested.status}'
+rows=ET.fromstring(nested_body).findall('{DAV:}response')
+assert len(rows)==2, f'Expected nested folder + MKV, got {len(rows)}'
+for row in rows:
+    href=row.findtext('{DAV:}href')
+    assert '%5Bwww.hmxz.org%5D' in href and '%5BNested%5D' in href, f'Unencoded ancestor in nested href: {href}'
+assert '[Sample] Nested Movie.mkv' in [r.findtext('.//{DAV:}displayname','') for r in rows]
+print('MOCK_DAV_RAW_BRACKETS_CANONICALIZED=PASS')
+conn.close()
 PY
 adb forward --remove tcp:32789 || true
 echo 'MOCK_DAV_137_MKVS=PASS' | tee reports/bulk-mkv.txt
