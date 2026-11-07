@@ -404,6 +404,27 @@ def patch_application_restore(root):
     p.write_text(t[:m.start()]+patched+t[m.end():])
     print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,"AFTER_SUPER")
 
+def patch_persistent_dav_service(root):
+    # The original socket ran on a daemon Thread and did not protect the
+    # background Android process. Register a visible foreground service.
+    manifest=root / "AndroidManifest.xml"
+    content=manifest.read_text(encoding="utf-8")
+    for permission in ("android.permission.FOREGROUND_SERVICE",
+                       "android.permission.FOREGROUND_SERVICE_DATA_SYNC"):
+        if f'android:name="{permission}"' not in content:
+            content=once(content,"<application",
+                f'<uses-permission android:name="{permission}" />\n    <application',
+                f"manifest permission {permission}")
+    if "com.archos.mediacenter.video.cloud189.TianyiDavService" in content:
+        raise RuntimeError("TianyiDavService already declared in manifest")
+    service=('    <service android:name="com.archos.mediacenter.video.cloud189.TianyiDavService" '
+             'android:exported="false" android:stopWithTask="false" '
+             'android:foregroundServiceType="dataSync" />\n    ')
+    content=once(content,"</application>",service+"</application>","DAV service manifest declaration")
+    manifest.write_text(content,encoding="utf-8")
+    print("NOVA_TIANYI_PERSISTENT_DAV_SERVICE=MANIFEST_PATCHED")
+
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
@@ -420,6 +441,7 @@ def main():
     patch_shared_shortcut_getname(a.decoded)
     patch_actual_phone_shortcut_adapter(a.decoded)
     patch_application_restore(a.decoded)
+    patch_persistent_dav_service(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
 if __name__=="__main__":

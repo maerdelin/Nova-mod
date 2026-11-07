@@ -354,6 +354,32 @@ sleep 8
 capture 'root-after-system-reboot'
 assert_text reports/root-after-system-reboot.xml 'QA Root Folder'
 echo 'MOCK_DAV_ROOT_AFTER_SYSTEM_REBOOT=PASS' | tee reports/system-reboot.txt
+
+# A real background-lifetime regression, not just an Activity restart:
+# leave NOVA for 80 s. An active Android FGS must keep its localhost DAV
+# listener available when a second client connects without relaunching NOVA.
+adb shell input keyevent KEYCODE_HOME
+sleep 80
+adb forward tcp:32791 tcp:27989
+python3 - <<'PY'
+import http.client
+c=http.client.HTTPConnection('127.0.0.1',32791,timeout=12)
+c.request('OPTIONS','/')
+r=c.getresponse()
+body=r.read()
+assert r.status==200, f'Local DAV died after idle: {r.status} {body[:100]!r}'
+c.close()
+print('MOCK_DAV_ALIVE_AFTER_BACKGROUND_IDLE=PASS')
+PY
+adb forward --remove tcp:32791
+adb shell dumpsys activity services org.courville.nova > reports/foreground-services.txt
+grep -q 'TianyiDavService' reports/foreground-services.txt || {
+  echo 'MOCK_DAV_FOREGROUND_SERVICE_MISSING=FAIL' >&2
+  exit 1
+}
+echo 'MOCK_DAV_FOREGROUND_SERVICE=PASS' | tee reports/background-fgs.txt
+adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null
+sleep 4
 adb logcat -d -v threadtime > reports/logcat.txt
 if grep -E -A 20 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
   echo 'SYNTHETIC_AUTH_RUNTIME=FAIL'

@@ -1,6 +1,7 @@
 package com.archos.mediacenter.video.cloud189;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,6 +13,7 @@ import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -49,6 +51,14 @@ public final class TianyiCloud {
     private volatile String sessionKey="", sessionSecret="";
     private volatile long nextRefresh=0L;
     private volatile boolean started=false;
+    private volatile ServerSocket activeListener;
+    private volatile Thread acceptorThread;
+    private boolean keepAliveScheduled=false;
+    // Server restore must not compete with 8 long-running video GETs.
+    private final ExecutorService lifecycle=Executors.newSingleThreadExecutor(r -> {
+        Thread t=new Thread(r,"nova-tianyi-lifecycle");t.setDaemon(true);return t;
+    });
+    private final AtomicBoolean restoreInFlight=new AtomicBoolean(false);
 
     private TianyiCloud(Context c) {app=c.getApplicationContext();store=new TianyiStore(app);}
     /** Match only THIS installation's persisted random DAV capability.
@@ -70,40 +80,57 @@ public final class TianyiCloud {
     }
     public static void startIfSaved(Context c) {
         TianyiCloud cloud=get(c);
-        // Schedule binding immediately when the network page resumes.
-        // Do not perform socket operations on the Android UI thread; unlike
-        // the old implementation we no longer decrypt tokens before binding.
-        cloud.workers.execute(() -> {
+        // No saved Tianyi shortcut -> do not start a permanent notification.
+        if(cloud.store.existingPathKey().isEmpty())return;
+        cloud.restoreAsync();
+        // A plain daemon ServerSocket does not keep an Android process alive:
+        // create an actual foreground Service before the Activity backgrounds.
+        try {
+            Intent intent=new Intent(c,TianyiDavService.class);
+            if(android.os.Build.VERSION.SDK_INT>=26)
+                c.startForegroundService(intent);
+            else
+                c.startService(intent);
+            TianyiDiag.event("DAV_SERVICE_START","OK",0);
+        }catch(RuntimeException notAllowed) {
+            // Background launch restrictions can reject starting an FGS.
+            // Never make normal NOVA startup fail; local DAV still attempts
+            // to bind and will retry when its network page resumes.
+            TianyiDiag.event("DAV_SERVICE_START","FAIL",-1);
+        }
+    }
+
+    void restoreAsync() {
+        if(!restoreInFlight.compareAndSet(false,true))return;
+        lifecycle.execute(()-> {
             try {
-                if(!cloud.store.existingPathKey().isEmpty()) {
-                    // The shortcut survives reboot independently of this
-                    // process. Rebind its existing port and capability, never
-                    // generate a fresh key or make a second shortcut.
-                    cloud.startServer();
+                if(!store.existingPathKey().isEmpty()) {
+                    // Bind FIRST, independently of Tianyi network availability.
+                    // Keep the exact saved loopback port and capability URL.
+                    startServer();
                     TianyiDiag.event("DAV_RESTORE","OK",0);
-                    TianyiStore.Saved saved=cloud.store.read();
+                    TianyiStore.Saved saved=store.read();
                     if(saved.refreshToken.isEmpty()) {
                         TianyiDiag.event("DAV_RESTORE_TOKEN","MISSING",0);
                     } else {
                         TianyiDiag.event("DAV_RESTORE_TOKEN","PRESENT",0);
-                        // Validate the restored session in the background,
-                        // before a directory-open request needs it. A failed
-                        // validation must not delete persistent credentials.
                         try {
-                            cloud.ensureSession();
+                            ensureSession();
                             TianyiDiag.event("DAV_RESTORE_SESSION","OK",0);
-                            // Restoration is only usable when the original
-                            // account can list its personal cloud root.
-                            long startedAt=TianyiDiag.tick();
-                            java.util.List<FileObj> entries=cloud.list("-11");
-                            TianyiDiag.event("DAV_RESTORE_ROOT","OK",207,startedAt,entries.size());
-                        } catch(Exception restoreError) {
+                            long began=TianyiDiag.tick();
+                            java.util.List<FileObj> entries=list("-11");
+                            TianyiDiag.event("DAV_RESTORE_ROOT","OK",207,began,entries.size());
+                        }catch(Exception recoveryFailure) {
+                            // Remote Tianyi failure is distinct from local port
+                            // failure and must not shut down the DAV listener.
                             TianyiDiag.event("DAV_RESTORE_ROOT","FAIL",-1);
                         }
                     }
                 }
-            }catch(Exception ignored){
+            }catch(Exception failure) {
                 TianyiDiag.event("DAV_RESTORE","FAIL",-1);
+            }finally {
+                restoreInFlight.set(false);
             }
         });
     }
@@ -135,37 +162,82 @@ public final class TianyiCloud {
     }
     public void startServer() throws Exception {
         synchronized(this) {
-            if(started)return;
+            // A stale boolean is not proof the socket is accepting requests.
+            // Recheck both the bound socket and its acceptor thread.
+            if(started && activeListener!=null && !activeListener.isClosed()
+                    && acceptorThread!=null && acceptorThread.isAlive())
+                return;
+            if(activeListener!=null) {
+                try {activeListener.close();}catch(IOException ignored){}
+                activeListener=null;
+            }
+            started=false;
             ServerSocket sock=new ServerSocket();
             sock.setReuseAddress(true);
             sock.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),PORT),32);
-            started=true;
-            TianyiDiag.event("DAV_BIND","OK",PORT);
             Thread acceptor=new Thread(()->{
-                while(!sock.isClosed()) {
-                    try {
-                        Socket client=sock.accept();
-                        client.setSoTimeout(25000);
-                        workers.execute(()->handle(client));
-                    }catch(Exception ignored){TianyiDiag.event("DAV_ACCEPT","FAIL",-1);}
+                try {
+                    while(!sock.isClosed()) {
+                        try {
+                            Socket client=sock.accept();
+                            client.setSoTimeout(25000);
+                            try {
+                                workers.execute(()->handle(client));
+                            }catch(RejectedExecutionException rejected) {
+                                try{client.close();}catch(IOException ignored){}
+                                throw rejected;
+                            }
+                        }catch(SocketException closedOrBroken) {
+                            if(!sock.isClosed())TianyiDiag.event("DAV_ACCEPT","FAIL",-1);
+                            break;
+                        }catch(IOException temporarilyBroken) {
+                            if(sock.isClosed())break;
+                            TianyiDiag.event("DAV_ACCEPT","FAIL",-1);
+                            break;
+                        }
+                    }
+                }finally {
+                    synchronized(TianyiCloud.this) {
+                        if(activeListener==sock) {
+                            started=false;
+                            activeListener=null;
+                            acceptorThread=null;
+                        }
+                    }
+                    try{sock.close();}catch(IOException ignored){}
+                    // The scheduled watchdog or the next Activity resume
+                    // will rebind; never spin on a permanently broken socket.
+                    TianyiDiag.event("DAV_ACCEPT","STOPPED",0);
                 }
             },"nova-tianyi-dav");
             acceptor.setDaemon(true);
+            activeListener=sock;
+            acceptorThread=acceptor;
+            started=true;
             acceptor.start();
-            // OpenList's PC driver periodically pings its authenticated session.
-            // Android can suspend the timer; every DAV request can also refresh.
-            keepAlive.scheduleWithFixedDelay(() -> {
-                long diagStart=TianyiDiag.tick();
-                try {
-                    if(!store.read().refreshToken.isEmpty())
-                        apiGet("/keepUserSession.action",new LinkedHashMap<String,String>());
-                    TianyiDiag.event("KEEPALIVE","OK",0,diagStart,0L);
-                } catch(Exception e) {
-                    TianyiDiag.event("KEEPALIVE","FAIL",-1,diagStart,0L);
-                    nextRefresh=0;
-                    try{ensureSession();}catch(Exception ignored){}
-                }
-            },5,5,TimeUnit.MINUTES);
+            TianyiDiag.event("DAV_BIND","OK",PORT);
+            if(!keepAliveScheduled) {
+                keepAliveScheduled=true;
+                // A foreground service keeps the Android process eligible for
+                // background execution; this watchdog repairs dead listeners
+                // without changing the persisted local WebDAV URL.
+                keepAlive.scheduleWithFixedDelay(()->{
+                    try { startServer(); }
+                    catch(Exception failure){TianyiDiag.event("DAV_WATCHDOG","FAIL",-1);}
+                },15,30,TimeUnit.SECONDS);
+                keepAlive.scheduleWithFixedDelay(()->{
+                    long began=TianyiDiag.tick();
+                    try {
+                        if(!store.read().refreshToken.isEmpty())
+                            apiGet("/keepUserSession.action",new LinkedHashMap<String,String>());
+                        TianyiDiag.event("KEEPALIVE","OK",0,began,0L);
+                    }catch(Exception failure) {
+                        TianyiDiag.event("KEEPALIVE","FAIL",-1,began,0L);
+                        nextRefresh=0;
+                        try{ensureSession();}catch(Exception ignored){}
+                    }
+                },5,5,TimeUnit.MINUTES);
+            }
         }
     }
     public String rootUri() throws Exception {
