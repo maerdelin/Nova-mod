@@ -83,7 +83,10 @@ replace_once(
                 } else if("qa-nested".equals(folder)) {
                     total=1;
                     if(page==1)
-                        files.put(new JSONObject().put("id","qa-nested-file").put("name","QA Nested.mkv").put("size",4096));
+                        // Alternate cloud response naming is exercised too:
+                        // older parsing silently produced an empty file name.
+                        files.put(new JSONObject().put("fileId","qa-nested-file")
+                                .put("fileName","QA Nested.mkv").put("fileSize",4096));
                 } else if("qa-bulk".equals(folder)) {
                     total=137;
                     // Simulate a real frontend limiting a requested 100
