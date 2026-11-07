@@ -52,19 +52,33 @@ replace_once(
         synchronized(sessionLock){""",
     "restored session",
 )
+# Mock at the HTTP transport layer, not at apiGet: this tests the SAME
+# production res_code/code/error parsing, signature/session retry,
+# page-size fallback, JSON decoding and DAV XML path used by real accounts.
 replace_once(
-    """    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
-        IOException last=null;""",
-    """    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
-        // QA MOCK ONLY: return 189Cloud-compatible JSON, NOT a pre-parsed
-        // List<FileObj>. Exercise the actual production pagination parser.
-        if(System.nanoTime()!=Long.MIN_VALUE) {
-            if("/listFiles.action".equals(path)) {
+    """    private volatile boolean started=false;""",
+    """    private volatile boolean started=false;
+    private volatile boolean qaRejectedBulkSessionOnce=false;""",
+    "mock retry state",
+)
+replace_once(
+    """    private Reply request0(String method,String url,Map<String,String> params,
+                            Map<String,String> form,Map<String,String> headers,
+                            boolean redirect,int hops)throws Exception {
+        if(hops>8)throw new IOException("Too many Tianyi login redirects");""",
+    """    private Reply request0(String method,String url,Map<String,String> params,
+                            Map<String,String> form,Map<String,String> headers,
+                            boolean redirect,int hops)throws Exception {
+        // QA MOCK ONLY: intercept 189Cloud HTTP response bodies. Production
+        // apiGet and directory pagination remain unmodified and executed.
+        if(System.nanoTime()!=Long.MIN_VALUE && url.startsWith(API+"/")) {
+            String action=url.substring(API.length());
+            if("/listFiles.action".equals(action)) {
                 ensureSession();
                 String folder=params.get("folderId");
-                String pageString=params.get("pageNum");
-                int page=pageString==null?1:Integer.parseInt(pageString);
-                if(page<1)throw new IOException("Invalid mock page");
+                int page=Integer.parseInt(params.get("pageNum"));
+                int size=Integer.parseInt(params.get("pageSize"));
+                if(page<1 || size<1)throw new IOException("Invalid mock page");
                 JSONArray folders=new JSONArray(),files=new JSONArray();
                 int total=0;
                 if("-11".equals(folder)) {
@@ -83,38 +97,39 @@ replace_once(
                 } else if("qa-nested".equals(folder)) {
                     total=1;
                     if(page==1)
-                        // Alternate cloud response naming is exercised too:
-                        // older parsing silently produced an empty file name.
                         files.put(new JSONObject().put("fileId","qa-nested-file")
                                 .put("fileName","QA Nested.mkv").put("fileSize",4096));
                 } else if("qa-bulk".equals(folder)) {
                     total=137;
-                    // Synthetic proxy rejects large initial pages. Production
-                    // must restart the entire folder from page 1 at size 250.
-                    if(page==1 && Integer.parseInt(params.get("pageSize"))>250)
+                    if(page==1 && size>250)
                         throw new IOException("Oversize API response");
-                    // Simulate a real frontend limiting a requested 100
-                    // rows to 40. Previously Nova stopped after page one.
+                    if(page==1 && !qaRejectedBulkSessionOnce) {
+                        qaRejectedBulkSessionOnce=true;
+                        android.util.Log.i("NOVA_TIANYI_QA","MOCK_INVALID_SESSION_REJECTED_ONCE");
+                        return new Reply(new JSONObject().put("code","InvalidSessionKey").toString(),url);
+                    }
+                    // Provider-side cap: asks for 250 rows, returns only 40
+                    // per page. The bridge MUST continue to all 137 rows.
                     int from=(page-1)*40,until=Math.min(from+40,total);
                     for(int index=from;index<until;index++) {
                         String title=String.format(Locale.US,"QA Movie %03d.mkv",index);
                         if(index==5)title="QA Movie 005 O\\\\'Brien.mkv";
                         if(index==6)title="电影 006.mkv";
-                        files.put(new JSONObject()
-                                .put("id","qa-film-"+index).put("name",title)
-                                .put("size",1024L*1024L*(index+1)));
+                        files.put(new JSONObject().put("id","qa-film-"+index)
+                                .put("name",title).put("size",1024L*1024L*(index+1)));
                     }
                 }
                 android.util.Log.i("NOVA_TIANYI_QA","MOCK_LIST_API_PAGE_"+page+"_COUNT_"+files.length());
-                return new JSONObject().put("res_code",0).put("fileListAO",
-                        new JSONObject().put("count",total)
-                                .put("folderList",folders).put("fileList",files));
+                JSONObject response=new JSONObject().put("res_code",0)
+                        .put("fileListAO",new JSONObject().put("count",total)
+                        .put("folderList",folders).put("fileList",files));
+                return new Reply(response.toString(),url);
             }
-            if("/keepUserSession.action".equals(path))
-                return new JSONObject().put("res_code",0);
+            if("/keepUserSession.action".equals(action))
+                return new Reply(new JSONObject().put("res_code",0).toString(),url);
         }
-        IOException last=null;""",
-    "mock 189Cloud API pagination",
+        if(hops>8)throw new IOException("Too many Tianyi login redirects");""",
+    "mock transport layer listFiles and real production parsing",
 )
 replace_once(
     """                    TianyiDiag.event("DAV_RESTORE","OK",0);""",
