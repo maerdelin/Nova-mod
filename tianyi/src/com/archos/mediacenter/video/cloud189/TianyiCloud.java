@@ -477,15 +477,27 @@ public final class TianyiCloud {
                             throw new IOException("Cloud folderList has invalid type");
                         if(response.has("fileList")&&!response.isNull("fileList")&&files==null)
                             throw new IOException("Cloud fileList has invalid type");
-                        if(folders==null && files==null && !response.has("count"))
-                            throw new IOException("Cloud listing omitted both entry arrays and count");
+                        // A missing/non-numeric total is not evidence that a
+                        // directory is complete. Fail closed, never show a
+                        // silent partial/empty folder to the NOVA browser.
+                        if(!response.has("count") || response.isNull("count"))
+                            throw new IOException("Cloud directory count missing");
+                        final long count;
+                        try {
+                            count=Long.parseLong(response.get("count").toString());
+                        } catch(Exception malformedCount) {
+                            throw new IOException("Cloud directory count invalid",malformedCount);
+                        }
+                        if(count<0)
+                            throw new IOException("Cloud directory count negative");
+                        if(folders==null && files==null && count>0)
+                            throw new IOException("Cloud directory rows omitted");
 
                         ArrayList<FileObj> entries=new ArrayList<>();
                         if(folders!=null)for(int i=0;i<folders.length();i++)
                             entries.add(obj(folders.getJSONObject(i),true,folderId));
                         if(files!=null)for(int i=0;i<files.length();i++)
                             entries.add(obj(files.getJSONObject(i),false,folderId));
-                        long count=response.optLong("count",-1L);
                         TianyiDiag.event("DIRECTORY_PAGE","OK",page,0L,entries.size());
                         return new TianyiPaging.Page<>(entries,count);
                     },f->(f.dir?"D:":"F:")+f.id);
