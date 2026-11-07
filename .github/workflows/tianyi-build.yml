@@ -105,8 +105,8 @@ jobs:
           grep -Rq 'NOVA_TIANYI_PHONE_SHORTCUT_ICON' work/decode/smali*
           grep -Rq 'NOVA_TIANYI_TV_SHORTCUT_ICON' work/decode/smali*
           # Verify the EXACT phone and TV bindings after disassembly patch.
-          grep -Rq --fixed-strings '->applyCloudShortcutIconPhone(Landroid/widget/ImageView;Landroid/net/Uri;)V' work/decode/smali*
-          grep -Rq --fixed-strings '->applyCloudShortcutIconTv(Landroid/widget/ImageView;Landroid/net/Uri;)V' work/decode/smali*
+          grep -Rq --fixed-strings -- '->applyCloudShortcutIconPhone(Landroid/widget/ImageView;Landroid/net/Uri;)V' work/decode/smali*
+          grep -Rq --fixed-strings -- '->applyCloudShortcutIconTv(Landroid/widget/ImageView;Landroid/net/Uri;)V' work/decode/smali*
           grep -Fq 'SHORTCUT_LOGO_TV_SCALE = 0.55f' tianyi/src/com/archos/mediacenter/video/cloud189/TianyiUi.java
           grep -Fq 'SHORTCUT_LOGO_PHONE_SCALE = 0.40f' tianyi/src/com/archos/mediacenter/video/cloud189/TianyiUi.java
           echo 'TIANYI_TV_55_PHONE_40_ICON_ONLY=PASS'
