@@ -355,38 +355,45 @@ capture 'root-after-system-reboot'
 assert_text reports/root-after-system-reboot.xml 'QA Root Folder'
 echo 'MOCK_DAV_ROOT_AFTER_SYSTEM_REBOOT=PASS' | tee reports/system-reboot.txt
 
-# A real background-lifetime regression, not just an Activity restart:
-# leave NOVA for 80 s. An active Android FGS must keep its localhost DAV
-# listener available when a second client connects without relaunching NOVA.
+# Leaving NOVA for HOME must stop DAV without an Android foreground service.
+# Switching between NOVA Activities (e.g. to the full-screen player) must
+# NOT stop it: the app-wide ActivityLifecycleCallbacks count handles that.
 adb shell input keyevent KEYCODE_HOME
-sleep 80
+sleep 6
 adb forward tcp:32791 tcp:27989
 python3 - <<'PY'
-import http.client
-import re
-from pathlib import Path
-root=Path('reports/root-before-restart.xml').read_text(encoding='utf-8')
-m=re.search(r'(?<![a-fA-F0-9])[a-fA-F0-9]{48}(?![a-fA-F0-9])',root)
-assert m, 'No persisted DAV capability found for background liveness test'
-c=http.client.HTTPConnection('127.0.0.1',32791,timeout=12)
-c.request('OPTIONS','/'+m.group(0)+'/')
-r=c.getresponse()
-body=r.read()
-assert r.status==200, f'Local DAV died after idle: {r.status} {body[:100]!r}'
-c.close()
-print('MOCK_DAV_ALIVE_AFTER_BACKGROUND_IDLE=PASS')
+import socket
+try:
+    c=socket.create_connection(('127.0.0.1',32791),timeout=4)
+except OSError:
+    pass
+else:
+    c.settimeout(4)
+    try:
+        c.sendall(b'OPTIONS / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
+        response=c.recv(128)
+        assert not response.startswith(b'HTTP/'), 'DAV still serves requests while NOVA is backgrounded'
+    except OSError:
+        pass
+    finally:
+        c.close()
+print('MOCK_DAV_STOPPED_AFTER_BACKGROUND=PASS')
 PY
-adb forward --remove tcp:32791
-adb shell dumpsys activity services org.courville.nova > reports/foreground-services.txt
-grep -q 'TianyiDavService' reports/foreground-services.txt || {
-  echo 'MOCK_DAV_FOREGROUND_SERVICE_MISSING=FAIL' >&2
+adb forward --remove tcp:32791 || true
+adb shell dumpsys activity services "$PACKAGE" > reports/background-services.txt
+if grep -q 'TianyiDavService' reports/background-services.txt; then
+  echo 'MOCK_DAV_FOREGROUND_SERVICE_UNEXPECTED=FAIL' >&2
   exit 1
-}
-echo 'MOCK_DAV_FOREGROUND_SERVICE=PASS' | tee reports/background-fgs.txt
+fi
+echo 'MOCK_DAV_NO_FOREGROUND_SERVICE=PASS' | tee reports/no-foreground-service.txt
+adb shell dumpsys notification --noredact > reports/background-notifications.txt || true
+if grep -q 'NOVA 天翼云盘' reports/background-notifications.txt; then
+  echo 'MOCK_DAV_PERSISTENT_NOTIFICATION=FAIL' >&2
+  exit 1
+fi
+echo 'MOCK_DAV_NO_PERSISTENT_NOTIFICATION=PASS' | tee reports/no-persistent-notification.txt
 
-# Explicit NOVA EXIT must STOP its listener, but ordinary HOME/background
-# above must NOT stop it. Force-stop models explicit user app termination
-# (stronger than task removal). Test on the actual emulator, not only flags.
+# Explicit task termination still must close DAV and never resurrect a daemon.
 adb shell am force-stop "$PACKAGE"
 sleep 4
 adb shell dumpsys activity services "$PACKAGE" > reports/service-after-exit.txt

@@ -347,108 +347,51 @@ def patch_shortcut_model(root):
     p.write_text(t[:m.start()]+body+t[m.end():])
     print("NOVA_TIANYI_SHARED_SHORTCUT_NAME=PATCHED")
 
-def patch_application_restore(root):
-    # The Android process is recreated after every OS reboot. A ShortcutDb
-    # row alone cannot keep a localhost socket alive. Restore the same
-    # persisted port/path and encrypted credentials on EVERY app cold launch.
-    # startIfSaved queues all socket and cloud operations on a background
-    # executor, so startup never waits for a cloud request.
+def patch_application_foreground_lifecycle(root):
+    # Register ActivityLifecycleCallbacks when the Android process is created.
+    # Unlike the old foreground Service, this never starts DAV on its own:
+    # only onActivityStarted (for ANY NOVA Activity, including the player) binds.
     import xml.etree.ElementTree as ET
     manifest=ET.parse(root / "AndroidManifest.xml").getroot()
     app=manifest.find("application")
     if app is None: raise RuntimeError("Application element missing")
     name=app.get("{http://schemas.android.com/apk/res/android}name","")
-    if not name: raise RuntimeError("Application class name missing")
+    if not name: raise RuntimeError("Application name missing")
     if name.startswith("."):
         name=manifest.attrib["package"]+name
     elif "." not in name:
         name=manifest.attrib["package"]+"."+name
     p=unique(root,name.replace(".","/")+".smali")
-    t=p.read_text()
-    m=re.search(r"(?ms)^\.method[^\n]* onCreate\(\)V\n.*?^\.end method",t)
+    original=p.read_text()
+    m=re.search(r"(?ms)^\.method[^\n]* onCreate\(\)V\n.*?^\.end method",original)
+    hook=f"""    # NOVA_TIANYI_ACTIVITY_LIFECYCLE: all NOVA Activities, no FGS notification.
+    invoke-static {{p0}}, {CLOUD}->installForegroundLifecycle(Landroid/app/Application;)V"""
     if not m:
-        # This optimized NOVA build may inherit Application.onCreate
-        # unchanged. Install a normal override that keeps the parent's
-        # initialization and schedules the saved DAV restore afterwards.
-        if "onCreate()V" in t:
+        if "onCreate()V" in original:
             raise RuntimeError("Unsupported custom Application.onCreate format")
-        parent=re.search(r"(?m)^\.super (L[^\s]+;)$",t)
-        if not parent:
-            raise RuntimeError("Could not identify Application superclass")
+        parent=re.search(r"(?m)^\.super (L[^\s]+;)$",original)
+        if not parent: raise RuntimeError("Application superclass missing")
         method=f"""
 .method public onCreate()V
     .locals 0
     invoke-super {{p0}}, {parent.group(1)}->onCreate()V
-    # NOVA_TIANYI_RESTORE_APP_START: background-only saved DAV restore.
-    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V
+{hook}
     return-void
 .end method
 """
-        p.write_text(t+"\n"+method)
-        print("NOVA_TIANYI_APP_COLD_START_RESTORE=OVERRIDE",name)
+        p.write_text(original+"\n"+method)
+        print("NOVA_TIANYI_ACTIVITY_LIFECYCLE=OVERRIDE",name)
         return
-    original=m.group()
-    if "NOVA_TIANYI_RESTORE_APP_START" in original:
-        raise RuntimeError("Application already patched")
-    # IMPORTANT: CustomApplication.onCreate is R8-optimized. The method
-    # reuses p0/vN for other Object values near return-void. Injecting there
-    # triggers Android VerifyError (wrong Context type). Hook immediately
-    # AFTER the verified invoke-super, while p0 remains an Application.
-    ancestor=re.search(r"(?m)^    invoke-super \{p0\}, L[^\s]+;->onCreate\(\)V$",original)
-    if not ancestor:
-        raise RuntimeError("Cannot find typed Application.onCreate super call")
-    hook=f"""
-    # NOVA_TIANYI_RESTORE_APP_START: queue saved DAV restore after super.
-    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V"""
-    patched=original[:ancestor.end()]+hook+original[ancestor.end():]
-    p.write_text(t[:m.start()]+patched+t[m.end():])
-    print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,"AFTER_SUPER")
-
-def patch_main_activity_restore(root):
-    # Do not revive Tianyi DAV merely because Android created the NOVA
-    # Application for a background component/service. Start ONLY when a
-    # real NOVA UI Activity is launched, then retain service while its
-    # Android task remains alive (including while user switches apps).
-    p=unique(root,"com/archos/mediacenter/video/browser/MainActivity.smali")
-    code=p.read_text()
-    m=re.search(r"(?ms)^\.method[^\n]* onCreate\(Landroid/os/Bundle;\)V\n.*?^\.end method",code)
-    if not m:
-        raise RuntimeError("NOVA MainActivity.onCreate is missing")
     body=m.group()
-    match=re.search(
-        r"(?m)^    invoke-super \{p0, p1\}, L[^\s]+;->onCreate\(Landroid/os/Bundle;\)V$",
-        body,
-    )
-    if not match:
-        raise RuntimeError("MainActivity.onCreate super call changed; cannot safely hook")
-    new_body=body[:match.end()]+f"""
-    # NOVA_TIANYI_UI_TASK_RESTORE: no standalone Application daemon.
-    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V"""+body[match.end():]
-    p.write_text(code[:m.start()]+new_body+code[m.end():])
-    print("NOVA_TIANYI_UI_TASK_RESTORE=MAIN_ACTIVITY",p)
+    # R8 retypes p0 in some optimized blocks. Insert immediately after
+    # invoke-super while p0 is still the Application reference.
+    supercall=re.search(r"(?m)^    invoke-super \{p0\}, L[^\s]+;->onCreate\(\)V$",body)
+    if not supercall: raise RuntimeError("Typed Application.onCreate super missing")
+    body=body[:supercall.end()]+"\n"+hook+body[supercall.end():]
+    p.write_text(original[:m.start()]+body+original[m.end():])
+    print("NOVA_TIANYI_ACTIVITY_LIFECYCLE=APP_ONCREATE",name)
 
-
-def patch_persistent_dav_service(root):
-    # The original socket ran on a daemon Thread and did not protect the
-    # background Android process. Register a visible foreground service.
-    manifest=root / "AndroidManifest.xml"
-    content=manifest.read_text(encoding="utf-8")
-    for permission in ("android.permission.FOREGROUND_SERVICE",
-                       "android.permission.FOREGROUND_SERVICE_DATA_SYNC"):
-        if f'android:name="{permission}"' not in content:
-            content=once(content,"<application",
-                f'<uses-permission android:name="{permission}" />\n    <application',
-                f"manifest permission {permission}")
-    if "com.archos.mediacenter.video.cloud189.TianyiDavService" in content:
-        raise RuntimeError("TianyiDavService already declared in manifest")
-    service=('    <service android:name="com.archos.mediacenter.video.cloud189.TianyiDavService" '
-             'android:exported="false" android:stopWithTask="true" '
-             'android:foregroundServiceType="dataSync" />\n    ')
-    content=once(content,"</application>",service+"</application>","DAV service manifest declaration")
-    manifest.write_text(content,encoding="utf-8")
-    print("NOVA_TIANYI_PERSISTENT_DAV_SERVICE=MANIFEST_PATCHED")
-
-
+ 
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
@@ -464,8 +407,7 @@ def main():
     patch_phone_shortcut_secondary_uri(a.decoded)
     patch_shared_shortcut_getname(a.decoded)
     patch_actual_phone_shortcut_adapter(a.decoded)
-    patch_main_activity_restore(a.decoded)
-    patch_persistent_dav_service(a.decoded)
+    patch_application_foreground_lifecycle(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
 if __name__=="__main__":

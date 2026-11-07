@@ -1,7 +1,9 @@
 package com.archos.mediacenter.video.cloud189;
 
+import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
-import android.content.Intent;
+import android.os.Bundle;
 import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,6 +39,15 @@ public final class TianyiCloud {
     private static final String PC="TELEPC", VERSION="7.2.4.0", CHANNEL="web_cloud.189.cn";
     private static final int PORT=27989;
     private static volatile TianyiCloud INSTANCE;
+    // One visible NOVA Activity is enough, including full-screen player Activities.
+    // Never equate MainActivity.onPause() with the entire app leaving the foreground.
+    private static final Object FOREGROUND_LOCK=new Object();
+    private static final Handler FOREGROUND_HANDLER=new Handler(Looper.getMainLooper());
+    private static final long BACKGROUND_SETTLE_MS=1200L;
+    private static boolean lifecycleRegistered=false;
+    private static int startedActivities=0;
+    private static volatile boolean appForeground=false;
+    private static Runnable pendingBackgroundStop;
     private final TianyiStore store;
     private final Context app;
     private final ExecutorService workers=Executors.newFixedThreadPool(8, r -> {
@@ -86,26 +97,74 @@ public final class TianyiCloud {
         if(INSTANCE==null) INSTANCE=new TianyiCloud(c);
         return INSTANCE;
     }
-    public static void startIfSaved(Context c) {
-        TianyiCloud cloud=get(c);
-        if(cloud.store.existingPathKey().isEmpty())return;
-        // Only the Android foreground Service owns the DAV listener.
-        // Backgrounding NOVA keeps its task/service; exiting the task
-        // stops BOTH the service and its loopback listener.
-        cloud.serveAllowed=true;
-        try {
-            Intent intent=new Intent(c,TianyiDavService.class);
-            if(android.os.Build.VERSION.SDK_INT>=26)
-                c.startForegroundService(intent);
-            else c.startService(intent);
-            TianyiDiag.event("DAV_SERVICE_START","OK",0);
-        }catch(RuntimeException disallowed) {
-            TianyiDiag.event("DAV_SERVICE_START","FAIL",-1);
-            cloud.stopServer();
+    /**
+     * Register once when NOVA's Application is created. Merely registering
+     * callbacks never starts a local socket or wakes the cloud in background.
+     * Every Activity in this process participates, including full-screen video.
+     */
+    public static void installForegroundLifecycle(Application owner) {
+        if(owner==null)return;
+        synchronized(FOREGROUND_LOCK) {
+            if(lifecycleRegistered)return;
+            lifecycleRegistered=true;
         }
+        owner.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+            @Override public void onActivityCreated(Activity a,Bundle state) {}
+            @Override public void onActivityStarted(Activity a) {
+                Runnable cancelled;
+                synchronized(FOREGROUND_LOCK) {
+                    startedActivities++;
+                    appForeground=true;
+                    cancelled=pendingBackgroundStop;
+                    pendingBackgroundStop=null;
+                }
+                if(cancelled!=null)FOREGROUND_HANDLER.removeCallbacks(cancelled);
+                // Never block UI on a socket bind, cloud token or root listing.
+                startIfSaved(a);
+                TianyiDiag.event("DAV_APP_FOREGROUND","START",0);
+            }
+            @Override public void onActivityResumed(Activity a) {}
+            @Override public void onActivityPaused(Activity a) {
+                // MainActivity pauses when a full-screen player opens;
+                // this is NOT an app-background event.
+            }
+            @Override public void onActivityStopped(Activity a) {
+                final Runnable shutdown=new Runnable() {
+                    @Override public void run() {
+                        synchronized(FOREGROUND_LOCK) {
+                            if(pendingBackgroundStop!=this || startedActivities!=0)return;
+                            pendingBackgroundStop=null;
+                            appForeground=false;
+                        }
+                        TianyiCloud cloud=INSTANCE;
+                        if(cloud!=null)cloud.stopServer();
+                        TianyiDiag.event("DAV_APP_BACKGROUND","STOP",0);
+                    }
+                };
+                synchronized(FOREGROUND_LOCK) {
+                    if(startedActivities>0)startedActivities--;
+                    if(startedActivities>0)return;
+                    pendingBackgroundStop=shutdown;
+                }
+                // Ignore short Activity-to-Activity handoffs to keep playback alive.
+                FOREGROUND_HANDLER.postDelayed(shutdown,BACKGROUND_SETTLE_MS);
+            }
+            @Override public void onActivitySaveInstanceState(Activity a,Bundle state) {}
+            @Override public void onActivityDestroyed(Activity a) {}
+        });
     }
 
-    // Binding a ServerSocket on Android's Activity/Service main thread can
+    /** Rebind a saved DAV shortcut only while a NOVA Activity is visible. */
+    public static void startIfSaved(Context c) {
+        if(!appForeground)return;
+        TianyiCloud cloud=get(c);
+        if(cloud.store.existingPathKey().isEmpty())return;
+        cloud.serveAllowed=true;
+        cloud.ensureListenerAsync();
+        cloud.restoreAsync();
+    }
+
+    // Binding a ServerSocket on Android's main thread can
     // trip StrictMode. The dedicated listener thread also avoids blocking
     // behind a previous, still-running cloud token refresh.
     void ensureListenerAsync() {
@@ -244,9 +303,8 @@ public final class TianyiCloud {
             TianyiDiag.event("DAV_BIND","OK",PORT);
             if(!keepAliveScheduled) {
                 keepAliveScheduled=true;
-                // A foreground service keeps the Android process eligible for
-                // background execution; this watchdog repairs dead listeners
-                // without changing the persisted local WebDAV URL.
+                // Only repair listeners while NOVA is visible; stopServer()
+                // cancels this watchdog as soon as the app goes background.
                 listenerWatchdog=keepAlive.scheduleWithFixedDelay(()->{
                     if(!serveAllowed)return;
                     try { startServer(); }
@@ -268,9 +326,8 @@ public final class TianyiCloud {
             }
         }
     }
-    /** Called only on explicit NOVA task / foreground service shutdown.
-     * Stop the acceptor and heartbeat; do NOT erase saved cloud credentials.
-     * The next genuine NOVA launch will rebind using the same URL. */
+    /** Stop on app background/exit, not when switching to full-screen playback.
+     * Preserve cloud credentials and the saved DAV shortcut for next foreground. */
     void stopServer() {
         synchronized(this) {
             serveAllowed=false;
@@ -300,11 +357,14 @@ public final class TianyiCloud {
         }
     }
     public String rootUri() throws Exception {
-        // Authorizing the first shortcut also starts the NOVA-scoped service.
+        // QR auth may complete after NOVA backgrounds: persist the shortcut
+        // without secretly restarting a background DAV server.
         String key=store.getOrCreatePathKey();
-        serveAllowed=true;
-        startServer();
-        startIfSaved(app);
+        if(appForeground) {
+            serveAllowed=true;
+            startServer();
+            restoreAsync();
+        }
         return "webdav://127.0.0.1:"+PORT+"/"+key+"/";
     }
     public void beginLogin(QrListener listener, Callable<Boolean> alive) {
