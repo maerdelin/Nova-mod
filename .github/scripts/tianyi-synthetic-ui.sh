@@ -170,6 +170,34 @@ capture 'video-leaf-before-restart'
 assert_text reports/video-leaf-before-restart.xml 'QA Video.mp4'
 echo 'MOCK_DAV_VIDEO_LEAF=PASS' | tee reports/video-leaf.txt
 
+# Force real localhost WebDAV GET/HEAD on a test video. Both must return
+# a bodyless CDN 302, and must NOT use Java's old 206 byte proxy.
+adb forward tcp:32793 tcp:27989
+python3 - <<'PY'
+import http.client,re,xml.etree.ElementTree as ET
+root=ET.parse('reports/root-before-restart.xml').getroot()
+labels=' '.join(n.attrib.get('text','') for n in root.iter('node'))
+m=re.search(r'(?<![a-fA-F0-9])[a-fA-F0-9]{48}(?![a-fA-F0-9])',labels)
+assert m,'No saved Tianyi DAV capability'
+path='/'+m.group(0)+'/QA%20Root%20Folder/QA%20Video.mp4'
+for method,headers in [('GET',{'Range':'bytes=0-1048575'}),
+                       ('GET',{'Range':'bytes=1048576-2097151'}),('HEAD',{})]:
+    c=http.client.HTTPConnection('127.0.0.1',32793,timeout=40)
+    c.request(method,path,headers=headers)
+    r=c.getresponse()
+    body=r.read()
+    assert r.status==302,(method,r.status)
+    assert r.getheader('Location')=='https://qa-cdn.invalid/video?fileId=qa-video&signature=qa'
+    assert r.getheader('Content-Length')=='0'
+    assert body==b'','Unexpected local Java media payload'
+    c.close()
+print('MOCK_DAV_GET_RANGE_302_NO_JAVA_PROXY=PASS')
+print('MOCK_DAV_HEAD_302_NO_JAVA_PROXY=PASS')
+PY
+adb forward --remove tcp:32793 || true
+check_log MOCK_DIRECT_LINK_USED
+echo 'MOCK_DAV_CDN_HANDOFF=PASS' | tee reports/direct-cdn-handoff.txt
+
 # Exercise a SECOND real nested video-directory transition through NOVA.
 tap 'QA Nested Folder'
 sleep 4

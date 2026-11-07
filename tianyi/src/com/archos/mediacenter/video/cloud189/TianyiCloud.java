@@ -774,6 +774,20 @@ public final class TianyiCloud {
         TianyiDiag.event("FILE_LINK","OK",0,diagStart,f.size);
         return url;
     }
+    /** OpenList 189pc parity: resolve CDN link headers only; native NOVA
+     * libcurl handles all Range downloading, connection reuse and prefetch. */
+    private String resolveDirectFileUrl(FileObj f) throws Exception {
+        long t=TianyiDiag.tick();
+        try {
+            TianyiDirectLink.Result direct=TianyiDirectLink.resolve(downloadUrl(f));
+            TianyiDiag.event("DIRECT_LINK","OK",direct.code,t,0L);
+            return direct.url;
+        }catch(Exception e) {
+            TianyiDiag.event("DIRECT_LINK","FAIL",-1,t,0L);
+            throw e;
+        }
+    }
+
     private void handle(Socket socket){
         long diagStart=TianyiDiag.tick();
         boolean responseStarted=false;
@@ -834,32 +848,15 @@ public final class TianyiCloud {
                 return;
             }
             if(f.dir){error(out,405);return;}
-            String url=downloadUrl(f);
-            HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();
-            c.setConnectTimeout(10000);c.setReadTimeout(30000);
-            c.setRequestProperty("User-Agent","Mozilla/5.0");
-            String range=headers.get("range");
-            if(range!=null)c.setRequestProperty("Range",range);
-            c.setInstanceFollowRedirects(true);
-            c.setRequestMethod("GET");
-            int status=c.getResponseCode();
-            if(status!=200&&status!=206){c.disconnect();error(out,502);return;}
-            if(range!=null&&status!=206){
-                TianyiDiag.event("DAV_RANGE","FAIL",status,diagStart,0L);
-                c.disconnect();error(out,502);return;
-            }
-            long length=c.getContentLengthLong();
-            StringBuilder extra=new StringBuilder("Content-Type: "+contentType(f)+"\r\nAccept-Ranges: bytes\r\n");
-            if(length>=0)extra.append("Content-Length: ").append(length).append("\r\n");
-            if(c.getHeaderField("Content-Range")!=null)extra.append("Content-Range: ").append(c.getHeaderField("Content-Range")).append("\r\n");
-            TianyiDiag.event(range!=null?"DAV_RANGE":davEvent,"OK",status,diagStart,length);
+            // Tianyi-only WebDAV: return a signed CDN Location just as
+            // OpenList's Webdav302 does. NEVER proxy media bytes in Java.
+            // The existing NOVA native libcurl downloader remains unchanged.
+            String direct=resolveDirectFileUrl(f);
+            TianyiDiag.event(headers.containsKey("range")?
+                    "DAV_RANGE_REDIRECT":"DAV_DIRECT","OK",302,diagStart,f.size);
             responseStarted=true;
-            respond(out,status,extra.toString());
-            if(method.equals("HEAD")){c.disconnect();return;}
-            try(InputStream source=c.getInputStream()){
-                byte[] buf=new byte[65536];int n;
-                while((n=source.read(buf))!=-1){out.write(buf,0,n);out.flush();}
-            }finally{c.disconnect();}
+            respond(out,302,"Location: "+direct+"\r\nContent-Length: 0\r\nCache-Control: no-store\r\n");
+            return;
         }catch(Exception ignored){
             TianyiDiag.event("DAV_REQUEST","FAIL",-1,diagStart,0L);
             // A lost cloud session must not leave the NOVA directory spinner
@@ -899,7 +896,7 @@ public final class TianyiCloud {
         return b.toString("UTF-8");
     }
     private static void respond(OutputStream out,int status,String headers)throws IOException{
-        String text=status==207?"Multi-Status":status==206?"Partial Content":status==200?"OK":"Error";
+        String text=status==207?"Multi-Status":status==206?"Partial Content":status==302?"Found":status==200?"OK":"Error";
         out.write(("HTTP/1.1 "+status+" "+text+"\r\nConnection: close\r\n"+headers+"\r\n").getBytes(StandardCharsets.US_ASCII));out.flush();
     }
     private static void error(OutputStream out,int code)throws IOException{respond(out,code,"Content-Length: 0\r\n");}

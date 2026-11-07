@@ -22,12 +22,27 @@ jobs:
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiPaging.java \
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectoryCache.java \
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDavPaths.java \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectLink.java \
             tianyi/tests/TianyiPagingTest.java \
             tianyi/tests/TianyiDirectoryCacheTest.java \
-            tianyi/tests/TianyiDavPathsTest.java
+            tianyi/tests/TianyiDavPathsTest.java \
+            tianyi/tests/TianyiDirectLinkTest.java
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiPagingTest
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectoryCacheTest
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDavPathsTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectLinkTest
+      - name: Enforce native CDN direct path without Java media proxy
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("tianyi/src/com/archos/mediacenter/video/cloud189/TianyiCloud.java").read_text()
+          h=s.split("    private void handle(Socket socket){",1)[1].split("    private static String contentType(",1)[0]
+          assert 'respond(out,302,"Location: "+direct+' in h
+          assert 'resolveDirectFileUrl(f)' in h
+          assert not any(x in h for x in ('HttpURLConnection','source.read(', 'new byte[65536]','setInstanceFollowRedirects(true)'))
+          print('TIANYI_NO_JAVA_MEDIA_PROXY=PASS')
+          PY
       - name: Download hash-pinned NOVA v6.6.4 Release 1239
         env:
           GH_TOKEN: ${{ github.token }}
