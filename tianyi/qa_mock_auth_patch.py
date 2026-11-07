@@ -54,7 +54,7 @@ replace_once(
 )
 replace_once(
     """    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
-        Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));""",
+        IOException last=null;""",
     """    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
         // QA MOCK ONLY: return 189Cloud-compatible JSON, NOT a pre-parsed
         // List<FileObj>. Exercise the actual production pagination parser.
@@ -109,7 +109,7 @@ replace_once(
             if("/keepUserSession.action".equals(path))
                 return new JSONObject().put("res_code",0);
         }
-        Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));""",
+        IOException last=null;""",
     "mock 189Cloud API pagination",
 )
 replace_once(
