@@ -340,76 +340,176 @@ public final class TianyiCloud {
         }
     }
     private Map<String,String> signedHeaders(String path,String encryptedParams) throws Exception {
-        ensureSession();
+        // Acquire the session key and secret as one atomic snapshot. Keep-alive
+        // and parallel directory requests may rotate them concurrently.
+        final String key,secret;
+        synchronized(sessionLock) {
+            ensureSession();
+            key=sessionKey;
+            secret=sessionSecret;
+        }
         String date=new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'",Locale.US) {{
             setTimeZone(TimeZone.getTimeZone("GMT"));
         }}.format(new Date());
-        String message="SessionKey="+sessionKey+"&Operate=GET&RequestURI="+path+"&Date="+date;
+        String message="SessionKey="+key+"&Operate=GET&RequestURI="+path+"&Date="+date;
         if(encryptedParams!=null && !encryptedParams.isEmpty())message+="&params="+encryptedParams;
         Mac mac=Mac.getInstance("HmacSHA1");
-        mac.init(new SecretKeySpec(sessionSecret.getBytes(StandardCharsets.UTF_8),"HmacSHA1"));
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8),"HmacSHA1"));
         StringBuilder hex=new StringBuilder();
         for(byte b:mac.doFinal(message.getBytes(StandardCharsets.UTF_8)))hex.append(String.format(Locale.US,"%02X",b&255));
-        return map("SessionKey",sessionKey,"Date",date,"Signature",hex.toString(),"X-Request-ID",UUID.randomUUID().toString());
+        return map("SessionKey",key,"Date",date,"Signature",hex.toString(),"X-Request-ID",UUID.randomUUID().toString());
     }
     private Map<String,String> suffix(Map<String,String> query) {
         query.put("clientType",PC);query.put("version",VERSION);query.put("channelId",CHANNEL);
         query.put("rand",Integer.toString(rng.nextInt(100000))+"_"+Long.toString(Math.abs(rng.nextLong()%10000000000L)));
         return query;
     }
-    // OpenList v4.2.9 uses y.get(url, callback) for listFiles and
-    // getFileDownloadUrl: the callback sets ordinary query parameters.
-    // Only the separate request(params) overload AES-encrypts params.
-    // Incorrectly encrypting these listing/link query arguments breaks them.
-    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
-        Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));
-        Reply r=request("GET",API+path,query,null,signedHeaders(path,""),true);
-        JSONObject data=json(r.body);
-        if(data.has("res_code")&&data.optInt("res_code",0)!=0) {
-            nextRefresh=0;
-            throw new IOException("Tianyi API rejected request");
+    // OpenList 189pc sends ordinary signed GET query parameters for this API,
+    // then retries the request after refreshing a rejected session.
+    // Do not AES-encrypt these listing or file-link query parameters.
+    private static final class SessionExpired extends IOException {
+        SessionExpired() { super("Tianyi signed session expired"); }
+    }
+    private void invalidateSession() {
+        synchronized(sessionLock) {
+            sessionKey="";
+            sessionSecret="";
+            nextRefresh=0L;
         }
-        return data;
+    }
+    private static boolean indicatesExpiredSession(String response) {
+        return response!=null&&(response.contains("InvalidSessionKey")
+                || response.contains("userSessionBO is null")
+                || response.contains("UserInvalidOpenToken"));
+    }
+    private static boolean retryableCloudFailure(IOException failure) {
+        if (failure instanceof SocketTimeoutException
+                || failure instanceof ConnectException
+                || failure instanceof SocketException
+                || failure instanceof EOFException)
+            return true;
+        String message=failure.getMessage();
+        return message!=null&&(message.contains("HTTP 429")
+                || message.contains("HTTP 500")||message.contains("HTTP 502")
+                || message.contains("HTTP 503")||message.contains("HTTP 504"));
+    }
+    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
+        IOException last=null;
+        for(int attempt=0;attempt<3;attempt++) {
+            try {
+                Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));
+                Reply r=request("GET",API+path,query,null,signedHeaders(path,""),true);
+                // The provider sometimes reports auth failure with HTTP 200,
+                // not an HTTP 401. OpenList catches both of these response
+                // signatures and re-acquires its signed session.
+                if(indicatesExpiredSession(r.body))throw new SessionExpired();
+                JSONObject data=json(r.body);
+                String code=data.optString("res_code","0");
+                if(!"0".equals(code)) {
+                    if(indicatesExpiredSession(code)
+                            || indicatesExpiredSession(data.optString("res_message","")))
+                        throw new SessionExpired();
+                    throw new IOException("Tianyi API rejected request");
+                }
+                return data;
+            }catch(IOException e) {
+                last=e;
+                String message=e.getMessage();
+                boolean sessionFault=e instanceof SessionExpired
+                        || message!=null&&(message.contains("HTTP 401")
+                        || message.contains("HTTP 403"));
+                if(sessionFault) {
+                    invalidateSession();
+                    TianyiDiag.event("SESSION_RETRY",attempt<2?"RETRY":"FAIL",attempt+1);
+                } else if(retryableCloudFailure(e)) {
+                    TianyiDiag.event("CLOUD_RETRY",attempt<2?"RETRY":"FAIL",attempt+1);
+                } else {
+                    throw e;
+                }
+                if(attempt==2)break;
+                Thread.sleep((attempt+1)*300L);
+            }
+        }
+        throw last==null?new IOException("Cloud request exhausted retries"):last;
     }
     private static final class FileObj {
         String name,id,parent;long size,mtime;boolean dir;
     }
+    private final ConcurrentHashMap<String,FutureTask<List<FileObj>>> inFlightLists =
+            new ConcurrentHashMap<>();
     private List<FileObj> list(final String folderId) throws Exception {
+        // NOVA can issue simultaneous Depth:0 and Depth:1 PROPFINDs. Share one
+        // complete fetch while in flight rather than racing duplicate page
+        // requests or competing for all eight WebDAV workers.
+        FutureTask<List<FileObj>> created=new FutureTask<>(()->loadDirectory(folderId));
+        FutureTask<List<FileObj>> active=inFlightLists.putIfAbsent(folderId,created);
+        if(active==null) {active=created;created.run();}
+        try {
+            return active.get();
+        } catch(ExecutionException e) {
+            Throwable cause=e.getCause();
+            if(cause instanceof Exception)throw (Exception)cause;
+            throw new IOException("Cloud directory worker failed",cause);
+        } finally {
+            inFlightLists.remove(folderId,active);
+        }
+    }
+    private List<FileObj> loadDirectory(final String folderId) throws Exception {
         long diagStart=TianyiDiag.tick();
         try {
-            List<FileObj> all=TianyiPaging.collect((page,pageSize)->{
-                JSONObject r=apiGet("/listFiles.action",
-                        map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
-                            "pageNum",Integer.toString(page),"pageSize",Integer.toString(pageSize),
-                            "recursive","0","orderBy","filename","descending","false"));
-                JSONObject response=r.optJSONObject("fileListAO");
-                if(response==null && r.optJSONObject("data")!=null)
-                    response=r.optJSONObject("data").optJSONObject("fileListAO");
-                if(response==null)throw new IOException("Cloud folder listing missing fileListAO");
+            // If a folder changes during a paged read, begin at page 1 again.
+            // The caller only receives a fully validated immutable snapshot.
+            for(int attempt=0;attempt<3;attempt++) {
+                try {
+                    List<FileObj> all=TianyiPaging.collect((page,pageSize)->{
+                        JSONObject r=apiGet("/listFiles.action",
+                                map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
+                                        "pageNum",Integer.toString(page),"pageSize",Integer.toString(pageSize),
+                                        "recursive","0","orderBy","filename","descending","false"));
+                        JSONObject response=r.optJSONObject("fileListAO");
+                        if(response==null && r.optJSONObject("data")!=null)
+                            response=r.optJSONObject("data").optJSONObject("fileListAO");
+                        if(response==null)throw new IOException("Cloud folder listing missing fileListAO");
 
-                JSONArray folders=response.optJSONArray("folderList");
-                JSONArray files=response.optJSONArray("fileList");
-                if(response.has("folderList")&&!response.isNull("folderList")&&folders==null)
-                    throw new IOException("Cloud folderList has invalid type");
-                if(response.has("fileList")&&!response.isNull("fileList")&&files==null)
-                    throw new IOException("Cloud fileList has invalid type");
-                if(folders==null && files==null && !response.has("count"))
-                    throw new IOException("Cloud listing omitted both entry arrays and count");
+                        JSONArray folders=response.optJSONArray("folderList");
+                        JSONArray files=response.optJSONArray("fileList");
+                        if(response.has("folderList")&&!response.isNull("folderList")&&folders==null)
+                            throw new IOException("Cloud folderList has invalid type");
+                        if(response.has("fileList")&&!response.isNull("fileList")&&files==null)
+                            throw new IOException("Cloud fileList has invalid type");
+                        if(folders==null && files==null && !response.has("count"))
+                            throw new IOException("Cloud listing omitted both entry arrays and count");
 
-                ArrayList<FileObj> entries=new ArrayList<>();
-                if(folders!=null)for(int i=0;i<folders.length();i++)
-                    entries.add(obj(folders.getJSONObject(i),true,folderId));
-                if(files!=null)for(int i=0;i<files.length();i++)
-                    entries.add(obj(files.getJSONObject(i),false,folderId));
-
-                TianyiDiag.event("DIRECTORY_PAGE","OK",page,0L,entries.size());
-                return new TianyiPaging.Page<>(entries,response.optLong("count",-1L));
-            },f->(f.dir?"D:":"F:")+f.id);
-            TianyiDiag.event("DIRECTORY","OK",0,diagStart,all.size());
-            return all;
-        } catch(Exception e) {
-            // Do not turn authentication, malformed JSON or an incomplete
-            // page into an apparently empty video directory in NOVA.
+                        ArrayList<FileObj> entries=new ArrayList<>();
+                        if(folders!=null)for(int i=0;i<folders.length();i++)
+                            entries.add(obj(folders.getJSONObject(i),true,folderId));
+                        if(files!=null)for(int i=0;i<files.length();i++)
+                            entries.add(obj(files.getJSONObject(i),false,folderId));
+                        long count=response.optLong("count",-1L);
+                        TianyiDiag.event("DIRECTORY_PAGE","OK",page,0L,entries.size());
+                        return new TianyiPaging.Page<>(entries,count);
+                    },f->(f.dir?"D:":"F:")+f.id);
+                    // A transient empty API response must not immediately
+                    // become an empty NOVA folder. Confirm it once separately.
+                    if(all.isEmpty() && attempt==0) {
+                        TianyiDiag.event("DIRECTORY_EMPTY","VERIFY",0);
+                        Thread.sleep(200);
+                        continue;
+                    }
+                    TianyiDiag.event("DIRECTORY","OK",0,diagStart,all.size());
+                    return Collections.unmodifiableList(all);
+                }catch(IOException inconsistent) {
+                    String message=inconsistent.getMessage();
+                    boolean changed=message!=null&&(message.contains("changed during pagination")
+                            || message.contains("Incomplete cloud directory")
+                            || message.contains("pagination stopped advancing"));
+                    if(!changed || attempt==2)throw inconsistent;
+                    TianyiDiag.event("DIRECTORY_SNAPSHOT","RETRY",attempt+1);
+                    Thread.sleep((attempt+1)*250L);
+                }
+            }
+            throw new IOException("Cloud directory could not be verified");
+        }catch(Exception e) {
             TianyiDiag.event("DIRECTORY","FAIL",-1,diagStart,0L);
             throw e;
         }
