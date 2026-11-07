@@ -15,8 +15,9 @@ import android.os.IBinder;
  * This is a real Android foreground service, not a daemon Thread that
  * accidentally disappears when NOVA is moved to the background. The user
  * sees an ongoing low-importance status notification while it is active.
- * START_STICKY permits Android to recreate the service after process
- * reclamation, then the same saved port/capability are restored.
+ * Task-scoped: the listener remains alive when NOVA backgrounds, but it
+ * stops immediately when NOVA is explicitly closed. It must NEVER restart
+ * alone after its owning Android task is gone.
  */
 public final class TianyiDavService extends Service {
     private static final String CHANNEL="nova_tianyi_local_dav";
@@ -54,10 +55,21 @@ public final class TianyiDavService extends Service {
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         TianyiCloud.get(this).restoreAsync();
-        return START_STICKY;
+        // Do not recreate the WebDAV daemon after the NOVA task exits.
+        return START_NOT_STICKY;
     }
     @Override public IBinder onBind(Intent intent) {return null;}
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        // Swiping NOVA away is an explicit exit, not normal backgrounding.
+        TianyiDiag.event("DAV_SERVICE","TASK_REMOVED",0);
+        TianyiCloud.get(this).stopServer();
+        stopForeground(true);
+        stopSelf();
+        super.onTaskRemoved(rootIntent);
+    }
     @Override public void onDestroy() {
+        TianyiCloud.get(this).stopServer();
+        stopForeground(true);
         TianyiDiag.event("DAV_SERVICE","DESTROYED",0);
         super.onDestroy();
     }
