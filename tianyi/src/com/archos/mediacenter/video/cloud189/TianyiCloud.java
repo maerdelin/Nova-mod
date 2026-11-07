@@ -754,6 +754,11 @@ public final class TianyiCloud {
         c.setRequestMethod(method);
         c.setRequestProperty("Accept","application/json;charset=UTF-8");
         c.setRequestProperty("User-Agent","Mozilla/5.0");
+        // OpenList 189pc initializes its PC API client with Referer=WEB_URL.
+        // Match that request fingerprint for cloud listing and file links
+        // without overriding the login portal's own challenge Referer.
+        if("api.cloud.189.cn".equalsIgnoreCase(target.getHost()))
+            c.setRequestProperty("Referer",WEB);
         if(headers!=null)for(Map.Entry<String,String> e:headers.entrySet())
             c.setRequestProperty(e.getKey(),e.getValue());
         Map<String,List<String>> sent=cookies.get(target.toURI(),Collections.emptyMap());
