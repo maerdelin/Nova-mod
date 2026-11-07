@@ -53,31 +53,61 @@ replace_once(
     "restored session",
 )
 replace_once(
-    """    private List<FileObj> list(String folderId) throws Exception {
-        long diagStart=TianyiDiag.tick();""",
-    """    private List<FileObj> list(String folderId) throws Exception {
-        // QA MOCK ONLY: real DAV HTTP requests should return this directory.
+    """    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
+        Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));""",
+    """    private JSONObject apiGet(String path,Map<String,String> params) throws Exception {
+        // QA MOCK ONLY: return 189Cloud-compatible JSON, NOT a pre-parsed
+        // List<FileObj>. Exercise the actual production pagination parser.
         if(System.nanoTime()!=Long.MIN_VALUE) {
-            ensureSession();
-            java.util.ArrayList<FileObj> fixture=new java.util.ArrayList<>();
-            if("-11".equals(folderId)) {
-                FileObj folder=new FileObj();
-                folder.id="qa-folder"; folder.name="QA Root Folder";
-                folder.parent="-11"; folder.dir=true; folder.size=0L;
-                folder.mtime=System.currentTimeMillis();
-                fixture.add(folder);
-            } else if("qa-folder".equals(folderId)) {
-                FileObj video=new FileObj();
-                video.id="qa-video"; video.name="QA Video.mp4";
-                video.parent=folderId; video.dir=false; video.size=1024L;
-                video.mtime=System.currentTimeMillis();
-                fixture.add(video);
+            if("/listFiles.action".equals(path)) {
+                ensureSession();
+                String folder=params.get("folderId");
+                String pageString=params.get("pageNum");
+                int page=pageString==null?1:Integer.parseInt(pageString);
+                if(page<1)throw new IOException("Invalid mock page");
+                JSONArray folders=new JSONArray(),files=new JSONArray();
+                int total=0;
+                if("-11".equals(folder)) {
+                    total=2;
+                    if(page==1) {
+                        folders.put(new JSONObject().put("id","qa-folder").put("name","QA Root Folder"));
+                        folders.put(new JSONObject().put("id","qa-bulk").put("name","QA Bulk Movies"));
+                    }
+                } else if("qa-folder".equals(folder)) {
+                    total=3;
+                    if(page==1) {
+                        folders.put(new JSONObject().put("id","qa-nested").put("name","QA Nested Folder"));
+                        files.put(new JSONObject().put("id","qa-video").put("name","QA Video.mp4").put("size",1024));
+                        files.put(new JSONObject().put("id","qa-mkv").put("name","QA Sample.mkv").put("size",2048));
+                    }
+                } else if("qa-nested".equals(folder)) {
+                    total=1;
+                    if(page==1)
+                        files.put(new JSONObject().put("id","qa-nested-file").put("name","QA Nested.mkv").put("size",4096));
+                } else if("qa-bulk".equals(folder)) {
+                    total=137;
+                    // Simulate a real frontend limiting a requested 100
+                    // rows to 40. Previously Nova stopped after page one.
+                    int from=(page-1)*40,until=Math.min(from+40,total);
+                    for(int index=from;index<until;index++) {
+                        String title=String.format(Locale.US,"QA Movie %03d.mkv",index);
+                        if(index==5)title="QA Movie 005 O\\\\'Brien.mkv";
+                        if(index==6)title="电影 006.mkv";
+                        files.put(new JSONObject()
+                                .put("id","qa-film-"+index).put("name",title)
+                                .put("size",1024L*1024L*(index+1)));
+                    }
+                }
+                android.util.Log.i("NOVA_TIANYI_QA","MOCK_LIST_API_PAGE_"+page+"_COUNT_"+files.length());
+                return new JSONObject().put("res_code",0).put("fileListAO",
+                        new JSONObject().put("count",total)
+                                .put("folderList",folders).put("fileList",files));
             }
-            android.util.Log.i("NOVA_TIANYI_QA","MOCK_ROOT_LIST_"+folderId);
-            return fixture;
+            if("/keepUserSession.action".equals(path))
+                return new JSONObject().put("res_code",0);
         }
-        long diagStart=TianyiDiag.tick();""",
-    "mock root listing",
+        Map<String,String> query=suffix(new LinkedHashMap<String,String>(params));""",
+    "mock 189Cloud API pagination",
 )
 replace_once(
     """                    TianyiDiag.event("DAV_RESTORE","OK",0);""",
