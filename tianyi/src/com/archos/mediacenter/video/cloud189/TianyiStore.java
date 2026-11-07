@@ -1,0 +1,202 @@
+package com.archos.mediacenter.video.cloud189;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+
+/**
+ * Credentials are kept in AndroidKeyStore-protected SharedPreferences, never in
+ * the ordinary NOVA WebDAV credentials database, a URI, or a log statement.
+ * The non-secret loopback capability is stable across process restarts.
+ *
+ * OpenList 189CloudPC v4.2.9 is the behavioral reference, not a copied binary.
+ */
+final class TianyiStore {
+    private static final String PREFS = "nova_tianyi_cloud_v1";
+    private static final String ALIAS = "nova_tianyi_cloud_v1_aes";
+    private static final String RECORD = "encrypted_record_v1";
+    private static final SecureRandom RNG = new SecureRandom();
+    private final SharedPreferences prefs;
+
+    TianyiStore(Context context) {
+        prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    static final class Saved {
+        String accessToken = "";
+        String refreshToken = "";
+        String userFinger = "";
+        String pathKey = "";
+    }
+
+    synchronized Saved read() throws Exception {
+        Saved result = new Saved();
+        String encrypted = prefs.getString(RECORD, "");
+        if (encrypted == null || encrypted.isEmpty()) return result;
+        String[] pieces = encrypted.split(":", -1);
+        if (pieces.length != 2) throw new SecurityException("Invalid saved Tianyi record");
+        byte[] nonce = Base64.decode(pieces[0], Base64.NO_WRAP);
+        byte[] ciphertext = Base64.decode(pieces[1], Base64.NO_WRAP);
+        if (nonce.length != 12 || ciphertext.length < 16) {
+            throw new SecurityException("Invalid saved Tianyi record length");
+        }
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
+        JSONObject obj = new JSONObject(new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8));
+        result.accessToken = obj.optString("access", "");
+        result.refreshToken = obj.optString("refresh", "");
+        result.userFinger = obj.optString("finger", "");
+        result.pathKey = obj.optString("path", "");
+        return result;
+    }
+
+    private synchronized void write(Saved value) throws Exception {
+        JSONObject obj = new JSONObject();
+        obj.put("access", value.accessToken);
+        obj.put("refresh", value.refreshToken);
+        obj.put("finger", value.userFinger);
+        obj.put("path", value.pathKey);
+        // AndroidKeyStore AES/GCM keys disallow caller-provided encryption IVs
+        // when randomized encryption is required. Use the provider-generated IV.
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+        byte[] nonce = cipher.getIV();
+        if (nonce == null || nonce.length != 12)
+            throw new SecurityException("Missing AndroidKeyStore GCM IV");
+        cipher.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
+        byte[] ciphertext = cipher.doFinal(obj.toString().getBytes(StandardCharsets.UTF_8));
+        String packed = Base64.encodeToString(nonce, Base64.NO_WRAP) + ":" +
+                Base64.encodeToString(ciphertext, Base64.NO_WRAP);
+        if (!prefs.edit().putString(RECORD, packed).commit()) {
+            throw new IllegalStateException("Cannot persist Tianyi login credentials");
+        }
+    }
+
+    // Login device fingerprint and local DAV locator are not cloud credentials.
+    // Store separately in app-private preferences so creating a QR does not
+    // touch AndroidKeyStore. Hardware-backed encryption applies to the actual
+    // accessToken/refreshToken only after the user authorizes the QR.
+    synchronized String getOrCreateFinger() throws Exception {
+        String finger = prefs.getString("login_fingerprint_v2", "");
+        if (finger != null && !finger.isEmpty()) return finger;
+        // Use 10 decimal digits matching OpenList's 189CloudPC fingerprint.
+        long n = 1000000000L + Math.floorMod(RNG.nextLong(), 9000000000L);
+        finger = Long.toString(n);
+        if (!prefs.edit().putString("login_fingerprint_v2",finger).commit())
+            throw new IllegalStateException("Cannot persist device fingerprint");
+        return finger;
+    }
+
+    synchronized String existingPathKey() {
+        String value=prefs.getString("local_dav_capability_v2","");
+        return value==null?"":value;
+    }
+
+    synchronized String getOrCreatePathKey() throws Exception {
+        String pathKey = prefs.getString("local_dav_capability_v2", "");
+        if (pathKey != null && !pathKey.isEmpty()) return pathKey;
+        byte[] random = new byte[24];
+        RNG.nextBytes(random);
+        StringBuilder out = new StringBuilder(48);
+        for (byte b : random) {
+            out.append(Character.forDigit((b >>> 4) & 15, 16));
+            out.append(Character.forDigit(b & 15, 16));
+        }
+        pathKey=out.toString();
+        if (!prefs.edit().putString("local_dav_capability_v2",pathKey).commit())
+            throw new IllegalStateException("Cannot persist local DAV capability");
+        return pathKey;
+    }
+
+    synchronized void saveTokens(String access, String refresh) throws Exception {
+        if (access == null || access.isEmpty() || refresh == null || refresh.isEmpty()) {
+            throw new IllegalArgumentException("Both tokens required");
+        }
+        Saved saved = read();
+        saved.accessToken = access;
+        saved.refreshToken = refresh;
+        write(saved); // commit synchronously: provider may rotate the refresh token
+    }
+
+    synchronized void clearTokens() throws Exception {
+        Saved saved = read();
+        saved.accessToken = "";
+        saved.refreshToken = "";
+        write(saved);
+    }
+
+    /** Remove only the Tianyi cloud account and local DAV capability state. */
+    synchronized void resetAfterShortcutDeletion() throws Exception {
+        if(!prefs.edit()
+                .remove(RECORD)
+                .remove("login_fingerprint_v2")
+                .remove("local_dav_capability_v2")
+                .commit())
+            throw new IllegalStateException("Tianyi account reset failed");
+    }
+
+    /** Exercise the same AndroidKeyStore AES/GCM path needed to persist
+     * AccessToken and RefreshToken. Uses a dummy payload, never a real token. */
+    synchronized void verifyCrypto() throws Exception {
+        String stage = "LOAD_KEY";
+        try {
+            SecretKey existingKey = key();
+            stage = "INIT_ENCRYPT";
+            Cipher enc = Cipher.getInstance("AES/GCM/NoPadding");
+            enc.init(Cipher.ENCRYPT_MODE, existingKey);
+            byte[] nonce = enc.getIV();
+            if (nonce == null || nonce.length != 12)
+                throw new SecurityException("Invalid provider-generated AES IV");
+            stage = "ENCRYPT";
+            enc.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
+            byte[] ciphertext = enc.doFinal("NOVA_KEYSTORE_TEST".getBytes(StandardCharsets.UTF_8));
+            stage = "INIT_DECRYPT";
+            Cipher dec = Cipher.getInstance("AES/GCM/NoPadding");
+            dec.init(Cipher.DECRYPT_MODE, existingKey, new GCMParameterSpec(128, nonce));
+            dec.updateAAD(PREFS.getBytes(StandardCharsets.UTF_8));
+            stage = "DECRYPT";
+            String recovered = new String(dec.doFinal(ciphertext), StandardCharsets.UTF_8);
+            if (!"NOVA_KEYSTORE_TEST".equals(recovered))
+                throw new SecurityException("AndroidKeyStore AES roundtrip mismatch");
+        } catch (Exception ex) {
+            // Static phase identifier only; never reveal keys, plaintext or ciphertext.
+            throw new java.io.IOException("CRYPTO_"+stage+"_"+ex.getClass().getSimpleName(),ex);
+        }
+    }
+
+    private static SecretKey key() throws Exception {
+        KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+        ks.load(null);
+        java.security.Key existing = ks.getKey(ALIAS,null);
+        if (existing instanceof SecretKey) {
+            return (SecretKey)existing;
+        }
+        // v6.6.4 uses minSdk >= 23. Never silently fall back to plain text.
+        if (Build.VERSION.SDK_INT < 23) {
+            throw new SecurityException("Tianyi requires Android 6 or newer");
+        }
+        KeyGenerator gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        gen.init(new KeyGenParameterSpec.Builder(ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .build());
+        return gen.generateKey();
+    }
+}

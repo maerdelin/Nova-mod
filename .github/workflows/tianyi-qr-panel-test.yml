@@ -1,0 +1,46 @@
+name: NOVA Tianyi real QR panel UI test
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['.github/workflows/tianyi-qr-panel-test.yml', '.github/scripts/tianyi-qr-ui-test.sh']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ui-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate QR UI navigation Bash syntax
+        run: bash -n .github/scripts/tianyi-qr-ui-test.sh
+      - name: Download specific Tianyi test APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p testapk
+          gh run download 42200696148 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
+          (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
+      - name: KVM acceleration
+        run: |
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -w /dev/kvm
+      - name: Tap through real network dialog and capture Tianyi QR
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: false
+          script: bash .github/scripts/tianyi-qr-ui-test.sh
+      - name: Upload UI screenshots hierarchy and logcat even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-Tianyi-Real-QR-UI-test
+          path: reports/
+          retention-days: 7
+          if-no-files-found: warn

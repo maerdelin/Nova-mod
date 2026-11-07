@@ -1,0 +1,49 @@
+name: NOVA Tianyi Android 14 installation smoke
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['.github/workflows/tianyi-smoke-api34.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 38
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download signed Tianyi APK built from validated MOD
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p testapk
+          gh run download 42180997027 --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir testapk
+          test -s testapk/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk
+          (cd testapk/dist && sha256sum -c SHA256SUMS.txt)
+      - name: Enable KVM hardware acceleration (required for reliable Android runtime tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm || { echo "::error::GitHub runner has no /dev/kvm; emulator would run under unstable TCG"; exit 1; }
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          ls -l /dev/kvm
+      - name: Install and visually verify phone + Leanback on Android 14 with granted permissions
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: false
+          script: bash .github/scripts/tianyi-smoke-android.sh
+      - name: Upload Android 11 smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-Tianyi-Android14-Smoke
+          path: reports/
+          retention-days: 7

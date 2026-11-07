@@ -1,0 +1,124 @@
+name: NOVA Tianyi synthetic authorization UI integration test
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['tianyi/src/**', 'tianyi/patch_apk.py', 'tianyi/qa_mock_auth_patch.py', 'tianyi/tests/**',
+            '.github/scripts/tianyi-synthetic-ui.sh', '.github/workflows/tianyi-build.yml',
+            '.github/workflows/tianyi-synthetic-auth-test.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  synthetic-auth-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 38
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Tianyi directory pagination with JVM regression fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p work/paging-test
+          javac -source 8 -target 8 -d work/paging-test \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiPaging.java \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectoryCache.java \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDavPaths.java \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectLink.java \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectLinkCache.java \
+            tianyi/tests/TianyiPagingTest.java \
+            tianyi/tests/TianyiDirectoryCacheTest.java \
+            tianyi/tests/TianyiDavPathsTest.java \
+            tianyi/tests/TianyiDirectLinkTest.java \
+            tianyi/tests/TianyiDirectLinkCacheTest.java
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiPagingTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectoryCacheTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDavPathsTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectLinkTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectLinkCacheTest
+      - name: Check QA script shell syntax before expensive APK/emulator steps
+        run: bash -n .github/scripts/tianyi-synthetic-ui.sh
+      - name: Download production candidate for QA-only DEX replacement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work tools reports
+          # Wait for the exact matching push commit's production-candidate
+          # build; never test an old artifact and claim the latest passed.
+          target="$(git rev-parse HEAD)"
+          run_id=""
+          for attempt in $(seq 1 80); do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow tianyi-build.yml --branch "$GITHUB_REF_NAME" --limit 30 --json databaseId,headSha,status,conclusion)"
+            row="$(echo "$runs" | jq -c --arg sha "$target" '[.[] | select(.headSha == $sha)] | first // empty')"
+            if [ -n "$row" ]; then
+              conclusion="$(echo "$row" | jq -r '.conclusion')"
+              status="$(echo "$row" | jq -r '.status')"
+              run_id="$(echo "$row" | jq -r '.databaseId')"
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success || { echo "Build did not pass: $conclusion"; exit 1; }
+                break
+              fi
+            fi
+            sleep 8
+          done
+          test -n "$run_id" && [ "$status" = completed ] || { echo "Matching build not completed"; exit 1; }
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name NOVA-Tianyi-Cloud-TEST-SIGNED --dir work/source
+          (cd work/source/dist && sha256sum -c SHA256SUMS.txt)
+          curl -fL --retry 3 -o tools/zxing-core.jar https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
+      - name: Recompile ONLY Tianyi DEX with mock auth and simulated root directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tianyi/qa_mock_auth_patch.py tianyi/src/com/archos/mediacenter/video/cloud189/TianyiCloud.java
+          android_jar="$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -1)"
+          d8="$(find "$ANDROID_HOME/build-tools" -type f -name d8 | sort -V | tail -1)"
+          mkdir -p work/classes work/new-dex
+          javac -source 8 -target 8 -cp "$android_jar:tools/zxing-core.jar" -d work/classes $(find tianyi/src -name '*.java' | sort)
+          jar cf work/classes.jar -C work/classes .
+          "$d8" --min-api 23 --lib "$android_jar" --output work/new-dex work/classes.jar tools/zxing-core.jar
+          python3 - <<'PY'
+          import zipfile
+          src='work/source/dist/NOVA_Tianyi_Cloud_TEST_SIGNED.apk'
+          dest='work/qa-unsigned.apk'
+          with zipfile.ZipFile(src) as a,zipfile.ZipFile(dest,'w') as b:
+              assert 'classes5.dex' in a.namelist()
+              for i in a.infolist():
+                  if i.filename=='classes5.dex': continue
+                  if i.filename.upper().startswith('META-INF/') and i.filename.upper().endswith(('.RSA','.SF','.DSA')):continue
+                  b.writestr(i,a.read(i))
+              b.writestr('classes5.dex',open('work/new-dex/classes.dex','rb').read(),compress_type=zipfile.ZIP_DEFLATED)
+          PY
+      - name: Sign simulator-only QA APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -noprompt -keystore work/qa-key.jks -alias qa -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=NOVA QA Only' -storepass 'temporaryqa' -keypass 'temporaryqa'
+          align="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -1)"
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$align" -f -p 4 work/qa-unsigned.apk work/qa-aligned.apk
+          "$signer" sign --ks work/qa-key.jks --ks-key-alias qa --ks-pass pass:temporaryqa --key-pass pass:temporaryqa --out work/qa-synthetic.apk work/qa-aligned.apk
+          "$signer" verify work/qa-synthetic.apk
+          unzip -tq work/qa-synthetic.apk
+          echo "Simulator QA-only APK - NEVER RELEASE" > reports/QA_ONLY.txt
+      - name: Enable KVM
+        run: |
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -w /dev/kvm
+      - name: Test callback close, refresh, root list, app restart and full Android reboot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: false
+          script: bash .github/scripts/tianyi-synthetic-ui.sh
+      - name: Save QA screenshots and diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-Tianyi-Synthetic-Authorization-UI-Report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
