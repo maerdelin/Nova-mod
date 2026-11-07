@@ -418,7 +418,7 @@ def patch_persistent_dav_service(root):
     if "com.archos.mediacenter.video.cloud189.TianyiDavService" in content:
         raise RuntimeError("TianyiDavService already declared in manifest")
     service=('    <service android:name="com.archos.mediacenter.video.cloud189.TianyiDavService" '
-             'android:exported="false" android:stopWithTask="false" '
+             'android:exported="false" android:stopWithTask="true" '
              'android:foregroundServiceType="dataSync" />\n    ')
     content=once(content,"</application>",service+"</application>","DAV service manifest declaration")
     manifest.write_text(content,encoding="utf-8")
