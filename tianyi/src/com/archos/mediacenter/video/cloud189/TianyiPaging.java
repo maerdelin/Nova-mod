@@ -37,13 +37,19 @@ final class TianyiPaging {
     }
 
     static <T> List<T> collect(Fetcher<T> fetcher, Identity<T> identity) throws Exception {
+        return collect(fetcher, identity, PAGE_SIZE);
+    }
+
+    static <T> List<T> collect(Fetcher<T> fetcher, Identity<T> identity, int pageSize) throws Exception {
+        if (pageSize < 1 || pageSize > PAGE_SIZE)
+            throw new IllegalArgumentException("Invalid cloud listing page size");
         if (fetcher == null || identity == null)
             throw new IllegalArgumentException("Null paginator input");
 
         LinkedHashMap<String, T> unique = new LinkedHashMap<>();
         long expectedTotal = -1;
         for (int number = 1; number <= MAX_PAGES; number++) {
-            Page<T> response = fetcher.fetch(number, PAGE_SIZE);
+            Page<T> response = fetcher.fetch(number, pageSize);
             if (response == null || response.entries == null)
                 throw new IOException("Cloud directory page has no valid result");
             if (response.reportedTotal < -1)
@@ -53,7 +59,7 @@ final class TianyiPaging {
                     throw new IOException("Cloud directory changed during pagination");
                 expectedTotal = response.reportedTotal;
             }
-            if (response.entries.size() > PAGE_SIZE)
+            if (response.entries.size() > pageSize)
                 throw new IOException("Cloud directory exceeds requested page size");
             if (response.entries.isEmpty()) {
                 if (expectedTotal >= 0 && expectedTotal != unique.size())
