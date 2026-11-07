@@ -177,6 +177,35 @@ capture 'nested-mkv-leaf'
 assert_text reports/nested-mkv-leaf.xml 'QA Nested.mkv'
 echo 'MOCK_DAV_NESTED_MKV=PASS' | tee reports/nested.txt
 
+# Crucial integration gap in earlier test versions: 137 MKVs were verified
+# through raw HTTP but NEVER through NOVA's own file browser. Check the
+# first AND last video in the actual Android list, with real UI scrolling.
+adb shell input keyevent KEYCODE_BACK
+sleep 3
+adb shell input keyevent KEYCODE_BACK
+sleep 3
+capture 'root-with-bulk-folder'
+assert_text reports/root-with-bulk-folder.xml 'QA Bulk Movies'
+tap 'QA Bulk Movies'
+sleep 6
+capture 'bulk-movies-in-nova'
+FIRST_VISIBLE=0
+LAST_VISIBLE=0
+for i in $(seq 1 25); do
+  dump_ui
+  if grep -Fq 'QA Movie 000.mkv' reports/current-ui.xml; then FIRST_VISIBLE=1; fi
+  if grep -Fq 'QA Movie 136.mkv' reports/current-ui.xml; then LAST_VISIBLE=1; fi
+  if [ "$FIRST_VISIBLE" -eq 1 ] && [ "$LAST_VISIBLE" -eq 1 ]; then break; fi
+  adb shell input swipe 530 1540 530 450 260
+  sleep 1
+done
+test "$FIRST_VISIBLE" -eq 1 && test "$LAST_VISIBLE" -eq 1 || {
+  capture 'bulk-movies-ui-missing' || true
+  echo "MOCK_NOVA_BULK_UI=FAIL first=$FIRST_VISIBLE last=$LAST_VISIBLE" >&2
+  exit 1
+}
+echo 'MOCK_NOVA_BULK_FIRST_AND_LAST_MKV=PASS' | tee reports/bulk-ui.txt
+
 # Use actual HTTP PROPFIND against the app's loopback DAV service.
 # The synthetic Tianyi API deliberately caps responses at 40 despite
 # pageSize=1000, so all 137 MKVs are visible ONLY when the production
