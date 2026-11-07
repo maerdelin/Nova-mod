@@ -80,6 +80,9 @@ jobs:
           echo 'TIANYI_UI_MODEL_DISCOVERY_END'
           python3 tianyi/test_protocol_order.py
           python3 tianyi/patch_apk.py --decoded work/decode
+          test -s work/decode/res/drawable-nodpi/tianyi_cloud_shortcut.png
+          grep -Rq 'NOVA_TIANYI_PHONE_SHORTCUT_ICON' work/decode/smali*
+          grep -Rq 'NOVA_TIANYI_TV_SHORTCUT_ICON' work/decode/smali*
           # No Tianyi foreground service or ongoing Android notification.
           if grep -q 'com.archos.mediacenter.video.cloud189.TianyiDavService' work/decode/AndroidManifest.xml; then
             echo "Unexpected Tianyi foreground service" >&2; exit 1

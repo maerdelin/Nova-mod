@@ -392,6 +392,55 @@ def patch_application_foreground_lifecycle(root):
     print("NOVA_TIANYI_ACTIVITY_LIFECYCLE=APP_ONCREATE",name)
 
  
+
+def patch_tianyi_shortcut_icons(root):
+    # Target the two VERIFIED icon bind sites; never replace the generic
+    # WebDAV resource, as ordinary network shares use the same icon.
+    phone=unique(root,"com/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder.smali")
+    code=phone.read_text()
+    head=".method public setUri(Landroid/net/Uri;)V"
+    start=code.index(head);end=code.index(".end method",start)
+    body=code[start:end]
+    body=once(body,"    .locals 0\n","    .locals 1\n","phone icon local register")
+    anchor="""    move-result p1
+
+    invoke-virtual {p0, p1}, Landroid/widget/ImageView;->setImageResource(I)V"""
+    replacement=f"""    move-result p1
+
+    invoke-virtual {{p0, p1}}, Landroid/widget/ImageView;->setImageResource(I)V
+
+    # NOVA_TIANYI_PHONE_SHORTCUT_ICON: v0 is original URI, p0 is ImageView.
+    invoke-static {{p0, v0}}, {UI}->applyCloudShortcutIcon(Landroid/widget/ImageView;Landroid/net/Uri;)V"""
+    body=once(body,"    iput-object p1, p0, Lcom/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder;->mUri:Landroid/net/Uri;","""    iput-object p1, p0, Lcom/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder;->mUri:Landroid/net/Uri;
+
+    move-object v0, p1""","phone original URI backup")
+    body=once(body,anchor,replacement,"phone icon bind")
+    phone.write_text(code[:start]+body+code[end:])
+
+    tv=unique(root,"com/archos/mediacenter/video/leanback/presenter/NetworkShortcutPresenter.smali")
+    code=tv.read_text()
+    head=".method public onBindViewHolder(Lsx0;Ljava/lang/Object;)V"
+    start=code.index(head);end=code.index(".end method",start)
+    body=code[start:end]
+    anchor="""    invoke-virtual {p0, v0}, Landroid/widget/ImageView;->setImageResource(I)V"""
+    replacement=f"""    invoke-virtual {{p0, v0}}, Landroid/widget/ImageView;->setImageResource(I)V
+
+    # NOVA_TIANYI_TV_SHORTCUT_ICON: only our saved localhost DAV capability.
+    invoke-virtual {{p2}}, Lcom/archos/mediacenter/video/leanback/adapter/object/Shortcut;->getUri()Landroid/net/Uri;
+    move-result-object v0
+    invoke-static {{p0, v0}}, {UI}->applyCloudShortcutIcon(Landroid/widget/ImageView;Landroid/net/Uri;)V"""
+    body=once(body,anchor,replacement,"TV icon bind")
+    tv.write_text(code[:start]+body+code[end:])
+
+    # aapt2 will register this drawable in the app's resources. Use
+    # drawable-nodpi to avoid density-dependent image distortion.
+    icon=root/"res/drawable-nodpi/tianyi_cloud_shortcut.png"
+    if icon.exists():raise RuntimeError("Tianyi icon drawable already exists")
+    icon.parent.mkdir(parents=True,exist_ok=True)
+    import shutil
+    shutil.copyfile(Path(__file__).parent/"assets/tianyi_cloud_shortcut.png",icon)
+    print("NOVA_TIANYI_PHONE_TV_SHORTCUT_ICONS=PATCHED")
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--decoded",type=Path,required=True)
@@ -408,6 +457,7 @@ def main():
     patch_shared_shortcut_getname(a.decoded)
     patch_actual_phone_shortcut_adapter(a.decoded)
     patch_application_foreground_lifecycle(a.decoded)
+    patch_tianyi_shortcut_icons(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
 if __name__=="__main__":

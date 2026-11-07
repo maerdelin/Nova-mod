@@ -82,6 +82,42 @@ public final class TianyiUi {
         }
     }
 
+
+    // Render only THIS saved 189Cloud localhost shortcut with its own logo.
+    // All other WebDAV/SMB/etc icons stay controlled by NOVA's native mapper.
+    // The ImageView may be recycled, so restore the original tint for
+    // non-Tianyi entries instead of permanently altering shared view state.
+    private static final Map<ImageView,android.content.res.ColorStateList> SHORTCUT_TINTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    public static void applyCloudShortcutIcon(ImageView icon,Uri uri) {
+        if(icon==null)return;
+        boolean ours=false;
+        try {
+            if(uri!=null && isTianyiUri(uri.toString())) {
+                TianyiCloud.get(icon.getContext());
+                List<String> segments=uri.getPathSegments();
+                ours=segments!=null && !segments.isEmpty()
+                        && TianyiCloud.isOwnShortcutLabel(segments.get(0));
+            }
+            if(ours) {
+                int resource=icon.getResources().getIdentifier(
+                        "tianyi_cloud_shortcut","drawable",icon.getContext().getPackageName());
+                if(resource!=0) {
+                    if(!SHORTCUT_TINTS.containsKey(icon))
+                        SHORTCUT_TINTS.put(icon,icon.getImageTintList());
+                    icon.setImageTintList(null);
+                    icon.setImageResource(resource);
+                }else{
+                    TianyiDiag.event("SHORTCUT_ICON","MISSING",-1);
+                }
+            }else if(SHORTCUT_TINTS.containsKey(icon)) {
+                icon.setImageTintList(SHORTCUT_TINTS.remove(icon));
+            }
+        }catch(RuntimeException failure) {
+            TianyiDiag.event("SHORTCUT_ICON","FAIL",-1);
+        }
+    }
+
     /** Locate the cloud shortcut in NOVA's actual database, not stale prefs. */
     private static boolean isTianyiUri(String raw) {
         if(raw==null)return false;
