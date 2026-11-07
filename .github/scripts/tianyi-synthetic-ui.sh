@@ -263,6 +263,8 @@ print('MOCK_DAV_CACHE_NO_DUPLICATE_API_CALLS=PASS')
 PY
 adb forward --remove tcp:32789 || true
 echo 'MOCK_DAV_137_MKVS=PASS' | tee reports/bulk-mkv.txt
+check_log MOCK_INVALID_SESSION_REJECTED_ONCE
+echo 'MOCK_PRODUCTION_SESSION_RETRY=PASS' | tee reports/session-retry.txt
 
 adb shell am force-stop "$PACKAGE"
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
