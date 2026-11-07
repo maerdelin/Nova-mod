@@ -122,6 +122,7 @@ public final class TianyiCloud {
             // The only Tianyi shortcut was deleted. Never silently reuse
             // its previous tokens or local capability in a new QR session.
             store.resetAfterShortcutDeletion();
+            directoryCache.clear(); // prevent prior account's file tree surviving a reset
             sessionKey="";
             sessionSecret="";
             nextRefresh=0L;
@@ -247,6 +248,7 @@ public final class TianyiCloud {
                         if(TianyiUi.hasExistingShortcut(app))
                             throw new IOException("Tianyi shortcut already exists");
                         store.saveTokens(access,refresh);
+                        directoryCache.clear(); // account identity may have changed
                         TianyiDiag.event("QR_TOKEN","OK",0,diagStart,0L);
                         setSession(token);
                         ensureSession();
@@ -404,12 +406,21 @@ public final class TianyiCloud {
                 // signatures and re-acquires its signed session.
                 if(indicatesExpiredSession(r.body))throw new SessionExpired();
                 JSONObject data=json(r.body);
-                String code=data.optString("res_code","0");
-                if(!"0".equals(code)) {
-                    if(indicatesExpiredSession(code)
-                            || indicatesExpiredSession(data.optString("res_message","")))
+                // OpenList's RespErr recognizes multiple provider shapes,
+                // not just res_code. HTTP 200 may still contain an API error.
+                String resCode=data.optString("res_code","0").trim();
+                String apiCode=data.optString("code","").trim();
+                String errorCode=data.optString("errorCode","").trim();
+                String error=data.optString("error","").trim();
+                String message=data.optString("res_message","")+
+                        " "+data.optString("msg","")+" "+data.optString("message","")+
+                        " "+data.optString("errorMsg","");
+                if((!resCode.isEmpty()&&!"0".equals(resCode))
+                        || (!apiCode.isEmpty()&&!"SUCCESS".equals(apiCode)&&!"0".equals(apiCode))
+                        || !errorCode.isEmpty() || !error.isEmpty()) {
+                    if(indicatesExpiredSession(resCode+" "+apiCode+" "+errorCode+" "+message))
                         throw new SessionExpired();
-                    throw new IOException("Tianyi API rejected request");
+                    throw new IOException("Tianyi API returned an error payload");
                 }
                 return data;
             }catch(IOException e) {
@@ -435,93 +446,92 @@ public final class TianyiCloud {
     private static final class FileObj {
         String name,id,parent;long size,mtime;boolean dir;
     }
-    private final ConcurrentHashMap<String,FutureTask<List<FileObj>>> inFlightLists =
-            new ConcurrentHashMap<>();
+    // Only fully validated directory snapshots are cached. This eliminates
+    // repeated ancestor-list API requests on every file GET/HEAD/PROPFIND.
+    private final TianyiDirectoryCache<FileObj> directoryCache =
+            new TianyiDirectoryCache<>();
     private List<FileObj> list(final String folderId) throws Exception {
-        // NOVA can issue simultaneous Depth:0 and Depth:1 PROPFINDs. Share one
-        // complete fetch while in flight rather than racing duplicate page
-        // requests or competing for all eight WebDAV workers.
-        FutureTask<List<FileObj>> created=new FutureTask<>(()->loadDirectory(folderId));
-        FutureTask<List<FileObj>> active=inFlightLists.putIfAbsent(folderId,created);
-        if(active==null) {active=created;created.run();}
-        try {
-            return active.get();
-        } catch(ExecutionException e) {
-            Throwable cause=e.getCause();
-            if(cause instanceof Exception)throw (Exception)cause;
-            throw new IOException("Cloud directory worker failed",cause);
-        } finally {
-            inFlightLists.remove(folderId,active);
-        }
+        return directoryCache.get(folderId,()->loadDirectory(folderId));
     }
     private List<FileObj> loadDirectory(final String folderId) throws Exception {
         long diagStart=TianyiDiag.tick();
+        // OpenList requests 1000, but cloud proxies occasionally cap the
+        // RESPONSE body. Restart from page 1 with a smaller pageSize rather
+        // than returning the partial first batch or mixing pagination offsets.
+        int pageSize=TianyiPaging.PAGE_SIZE;
         try {
-            // If a folder changes during a paged read, begin at page 1 again.
-            // The caller only receives a fully validated immutable snapshot.
-            for(int attempt=0;attempt<3;attempt++) {
+            for(int attempt=0;attempt<6;attempt++) {
+                final int currentSize=pageSize;
                 try {
-                    List<FileObj> all=TianyiPaging.collect((page,pageSize)->{
+                    List<FileObj> all=TianyiPaging.collect((page,requested)->{
                         JSONObject r=apiGet("/listFiles.action",
                                 map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
-                                        "pageNum",Integer.toString(page),"pageSize",Integer.toString(pageSize),
+                                        "pageNum",Integer.toString(page),"pageSize",Integer.toString(requested),
                                         "recursive","0","orderBy","filename","descending","false"));
                         JSONObject response=r.optJSONObject("fileListAO");
                         if(response==null && r.optJSONObject("data")!=null)
                             response=r.optJSONObject("data").optJSONObject("fileListAO");
                         if(response==null)throw new IOException("Cloud folder listing missing fileListAO");
-
                         JSONArray folders=response.optJSONArray("folderList");
                         JSONArray files=response.optJSONArray("fileList");
                         if(response.has("folderList")&&!response.isNull("folderList")&&folders==null)
                             throw new IOException("Cloud folderList has invalid type");
                         if(response.has("fileList")&&!response.isNull("fileList")&&files==null)
                             throw new IOException("Cloud fileList has invalid type");
-                        // A missing/non-numeric total is not evidence that a
-                        // directory is complete. Fail closed, never show a
-                        // silent partial/empty folder to the NOVA browser.
                         if(!response.has("count") || response.isNull("count"))
                             throw new IOException("Cloud directory count missing");
                         final long count;
                         try {
                             count=Long.parseLong(response.get("count").toString());
-                        } catch(Exception malformedCount) {
-                            throw new IOException("Cloud directory count invalid",malformedCount);
+                        }catch(Exception invalidCount){
+                            throw new IOException("Cloud directory count invalid",invalidCount);
                         }
-                        if(count<0)
-                            throw new IOException("Cloud directory count negative");
+                        if(count<0)throw new IOException("Cloud directory count negative");
                         if(folders==null && files==null && count>0)
                             throw new IOException("Cloud directory rows omitted");
-
                         ArrayList<FileObj> entries=new ArrayList<>();
                         if(folders!=null)for(int i=0;i<folders.length();i++)
                             entries.add(obj(folders.getJSONObject(i),true,folderId));
                         if(files!=null)for(int i=0;i<files.length();i++)
                             entries.add(obj(files.getJSONObject(i),false,folderId));
                         TianyiDiag.event("DIRECTORY_PAGE","OK",page,0L,entries.size());
+                        TianyiDiag.event("DIRECTORY_TOTAL","OK",page,0L,count);
                         return new TianyiPaging.Page<>(entries,count);
-                    },f->(f.dir?"D:":"F:")+f.id);
-                    // A transient empty API response must not immediately
-                    // become an empty NOVA folder. Confirm it once separately.
+                    },f->(f.dir?"D:":"F:")+f.id,currentSize);
+                    // An empty response is double-checked and never cached;
+                    // an upstream failure may appear as a transient empty page.
                     if(all.isEmpty() && attempt==0) {
                         TianyiDiag.event("DIRECTORY_EMPTY","VERIFY",0);
-                        Thread.sleep(200);
+                        Thread.sleep(350);
                         continue;
                     }
-                    TianyiDiag.event("DIRECTORY","OK",0,diagStart,all.size());
+                    TianyiDiag.event("DIRECTORY","OK",currentSize,diagStart,all.size());
                     return Collections.unmodifiableList(all);
                 }catch(IOException inconsistent) {
                     String message=inconsistent.getMessage();
-                    boolean changed=message!=null&&(message.contains("changed during pagination")
-                            || message.contains("Incomplete cloud directory")
-                            || message.contains("pagination stopped advancing"));
-                    if(!changed || attempt==2)throw inconsistent;
-                    TianyiDiag.event("DIRECTORY_SNAPSHOT","RETRY",attempt+1);
+                    boolean oversize=message!=null&&message.contains("Oversize API response");
+                    if(oversize && pageSize>100) {
+                        pageSize=pageSize>250?250:100;
+                        TianyiDiag.event("DIRECTORY_PAGE_SIZE","RETRY",pageSize);
+                    } else {
+                        boolean retryable=message!=null&&(
+                                message.contains("changed during pagination")
+                                || message.contains("Incomplete cloud directory")
+                                || message.contains("pagination stopped advancing")
+                                || message.contains("directory rows omitted")
+                                || message.contains("Tianyi service HTTP 429")
+                                || message.contains("Tianyi service HTTP 503")
+                                || message.contains("Tianyi service HTTP 502"));
+                        if(!retryable || attempt==5)throw inconsistent;
+                        TianyiDiag.event("DIRECTORY_SNAPSHOT","RETRY",attempt+1);
+                    }
+                    if(attempt==5)throw inconsistent;
                     Thread.sleep((attempt+1)*250L);
                 }
             }
-            throw new IOException("Cloud directory could not be verified");
+            throw new IOException("Cloud directory could not be fully verified");
         }catch(Exception e) {
+            // Partial folders must not produce a successful DAV 207.
             TianyiDiag.event("DIRECTORY","FAIL",-1,diagStart,0L);
             throw e;
         }
@@ -781,9 +791,11 @@ public final class TianyiCloud {
         if(stream!=null)try(InputStream in=stream){
             ByteArrayOutputStream out=new ByteArrayOutputStream();
             byte[] buf=new byte[8192];int n;
+            final int limit=url.contains("/listFiles.action")?16*1024*1024:4*1024*1024;
             while((n=in.read(buf))!=-1){
+                if(out.size()+n>limit)
+                    throw new IOException("Oversize API response");
                 out.write(buf,0,n);
-                if(out.size()>4*1024*1024)throw new IOException("Oversize API response");
             }
             body=out.toString("UTF-8");
         }finally{c.disconnect();}
