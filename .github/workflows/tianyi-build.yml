@@ -104,6 +104,12 @@ jobs:
           echo 'dde37e54960b022f9b5041312ab5ddd0a68b7827102601136db9dced0dd1c465  work/decode/assets/tianyi_cloud_shortcut.png' | sha256sum -c -
           grep -Rq 'NOVA_TIANYI_PHONE_SHORTCUT_ICON' work/decode/smali*
           grep -Rq 'NOVA_TIANYI_TV_SHORTCUT_ICON' work/decode/smali*
+          # Verify the EXACT phone and TV bindings after disassembly patch.
+          grep -Rq --fixed-strings '->applyCloudShortcutIconPhone(Landroid/widget/ImageView;Landroid/net/Uri;)V' work/decode/smali*
+          grep -Rq --fixed-strings '->applyCloudShortcutIconTv(Landroid/widget/ImageView;Landroid/net/Uri;)V' work/decode/smali*
+          grep -Fq 'SHORTCUT_LOGO_TV_SCALE = 0.55f' tianyi/src/com/archos/mediacenter/video/cloud189/TianyiUi.java
+          grep -Fq 'SHORTCUT_LOGO_PHONE_SCALE = 0.40f' tianyi/src/com/archos/mediacenter/video/cloud189/TianyiUi.java
+          echo 'TIANYI_TV_55_PHONE_40_ICON_ONLY=PASS'
           # No Tianyi foreground service or ongoing Android notification.
           if grep -q 'com.archos.mediacenter.video.cloud189.TianyiDavService' work/decode/AndroidManifest.xml; then
             echo "Unexpected Tianyi foreground service" >&2; exit 1

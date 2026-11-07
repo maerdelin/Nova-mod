@@ -5,6 +5,9 @@ import android.app.Dialog;
 import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -106,7 +109,54 @@ public final class TianyiUi {
         }
         return value;
     }
+    // Exact per-surface *visual* footprint, independent of ImageView size.
+    // This centers the untouched original PNG inside a transparent canvas
+    // of the SAME dimensions. It never changes NOVA card/list layouts or
+    // unrelated WebDAV icon views.
+    private static final float SHORTCUT_LOGO_TV_SCALE = 0.55f;
+    private static final float SHORTCUT_LOGO_PHONE_SCALE = 0.40f;
+    private static volatile Bitmap SHORTCUT_ICON_TV_BITMAP;
+    private static volatile Bitmap SHORTCUT_ICON_PHONE_BITMAP;
+
+    private static Bitmap scaledCloudShortcutBitmap(Context ctx,boolean tvMode) {
+        Bitmap cached=tvMode?SHORTCUT_ICON_TV_BITMAP:SHORTCUT_ICON_PHONE_BITMAP;
+        if(cached!=null)return cached;
+        synchronized(TianyiUi.class) {
+            cached=tvMode?SHORTCUT_ICON_TV_BITMAP:SHORTCUT_ICON_PHONE_BITMAP;
+            if(cached!=null)return cached;
+            Bitmap original=cloudShortcutBitmap(ctx);
+            if(original==null)return null;
+            int width=original.getWidth(),height=original.getHeight();
+            if(width<=0||height<=0)return null;
+            float fraction=tvMode?SHORTCUT_LOGO_TV_SCALE:SHORTCUT_LOGO_PHONE_SCALE;
+            float insetX=width*(1.0f-fraction)*0.5f;
+            float insetY=height*(1.0f-fraction)*0.5f;
+            Bitmap result=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
+            Canvas canvas=new Canvas(result);
+            Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
+            paint.setDither(true);
+            canvas.drawBitmap(original,null,
+                    new RectF(insetX,insetY,width-insetX,height-insetY),paint);
+            if(tvMode)SHORTCUT_ICON_TV_BITMAP=result;
+            else SHORTCUT_ICON_PHONE_BITMAP=result;
+            return result;
+        }
+    }
+
+    public static void applyCloudShortcutIconPhone(ImageView icon,Uri uri) {
+        applyCloudShortcutIconInternal(icon,uri,false);
+    }
+
+    public static void applyCloudShortcutIconTv(ImageView icon,Uri uri) {
+        applyCloudShortcutIconInternal(icon,uri,true);
+    }
+
+    // Compatibility for older callers, if any: mobile list scale.
     public static void applyCloudShortcutIcon(ImageView icon,Uri uri) {
+        applyCloudShortcutIconInternal(icon,uri,false);
+    }
+
+    private static void applyCloudShortcutIconInternal(ImageView icon,Uri uri,boolean tvMode) {
         if(icon==null)return;
         boolean ours=false;
         try {
@@ -117,7 +167,7 @@ public final class TianyiUi {
                         && TianyiCloud.isOwnShortcutLabel(segments.get(0));
             }
             if(ours) {
-                Bitmap image=cloudShortcutBitmap(icon.getContext());
+                Bitmap image=scaledCloudShortcutBitmap(icon.getContext(),tvMode);
                 if(image!=null) {
                     if(!SHORTCUT_TINTS.containsKey(icon))
                         SHORTCUT_TINTS.put(icon,icon.getImageTintList());

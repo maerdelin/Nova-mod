@@ -410,7 +410,7 @@ def patch_tianyi_shortcut_icons(root):
     invoke-virtual {{p0, p1}}, Landroid/widget/ImageView;->setImageResource(I)V
 
     # NOVA_TIANYI_PHONE_SHORTCUT_ICON: v0 is original URI, p0 is ImageView.
-    invoke-static {{p0, v0}}, {UI}->applyCloudShortcutIcon(Landroid/widget/ImageView;Landroid/net/Uri;)V"""
+    invoke-static {{p0, v0}}, {UI}->applyCloudShortcutIconPhone(Landroid/widget/ImageView;Landroid/net/Uri;)V"""
     body=once(body,"    iput-object p1, p0, Lcom/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder;->mUri:Landroid/net/Uri;","""    iput-object p1, p0, Lcom/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter$ShortcutViewHolder;->mUri:Landroid/net/Uri;
 
     move-object v0, p1""","phone original URI backup")
@@ -428,7 +428,7 @@ def patch_tianyi_shortcut_icons(root):
     # NOVA_TIANYI_TV_SHORTCUT_ICON: only our saved localhost DAV capability.
     invoke-virtual {{p2}}, Lcom/archos/mediacenter/video/leanback/adapter/object/Shortcut;->getUri()Landroid/net/Uri;
     move-result-object v0
-    invoke-static {{p0, v0}}, {UI}->applyCloudShortcutIcon(Landroid/widget/ImageView;Landroid/net/Uri;)V"""
+    invoke-static {{p0, v0}}, {UI}->applyCloudShortcutIconTv(Landroid/widget/ImageView;Landroid/net/Uri;)V"""
     body=once(body,anchor,replacement,"TV icon bind")
     tv.write_text(code[:start]+body+code[end:])
 
