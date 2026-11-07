@@ -103,11 +103,18 @@ replace_once(
                                 .put("name","[www.hmxz.org] QA [4K+] (2026)"));
                     }
                 } else if("qa-folder".equals(folder)) {
-                    total=3;
+                    // One directory + seven distinct media containers.
+                    // All use the same Tianyi native-CDN handoff code.
+                    total=8;
                     if(page==1) {
                         folders.put(new JSONObject().put("id","qa-nested").put("name","QA Nested Folder"));
                         files.put(new JSONObject().put("id","qa-video").put("name","QA Video.mp4").put("size",1024));
                         files.put(new JSONObject().put("id","qa-mkv").put("name","QA Sample.mkv").put("size",2048));
+                        files.put(new JSONObject().put("id","qa-iso").put("name","QA Disc.iso").put("size",87096612864L));
+                        files.put(new JSONObject().put("id","qa-ts").put("name","QA Transport.ts").put("size",8192));
+                        files.put(new JSONObject().put("id","qa-m2ts").put("name","QA Transport.m2ts").put("size",8192));
+                        files.put(new JSONObject().put("id","qa-avi").put("name","QA Archive.avi").put("size",8192));
+                        files.put(new JSONObject().put("id","qa-webm").put("name","QA Archive.webm").put("size",8192));
                     }
                 } else if("qa-nested".equals(folder)) {
                     total=1;
