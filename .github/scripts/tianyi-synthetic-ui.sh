@@ -170,6 +170,51 @@ capture 'video-leaf-before-restart'
 assert_text reports/video-leaf-before-restart.xml 'QA Video.mp4'
 echo 'MOCK_DAV_VIDEO_LEAF=PASS' | tee reports/video-leaf.txt
 
+# Exercise a SECOND real nested video-directory transition through NOVA.
+tap 'QA Nested Folder'
+sleep 4
+capture 'nested-mkv-leaf'
+assert_text reports/nested-mkv-leaf.xml 'QA Nested.mkv'
+echo 'MOCK_DAV_NESTED_MKV=PASS' | tee reports/nested.txt
+
+# Use actual HTTP PROPFIND against the app's loopback DAV service.
+# The synthetic Tianyi API deliberately caps responses at 40 despite
+# pageSize=100, so all 137 MKVs are visible ONLY when the production
+# TianyiCloud.list + TianyiPaging + PROPFIND stack reads every page.
+adb forward tcp:32789 tcp:27989
+python3 - <<'PY'
+import http.client
+import re
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+trees=ET.parse('reports/root-before-restart.xml').getroot()
+labels=' '.join(n.attrib.get('text','') for n in trees.iter('node'))
+match=re.search(r'(?<![a-fA-F0-9])[a-fA-F0-9]{48}(?![a-fA-F0-9])',labels)
+assert match, 'Could not locate saved DAV capability in the root UI'
+capability=match.group(0)
+path='/' + capability + '/QA%20Bulk%20Movies/'
+conn=http.client.HTTPConnection('127.0.0.1',32789,timeout=40)
+conn.request('PROPFIND',path,headers={'Depth':'1','Content-Length':'0'})
+reply=conn.getresponse()
+body=reply.read()
+assert reply.status==207, f'Expected WebDAV 207, received {reply.status}: {body[:220]!r}'
+doc=ET.fromstring(body)
+rows=doc.findall('{DAV:}response')
+assert len(rows)==138, f'Expected directory + 137 MKVs, got {len(rows)}'
+names=[r.findtext('.//{DAV:}displayname','') for r in rows]
+assert 'QA Movie 000.mkv' in names, 'Early MKV lost'
+assert 'QA Movie 136.mkv' in names, 'Late-page MKV lost'
+assert "QA Movie 005 O'Brien.mkv" in names, 'Escaped quote name corrupted'
+assert '电影 006.mkv' in names, 'Unicode MKV name corrupted'
+mimes=[r.findtext('.//{DAV:}getcontenttype','') for r in rows]
+assert mimes.count('video/x-matroska')==137, 'Wrong MKV content types'
+print('MOCK_DAV_API_PAGINATION=PASS',len(rows)-1,'MKVs')
+conn.close()
+PY
+adb forward --remove tcp:32789 || true
+echo 'MOCK_DAV_137_MKVS=PASS' | tee reports/bulk-mkv.txt
+
 adb shell am force-stop "$PACKAGE"
 adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
 sleep 6
