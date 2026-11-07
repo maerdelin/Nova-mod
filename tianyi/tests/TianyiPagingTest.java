@@ -33,7 +33,7 @@ public final class TianyiPagingTest {
         // The original implementation stopped on the first short page.
         AtomicInteger fetched = new AtomicInteger();
         List<String> limited = read((page, pageSize) -> {
-            check(pageSize == 100, "Use conservative page size");
+            check(pageSize == 1000, "Use OpenList PC page size");
             fetched.incrementAndGet();
             if (page == 1) return new TianyiPaging.Page<>(entries(0, 40), 95);
             if (page == 2) return new TianyiPaging.Page<>(entries(40, 40), 95);
@@ -41,7 +41,7 @@ public final class TianyiPagingTest {
             return new TianyiPaging.Page<>(Collections.emptyList(), 95);
         });
         check(limited.size() == 95 && fetched.get() == 3, "Server page clamp caused file loss");
-        System.out.println("PASS: server clamps requested page size, no lost MKV rows");
+        System.out.println("PASS: server clamps 1000-item request to 40 rows, no lost MKVs");
 
         // A complete one-page directory must NOT make an extra API call.
         AtomicInteger onePageCalls = new AtomicInteger();
@@ -89,6 +89,32 @@ public final class TianyiPagingTest {
         System.out.println("PASS: absent provider total uses empty-page termination");
         expectIOException("pagination upper bound", (page, size) ->
                 new TianyiPaging.Page<>(Arrays.asList("id-" + page), TianyiPaging.MAX_PAGES + 10));
+
+        // Count is the directory total. Inconsistent totals are NOT a
+        // successful partial listing and MUST be rejected before WebDAV 207.
+        expectIOException("inconsistent directory total", (page, size) ->
+                page==1 ? new TianyiPaging.Page<>(entries(0, 40), 137)
+                        : new TianyiPaging.Page<>(entries(40, 40), 136));
+        expectIOException("non-empty zero-count page", (page, size) ->
+                new TianyiPaging.Page<>(entries(0, 1), 0));
+        expectIOException("entries exceed total", (page, size) ->
+                new TianyiPaging.Page<>(entries(0, 3), 2));
+        expectIOException("invalid negative total", (page, size) ->
+                new TianyiPaging.Page<>(entries(0, 3), -2));
+        expectIOException("unexpected oversized API response", (page, size) ->
+                new TianyiPaging.Page<>(entries(0, pageSize+1), pageSize+1));
+        expectIOException("provider error on later page", (page, size) -> {
+            if (page==1) return new TianyiPaging.Page<>(entries(0, 40), 137);
+            throw new IOException("HTTP 503");
+        });
+        List<String> many=read((page, pageSize) -> {
+            int from=(page-1)*37, remaining=2231-from;
+            return new TianyiPaging.Page<>(remaining>0
+                    ? entries(from,Math.min(37,remaining))
+                    : Collections.emptyList(),2231);
+        });
+        check(many.size()==2231 && many.contains("id-2230"),"Server cap lost 2000+ entries");
+        System.out.println("PASS: 2231 files across 61 server-clamped pages");
 
         System.out.println("ALL TIANYI PAGING TESTS PASS");
     }
