@@ -238,6 +238,52 @@ print('MOCK_HELD_SEEK_NO_DUPLICATE_CLOUD_API=PASS')
 PY
 adb forward --remove tcp:32794 || true
 
+# Format-independent SEEK parity gate: this exercises the SAME local
+# Tianyi WebDAV GET/Range/302 path for every listed video container.
+# NOVA's native seek, preview decoder, and double-lane downloader are not
+# patched. Native remote-control preview behavior needs real device QA.
+adb forward tcp:32795 tcp:27989
+python3 - <<'PY'
+import http.client,re,xml.etree.ElementTree as ET,concurrent.futures,subprocess
+root=ET.parse('reports/root-before-restart.xml').getroot()
+labels=' '.join(n.attrib.get('text','') for n in root.iter('node'))
+m=re.search(r'(?<![a-fA-F0-9])[a-fA-F0-9]{48}(?![a-fA-F0-9])',labels)
+assert m,"Saved Tianyi DAV shortcut unavailable"
+base='/'+m.group(0)+'/QA%20Root%20Folder/'
+media=[('QA%20Video.mp4','qa-video'),('QA%20Sample.mkv','qa-mkv'),
+       ('QA%20Disc.iso','qa-iso'),('QA%20Transport.ts','qa-ts'),
+       ('QA%20Transport.m2ts','qa-m2ts'),('QA%20Archive.avi','qa-avi'),
+       ('QA%20Archive.webm','qa-webm')]
+def count_upstream_fixtures():
+    p=subprocess.run(['adb','logcat','-d','-v','brief'],capture_output=True,text=True,check=True)
+    return p.stdout.count('MOCK_DIRECT_LINK_FETCH')
+def request(filename,ident,start=0,method='GET'):
+    c=http.client.HTTPConnection('127.0.0.1',32795,timeout=10)
+    try:
+        headers={'Range':f'bytes={start}-{start+4095}'} if method=='GET' else {}
+        c.request(method,base+filename,headers=headers)
+        r=c.getresponse(); body=r.read()
+        assert r.status==302,(filename,method,r.status)
+        assert r.getheader('Location')==f'https://qa-cdn.invalid/video?fileId={ident}&signature=qa'
+        assert r.getheader('Content-Length')=='0' and body==b''
+    finally:
+        c.close()
+for filename,ident in media:
+    request(filename,ident,0)
+before=count_upstream_fixtures()
+def burst(pair):
+    filename,ident=pair
+    for n in range(12):
+        request(filename,ident,4096+n*2097152)
+with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
+    list(pool.map(burst,media))
+after=count_upstream_fixtures()
+assert before==after,f'Seek reloaded CDN URL per format: {before}->{after}'
+print('MOCK_SEEK_SEVEN_CONTAINERS_84_RANGES=PASS')
+print('MOCK_SEEK_ALL_FORMATS_SHARED_CDN_CACHE=PASS')
+PY
+adb forward --remove tcp:32795 || true
+
 # Exercise a SECOND real nested video-directory transition through NOVA.
 tap 'QA Nested Folder'
 sleep 4
