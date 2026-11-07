@@ -383,8 +383,49 @@ grep -q 'TianyiDavService' reports/foreground-services.txt || {
   exit 1
 }
 echo 'MOCK_DAV_FOREGROUND_SERVICE=PASS' | tee reports/background-fgs.txt
-adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null
+
+# Explicit NOVA EXIT must STOP its listener, but ordinary HOME/background
+# above must NOT stop it. Force-stop models explicit user app termination
+# (stronger than task removal). Test on the actual emulator, not only flags.
+adb shell am force-stop "$PACKAGE"
 sleep 4
+adb shell dumpsys activity services "$PACKAGE" > reports/service-after-exit.txt
+if grep -q 'TianyiDavService' reports/service-after-exit.txt; then
+  echo 'MOCK_DAV_SERVICE_STILL_RUNNING_AFTER_EXIT=FAIL' >&2
+  exit 1
+fi
+adb forward tcp:32792 tcp:27989
+python3 - <<'PY'
+import socket
+try:
+    c=socket.create_connection(('127.0.0.1',32792),timeout=5)
+    c.settimeout(5)
+    c.sendall(b'OPTIONS / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
+    data=c.recv(128)
+    c.close()
+    assert not data.startswith(b'HTTP/'), 'DAV still responds after NOVA explicit exit'
+except (OSError, ConnectionError):
+    pass
+print('MOCK_DAV_STOPPED_AFTER_NOVA_EXIT=PASS')
+PY
+adb forward --remove tcp:32792
+
+# Re-enter NOVA: saved cloud shortcut and local listener MUST recover.
+adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null
+sleep 5
+enter_network
+adb forward tcp:32793 tcp:27989
+python3 - <<'PY'
+import socket
+c=socket.create_connection(('127.0.0.1',32793),timeout=10)
+c.settimeout(10)
+c.sendall(b'OPTIONS / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
+reply=c.recv(200)
+c.close()
+assert reply.startswith(b'HTTP/1.1 404'), f'Expected live DAV response after NOVA restart: {reply!r}'
+print('MOCK_DAV_RESTORED_AFTER_NOVA_REOPEN=PASS')
+PY
+adb forward --remove tcp:32793
 adb logcat -d -v threadtime > reports/logcat.txt
 if grep -E -A 20 'FATAL EXCEPTION|VerifyError|NoClassDefFoundError' reports/logcat.txt | grep -Eq 'Process: org.courville.nova|com.archos.mediacenter.video.cloud189'; then
   echo 'SYNTHETIC_AUTH_RUNTIME=FAIL'
