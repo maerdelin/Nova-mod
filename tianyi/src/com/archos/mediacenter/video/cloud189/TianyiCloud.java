@@ -54,6 +54,9 @@ public final class TianyiCloud {
     private volatile ServerSocket activeListener;
     private volatile Thread acceptorThread;
     private boolean keepAliveScheduled=false;
+    private volatile boolean serveAllowed=false;
+    private ScheduledFuture<?> listenerWatchdog;
+    private ScheduledFuture<?> sessionHeartbeat;
     // Server restore must not compete with 8 long-running video GETs.
     private final ExecutorService lifecycle=Executors.newSingleThreadExecutor(r -> {
         Thread t=new Thread(r,"nova-tianyi-lifecycle");t.setDaemon(true);return t;
@@ -80,23 +83,20 @@ public final class TianyiCloud {
     }
     public static void startIfSaved(Context c) {
         TianyiCloud cloud=get(c);
-        // No saved Tianyi shortcut -> do not start a permanent notification.
         if(cloud.store.existingPathKey().isEmpty())return;
-        cloud.restoreAsync();
-        // A plain daemon ServerSocket does not keep an Android process alive:
-        // create an actual foreground Service before the Activity backgrounds.
+        // Only the Android foreground Service owns the DAV listener.
+        // Backgrounding NOVA keeps its task/service; exiting the task
+        // stops BOTH the service and its loopback listener.
+        cloud.serveAllowed=true;
         try {
             Intent intent=new Intent(c,TianyiDavService.class);
             if(android.os.Build.VERSION.SDK_INT>=26)
                 c.startForegroundService(intent);
-            else
-                c.startService(intent);
+            else c.startService(intent);
             TianyiDiag.event("DAV_SERVICE_START","OK",0);
-        }catch(RuntimeException notAllowed) {
-            // Background launch restrictions can reject starting an FGS.
-            // Never make normal NOVA startup fail; local DAV still attempts
-            // to bind and will retry when its network page resumes.
+        }catch(RuntimeException disallowed) {
             TianyiDiag.event("DAV_SERVICE_START","FAIL",-1);
+            cloud.stopServer();
         }
     }
 
@@ -162,6 +162,7 @@ public final class TianyiCloud {
     }
     public void startServer() throws Exception {
         synchronized(this) {
+            if(!serveAllowed)throw new IOException("NOVA Tianyi WebDAV is stopped");
             // A stale boolean is not proof the socket is accepting requests.
             // Recheck both the bound socket and its acceptor thread.
             if(started && activeListener!=null && !activeListener.isClosed()
@@ -221,11 +222,13 @@ public final class TianyiCloud {
                 // A foreground service keeps the Android process eligible for
                 // background execution; this watchdog repairs dead listeners
                 // without changing the persisted local WebDAV URL.
-                keepAlive.scheduleWithFixedDelay(()->{
+                listenerWatchdog=keepAlive.scheduleWithFixedDelay(()->{
+                    if(!serveAllowed)return;
                     try { startServer(); }
                     catch(Exception failure){TianyiDiag.event("DAV_WATCHDOG","FAIL",-1);}
                 },15,30,TimeUnit.SECONDS);
-                keepAlive.scheduleWithFixedDelay(()->{
+                sessionHeartbeat=keepAlive.scheduleWithFixedDelay(()->{
+                    if(!serveAllowed)return;
                     long began=TianyiDiag.tick();
                     try {
                         if(!store.read().refreshToken.isEmpty())
@@ -240,9 +243,38 @@ public final class TianyiCloud {
             }
         }
     }
+    /** Called only on explicit NOVA task / foreground service shutdown.
+     * Stop the acceptor and heartbeat; do NOT erase saved cloud credentials.
+     * The next genuine NOVA launch will rebind using the same URL. */
+    void stopServer() {
+        synchronized(this) {
+            serveAllowed=false;
+            if(listenerWatchdog!=null) {
+                listenerWatchdog.cancel(false);
+                listenerWatchdog=null;
+            }
+            if(sessionHeartbeat!=null) {
+                sessionHeartbeat.cancel(false);
+                sessionHeartbeat=null;
+            }
+            keepAliveScheduled=false;
+            ServerSocket socket=activeListener;
+            activeListener=null;
+            acceptorThread=null;
+            started=false;
+            if(socket!=null) {
+                try{socket.close();}catch(IOException ignored){}
+            }
+            TianyiDiag.event("DAV_STOP","OK",PORT);
+        }
+    }
     public String rootUri() throws Exception {
+        // Authorizing the first shortcut also starts the NOVA-scoped service.
+        String key=store.getOrCreatePathKey();
+        serveAllowed=true;
         startServer();
-        return "webdav://127.0.0.1:"+PORT+"/"+store.getOrCreatePathKey()+"/";
+        startIfSaved(app);
+        return "webdav://127.0.0.1:"+PORT+"/"+key+"/";
     }
     public void beginLogin(QrListener listener, Callable<Boolean> alive) {
         workers.execute(()->{
