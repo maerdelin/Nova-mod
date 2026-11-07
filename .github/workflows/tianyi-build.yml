@@ -81,6 +81,7 @@ jobs:
           python3 tianyi/test_protocol_order.py
           python3 tianyi/patch_apk.py --decoded work/decode
           test -s work/decode/assets/tianyi_cloud_shortcut.png
+          echo 'dde37e54960b022f9b5041312ab5ddd0a68b7827102601136db9dced0dd1c465  work/decode/assets/tianyi_cloud_shortcut.png' | sha256sum -c -
           grep -Rq 'NOVA_TIANYI_PHONE_SHORTCUT_ICON' work/decode/smali*
           grep -Rq 'NOVA_TIANYI_TV_SHORTCUT_ICON' work/decode/smali*
           # No Tianyi foreground service or ongoing Android notification.
@@ -93,6 +94,7 @@ jobs:
           grep -q 'NOVA_TIANYI_UI_PROTOCOL_V2' work/decode/smali*/com/archos/mediacenter/video/leanback/network/NetworkServerCredentialsDialog\$1.smali || true
           java -Xmx5g -jar tools/apktool.jar b work/decode -o work/ui-unsigned.apk
           unzip -Z1 work/ui-unsigned.apk | grep -Fqx assets/tianyi_cloud_shortcut.png
+          unzip -p work/ui-unsigned.apk assets/tianyi_cloud_shortcut.png | sha256sum | grep -Fq dde37e54960b022f9b5041312ab5ddd0a68b7827102601136db9dced0dd1c465
       - name: Compile Tianyi driver and QR encoder into Android DEX
         run: |
           set -euo pipefail
