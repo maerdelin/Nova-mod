@@ -404,6 +404,30 @@ def patch_application_restore(root):
     p.write_text(t[:m.start()]+patched+t[m.end():])
     print("NOVA_TIANYI_APP_COLD_START_RESTORE=PATCHED",name,"AFTER_SUPER")
 
+def patch_main_activity_restore(root):
+    # Do not revive Tianyi DAV merely because Android created the NOVA
+    # Application for a background component/service. Start ONLY when a
+    # real NOVA UI Activity is launched, then retain service while its
+    # Android task remains alive (including while user switches apps).
+    p=unique(root,"com/archos/mediacenter/video/browser/MainActivity.smali")
+    code=p.read_text()
+    m=re.search(r"(?ms)^\.method[^\n]* onCreate\(Landroid/os/Bundle;\)V\n.*?^\.end method",code)
+    if not m:
+        raise RuntimeError("NOVA MainActivity.onCreate is missing")
+    body=m.group()
+    match=re.search(
+        r"(?m)^    invoke-super \{p0, p1\}, L[^\s]+;->onCreate\(Landroid/os/Bundle;\)V$",
+        body,
+    )
+    if not match:
+        raise RuntimeError("MainActivity.onCreate super call changed; cannot safely hook")
+    new_body=body[:match.end()]+f"""
+    # NOVA_TIANYI_UI_TASK_RESTORE: no standalone Application daemon.
+    invoke-static {{p0}}, {CLOUD}->startIfSaved(Landroid/content/Context;)V"""+body[match.end():]
+    p.write_text(code[:m.start()]+new_body+code[m.end():])
+    print("NOVA_TIANYI_UI_TASK_RESTORE=MAIN_ACTIVITY",p)
+
+
 def patch_persistent_dav_service(root):
     # The original socket ran on a daemon Thread and did not protect the
     # background Android process. Register a visible foreground service.
@@ -440,7 +464,7 @@ def main():
     patch_phone_shortcut_secondary_uri(a.decoded)
     patch_shared_shortcut_getname(a.decoded)
     patch_actual_phone_shortcut_adapter(a.decoded)
-    patch_application_restore(a.decoded)
+    patch_main_activity_restore(a.decoded)
     patch_persistent_dav_service(a.decoded)
     print("NOVA_TIANYI_PROTOCOL_SMALI_PATCH=PASS")
 
