@@ -47,12 +47,10 @@ public final class TianyiDavService extends Service {
                 startForeground(NOTIFICATION_ID,b.build());
             }
             TianyiDiag.event("DAV_SERVICE","FOREGROUND",0);
-            // Rebind localhost immediately, independent of a previous
-            // in-flight cloud-token restoration task. The socket bind is
-            // local/fast; remote Tianyi I/O remains asynchronous.
+            // Rebind localhost on an independent listener executor, never
+            // on Android's main thread or behind cloud-token restoration.
             TianyiCloud cloud=TianyiCloud.get(this);
-            try {cloud.startServer();}
-            catch(Exception bindFailure){TianyiDiag.event("DAV_BIND","FAIL",-1);}
+            cloud.ensureListenerAsync();
             cloud.restoreAsync();
         }catch(RuntimeException cannotForeground) {
             TianyiDiag.event("DAV_SERVICE","FAIL",-1);
@@ -61,8 +59,7 @@ public final class TianyiDavService extends Service {
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         TianyiCloud cloud=TianyiCloud.get(this);
-        try {cloud.startServer();}
-        catch(Exception bindFailure){TianyiDiag.event("DAV_BIND","FAIL",-1);}
+        cloud.ensureListenerAsync();
         cloud.restoreAsync();
         // Do not recreate the WebDAV daemon after the NOVA task exits.
         return START_NOT_STICKY;
