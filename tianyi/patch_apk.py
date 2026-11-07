@@ -432,9 +432,10 @@ def patch_tianyi_shortcut_icons(root):
     body=once(body,anchor,replacement,"TV icon bind")
     tv.write_text(code[:start]+body+code[end:])
 
-    # aapt2 will register this drawable in the app's resources. Use
-    # drawable-nodpi to avoid density-dependent image distortion.
-    icon=root/"res/drawable-nodpi/tianyi_cloud_shortcut.png"
+    # Preserve the exact logo as an APK asset. The pinned apktool's
+    # aapt2 crashes on palette+alpha PNG resource compilation; assets
+    # are copied verbatim and safely decoded by Android BitmapFactory.
+    icon=root/"assets/tianyi_cloud_shortcut.png"
     if icon.exists():raise RuntimeError("Tianyi icon drawable already exists")
     icon.parent.mkdir(parents=True,exist_ok=True)
     import shutil

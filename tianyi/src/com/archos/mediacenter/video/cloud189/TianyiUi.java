@@ -89,6 +89,23 @@ public final class TianyiUi {
     // non-Tianyi entries instead of permanently altering shared view state.
     private static final Map<ImageView,android.content.res.ColorStateList> SHORTCUT_TINTS =
             Collections.synchronizedMap(new WeakHashMap<>());
+    private static volatile Bitmap SHORTCUT_ICON_BITMAP;
+    private static Bitmap cloudShortcutBitmap(Context ctx) {
+        Bitmap value=SHORTCUT_ICON_BITMAP;
+        if(value!=null)return value;
+        synchronized(TianyiUi.class) {
+            value=SHORTCUT_ICON_BITMAP;
+            if(value!=null)return value;
+            try(java.io.InputStream stream=ctx.getAssets().open("tianyi_cloud_shortcut.png")) {
+                value=android.graphics.BitmapFactory.decodeStream(stream);
+                if(value!=null)SHORTCUT_ICON_BITMAP=value;
+                else TianyiDiag.event("SHORTCUT_ICON","DECODE_FAIL",-1);
+            }catch(java.io.IOException missing) {
+                TianyiDiag.event("SHORTCUT_ICON","MISSING",-1);
+            }
+        }
+        return value;
+    }
     public static void applyCloudShortcutIcon(ImageView icon,Uri uri) {
         if(icon==null)return;
         boolean ours=false;
@@ -100,15 +117,12 @@ public final class TianyiUi {
                         && TianyiCloud.isOwnShortcutLabel(segments.get(0));
             }
             if(ours) {
-                int resource=icon.getResources().getIdentifier(
-                        "tianyi_cloud_shortcut","drawable",icon.getContext().getPackageName());
-                if(resource!=0) {
+                Bitmap image=cloudShortcutBitmap(icon.getContext());
+                if(image!=null) {
                     if(!SHORTCUT_TINTS.containsKey(icon))
                         SHORTCUT_TINTS.put(icon,icon.getImageTintList());
                     icon.setImageTintList(null);
-                    icon.setImageResource(resource);
-                }else{
-                    TianyiDiag.event("SHORTCUT_ICON","MISSING",-1);
+                    icon.setImageBitmap(image);
                 }
             }else if(SHORTCUT_TINTS.containsKey(icon)) {
                 icon.setImageTintList(SHORTCUT_TINTS.remove(icon));
