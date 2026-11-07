@@ -179,7 +179,7 @@ echo 'MOCK_DAV_NESTED_MKV=PASS' | tee reports/nested.txt
 
 # Use actual HTTP PROPFIND against the app's loopback DAV service.
 # The synthetic Tianyi API deliberately caps responses at 40 despite
-# pageSize=100, so all 137 MKVs are visible ONLY when the production
+# pageSize=1000, so all 137 MKVs are visible ONLY when the production
 # TianyiCloud.list + TianyiPaging + PROPFIND stack reads every page.
 adb forward tcp:32789 tcp:27989
 python3 - <<'PY'
@@ -211,6 +211,26 @@ mimes=[r.findtext('.//{DAV:}getcontenttype','') for r in rows]
 assert mimes.count('video/x-matroska')==137, 'Wrong MKV content types'
 print('MOCK_DAV_API_PAGINATION=PASS',len(rows)-1,'MKVs')
 conn.close()
+
+# Repeat the same real DAV directory read. Previously NOVA re-fetched
+# every ancestor and every file page, risking timeouts and empty folders.
+import subprocess
+def page_one_count():
+    result=subprocess.run(['adb','logcat','-d','-v','brief'],check=True,
+                          capture_output=True,text=True)
+    return result.stdout.count('MOCK_LIST_API_PAGE_1_COUNT_40')
+before=page_one_count()
+assert before>0, 'Production pagination never reached bulk page 1'
+conn=http.client.HTTPConnection('127.0.0.1',32789,timeout=40)
+conn.request('PROPFIND',path,headers={'Depth':'1','Content-Length':'0'})
+again=conn.getresponse()
+again_body=again.read()
+assert again.status==207, f'Cached DAV PROPFIND failed: {again.status}'
+assert len(ET.fromstring(again_body).findall('{DAV:}response'))==138, 'Cached DAV snapshot lost files'
+conn.close()
+after=page_one_count()
+assert before==after, f'DAV cache refetched bulk directory pages: {before} -> {after}'
+print('MOCK_DAV_CACHE_NO_DUPLICATE_API_CALLS=PASS')
 PY
 adb forward --remove tcp:32789 || true
 echo 'MOCK_DAV_137_MKVS=PASS' | tee reports/bulk-mkv.txt
