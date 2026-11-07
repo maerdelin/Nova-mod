@@ -42,7 +42,8 @@ final class TianyiPaging {
             Page<T> response = fetcher.fetch(number, PAGE_SIZE);
             if (response == null || response.entries == null)
                 throw new IOException("Cloud directory page has no valid result");
-            if (response.reportedTotal >= 0)
+            if (response.reportedTotal > 0 ||
+                    (response.reportedTotal == 0 && response.entries.isEmpty()))
                 expectedTotal = Math.max(expectedTotal, response.reportedTotal);
 
             if (response.entries.isEmpty()) {
@@ -62,6 +63,12 @@ final class TianyiPaging {
                     added++;
                 }
             }
+
+            // The PC API reports the directory's TOTAL number of items.
+            // Do not request a non-existent next page after collecting them:
+            // some endpoints reject out-of-range page numbers.
+            if (expectedTotal > 0 && unique.size() >= expectedTotal)
+                return new ArrayList<>(unique.values());
 
             if (added == 0) {
                 // Certain frontends repeat the last page instead of returning

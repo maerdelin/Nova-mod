@@ -40,8 +40,19 @@ public final class TianyiPagingTest {
             if (page == 3) return new TianyiPaging.Page<>(entries(80, 15), 95);
             return new TianyiPaging.Page<>(Collections.emptyList(), 95);
         });
-        check(limited.size() == 95 && fetched.get() == 4, "Server page clamp caused file loss");
+        check(limited.size() == 95 && fetched.get() == 3, "Server page clamp caused file loss");
         System.out.println("PASS: server clamps requested page size, no lost MKV rows");
+
+        // A complete one-page directory must NOT make an extra API call.
+        AtomicInteger onePageCalls = new AtomicInteger();
+        List<String> onePage = read((page, size) -> {
+            onePageCalls.incrementAndGet();
+            if (page > 1) throw new IOException("Out-of-range page request");
+            return new TianyiPaging.Page<>(entries(0, 3), 3);
+        });
+        check(onePage.size() == 3 && onePageCalls.get() == 1,
+                "Requested a page beyond provider total");
+        System.out.println("PASS: stop at reported total without extra request");
 
         List<String> big = read((page, pageSize) -> {
             int start = (page - 1) * pageSize;
@@ -71,6 +82,11 @@ public final class TianyiPagingTest {
         expectIOException("malformed empty ID", (page, size) ->
                 new TianyiPaging.Page<>(Arrays.asList(""), 1));
         expectIOException("missing page data", (page, size) -> null);
+        List<String> absentTotal=read((page, size) ->
+            page==1 ? new TianyiPaging.Page<>(entries(0, 7), -1)
+                    : new TianyiPaging.Page<>(Collections.emptyList(), -1));
+        check(absentTotal.size()==7, "Absent count should use empty-page termination");
+        System.out.println("PASS: absent provider total uses empty-page termination");
         expectIOException("pagination upper bound", (page, size) ->
                 new TianyiPaging.Page<>(Arrays.asList("id-" + page), TianyiPaging.MAX_PAGES + 10));
 
