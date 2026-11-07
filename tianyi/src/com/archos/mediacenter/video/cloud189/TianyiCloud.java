@@ -374,27 +374,61 @@ public final class TianyiCloud {
     private static final class FileObj {
         String name,id,parent;long size,mtime;boolean dir;
     }
-    private List<FileObj> list(String folderId) throws Exception {
+    private List<FileObj> list(final String folderId) throws Exception {
         long diagStart=TianyiDiag.tick();
-        List<FileObj> out=new ArrayList<>();
-        for(int page=1;page<=200;page++){
-            JSONObject r=apiGet("/listFiles.action",map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
-                    "pageNum",Integer.toString(page),"pageSize","1000","recursive","0",
-                    "orderBy","filename","descending","false"));
-            JSONObject arr=r.optJSONObject("fileListAO");
-            if(arr==null)throw new IOException("Cloud folder list unavailable");
-            JSONArray folders=arr.optJSONArray("folderList"),files=arr.optJSONArray("fileList");
-            int count=0;
-            if(folders!=null)for(int i=0;i<folders.length();i++){JSONObject j=folders.getJSONObject(i);out.add(obj(j,true,folderId));count++;}
-            if(files!=null)for(int i=0;i<files.length();i++){JSONObject j=files.getJSONObject(i);out.add(obj(j,false,folderId));count++;}
-            if(count<1000)break;
+        try {
+            List<FileObj> all=TianyiPaging.collect((page,pageSize)->{
+                JSONObject r=apiGet("/listFiles.action",
+                        map("folderId",folderId,"fileType","0","mediaAttr","0","iconOption","5",
+                            "pageNum",Integer.toString(page),"pageSize",Integer.toString(pageSize),
+                            "recursive","0","orderBy","filename","descending","false"));
+                JSONObject response=r.optJSONObject("fileListAO");
+                if(response==null && r.optJSONObject("data")!=null)
+                    response=r.optJSONObject("data").optJSONObject("fileListAO");
+                if(response==null)throw new IOException("Cloud folder listing missing fileListAO");
+
+                JSONArray folders=response.optJSONArray("folderList");
+                JSONArray files=response.optJSONArray("fileList");
+                if(response.has("folderList")&&!response.isNull("folderList")&&folders==null)
+                    throw new IOException("Cloud folderList has invalid type");
+                if(response.has("fileList")&&!response.isNull("fileList")&&files==null)
+                    throw new IOException("Cloud fileList has invalid type");
+                if(folders==null && files==null && !response.has("count"))
+                    throw new IOException("Cloud listing omitted both entry arrays and count");
+
+                ArrayList<FileObj> entries=new ArrayList<>();
+                if(folders!=null)for(int i=0;i<folders.length();i++)
+                    entries.add(obj(folders.getJSONObject(i),true,folderId));
+                if(files!=null)for(int i=0;i<files.length();i++)
+                    entries.add(obj(files.getJSONObject(i),false,folderId));
+
+                TianyiDiag.event("DIRECTORY_PAGE","OK",page,0L,entries.size());
+                return new TianyiPaging.Page<>(entries,response.optLong("count",-1L));
+            },f->(f.dir?"D:":"F:")+f.id);
+            TianyiDiag.event("DIRECTORY","OK",0,diagStart,all.size());
+            return all;
+        } catch(Exception e) {
+            // Do not turn authentication, malformed JSON or an incomplete
+            // page into an apparently empty video directory in NOVA.
+            TianyiDiag.event("DIRECTORY","FAIL",-1,diagStart,0L);
+            throw e;
         }
-        TianyiDiag.event("DIRECTORY","OK",0,diagStart,out.size());
-        return out;
     }
-    private static FileObj obj(JSONObject j,boolean dir,String parent){
-        FileObj f=new FileObj();f.name=j.optString("name","");f.id=j.optString("id","");f.dir=dir;
-        f.size=dir?0:j.optLong("size",0L);f.parent=parent;f.mtime=System.currentTimeMillis();return f;
+    private static FileObj obj(JSONObject j,boolean dir,String parent) throws IOException {
+        FileObj f=new FileObj();
+        f.name=j.optString("name","");
+        if(f.name.isEmpty())f.name=j.optString("fileName","");
+        // OpenList normalizes the escaping used by the PC listing API.
+        f.name=f.name.replace("\\'","'");
+        f.id=j.optString("id","");
+        if(f.id.isEmpty())f.id=j.optString("fileId","");
+        if(f.id.isEmpty() || f.name.isEmpty())
+            throw new IOException("Cloud directory contains an item with no name or ID");
+        f.dir=dir;
+        f.size=dir?0:j.optLong("size",j.optLong("fileSize",0L));
+        f.parent=parent;
+        f.mtime=System.currentTimeMillis();
+        return f;
     }
     private FileObj resolve(String rel) throws Exception {
         FileObj root=new FileObj();root.dir=true;root.id="-11";root.name="";root.parent="";
