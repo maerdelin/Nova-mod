@@ -20,8 +20,11 @@ jobs:
           mkdir -p work/paging-test
           javac -source 8 -target 8 -d work/paging-test \
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiPaging.java \
-            tianyi/tests/TianyiPagingTest.java
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectoryCache.java \
+            tianyi/tests/TianyiPagingTest.java \
+            tianyi/tests/TianyiDirectoryCacheTest.java
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiPagingTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectoryCacheTest
       - name: Check QA script shell syntax before expensive APK/emulator steps
         run: bash -n .github/scripts/tianyi-synthetic-ui.sh
       - name: Download production candidate for QA-only DEX replacement
