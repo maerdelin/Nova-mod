@@ -102,7 +102,7 @@ public final class TianyiPagingTest {
         expectIOException("invalid negative total", (page, size) ->
                 new TianyiPaging.Page<>(entries(0, 3), -2));
         expectIOException("unexpected oversized API response", (page, size) ->
-                new TianyiPaging.Page<>(entries(0, pageSize+1), pageSize+1));
+                new TianyiPaging.Page<>(entries(0, size+1), size+1));
         expectIOException("provider error on later page", (page, size) -> {
             if (page==1) return new TianyiPaging.Page<>(entries(0, 40), 137);
             throw new IOException("HTTP 503");
