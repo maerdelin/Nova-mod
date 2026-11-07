@@ -363,8 +363,13 @@ sleep 80
 adb forward tcp:32791 tcp:27989
 python3 - <<'PY'
 import http.client
+import re
+from pathlib import Path
+root=Path('reports/root-before-restart.xml').read_text(encoding='utf-8')
+m=re.search(r'(?<![a-fA-F0-9])[a-fA-F0-9]{48}(?![a-fA-F0-9])',root)
+assert m, 'No persisted DAV capability found for background liveness test'
 c=http.client.HTTPConnection('127.0.0.1',32791,timeout=12)
-c.request('OPTIONS','/')
+c.request('OPTIONS','/'+m.group(0)+'/')
 r=c.getresponse()
 body=r.read()
 assert r.status==200, f'Local DAV died after idle: {r.status} {body[:100]!r}'
