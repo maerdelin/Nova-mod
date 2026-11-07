@@ -195,8 +195,48 @@ print('MOCK_DAV_GET_RANGE_302_NO_JAVA_PROXY=PASS')
 print('MOCK_DAV_HEAD_302_NO_JAVA_PROXY=PASS')
 PY
 adb forward --remove tcp:32793 || true
-check_log MOCK_DIRECT_LINK_USED
+check_log MOCK_DIRECT_LINK_FETCH
 echo 'MOCK_DAV_CDN_HANDOFF=PASS' | tee reports/direct-cdn-handoff.txt
+
+# Rapid remote Seek simulation: warm CDN Location must not trigger new
+# Tianyi API requests or Java redirect probes for every changed Range.
+adb forward tcp:32794 tcp:27989
+python3 - <<'PY'
+import http.client,concurrent.futures,re,statistics,subprocess,time
+import xml.etree.ElementTree as ET
+root=ET.parse('reports/root-before-restart.xml').getroot()
+labels=' '.join(n.attrib.get('text','') for n in root.iter('node'))
+match=re.search(r'(?<![a-fA-F0-9])[a-fA-F0-9]{48}(?![a-fA-F0-9])',labels)
+assert match,'Missing saved WebDAV capability'
+path='/'+match.group(0)+'/QA%20Root%20Folder/QA%20Video.mp4'
+expected='https://qa-cdn.invalid/video?fileId=qa-video&signature=qa'
+def get_at(index):
+    begin=time.monotonic()
+    c=http.client.HTTPConnection('127.0.0.1',32794,timeout=8)
+    c.request('GET',path,headers={'Range':f'bytes={index*1024}-{index*1024+1023}'})
+    r=c.getresponse();data=r.read()
+    status=r.status;link=r.getheader('Location');c.close()
+    assert status==302 and link==expected and not data,(status,link,len(data))
+    return 1000*(time.monotonic()-begin)
+def fetches():
+    result=subprocess.run(['adb','logcat','-d','-v','brief'],capture_output=True,text=True,check=True)
+    return result.stdout.count('MOCK_DIRECT_LINK_FETCH')
+# Prewarm this exact file once, as ISO metadata reads already do during playback.
+get_at(0)
+before=fetches()
+delays=[get_at(i+1) for i in range(60)]
+with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+    delays.extend(pool.map(get_at,range(100,124)))
+after=fetches()
+assert after==before, f'Hot remote Seek refetched the signed CDN link: {before}->{after}'
+p50=statistics.median(delays)
+p90=sorted(delays)[int(0.9*(len(delays)-1))]
+assert p50<250 and p90<850, f'Seek redirects too slow p50={p50:.0f} p90={p90:.0f} ms'
+print('MOCK_HELD_SEEK_84_RANGES=PASS')
+print(f'MOCK_HELD_SEEK_LOCAL_302_LATENCY=PASS p50Ms={p50:.1f} p90Ms={p90:.1f}')
+print('MOCK_HELD_SEEK_NO_DUPLICATE_CLOUD_API=PASS')
+PY
+adb forward --remove tcp:32794 || true
 
 # Exercise a SECOND real nested video-directory transition through NOVA.
 tap 'QA Nested Folder'

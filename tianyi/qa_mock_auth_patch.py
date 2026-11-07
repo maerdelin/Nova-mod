@@ -36,16 +36,16 @@ replace_once(
     "auth callback",
 )
 replace_once(
-    """    private String resolveDirectFileUrl(FileObj f) throws Exception {
-        long t=TianyiDiag.tick();""",
-    """    private String resolveDirectFileUrl(FileObj f) throws Exception {
-        // QA-only fixture. The production CDN resolver remains untouched.
+    """    private String fetchFreshDirectFileUrl(FileObj f) throws Exception {
+        long started=TianyiDiag.tick();""",
+    """    private String fetchFreshDirectFileUrl(FileObj f) throws Exception {
+        // QA-only fixture: test the real production URL cache/GET handler.
         if(System.nanoTime()!=Long.MIN_VALUE) {
-            android.util.Log.i("NOVA_TIANYI_QA","MOCK_DIRECT_LINK_USED");
+            android.util.Log.i("NOVA_TIANYI_QA","MOCK_DIRECT_LINK_FETCH");
             return "https://qa-cdn.invalid/video?fileId="+
                     java.net.URLEncoder.encode(f.id,"UTF-8")+"&signature=qa";
         }
-        long t=TianyiDiag.tick();""",
+        long started=TianyiDiag.tick();""",
     "synthetic CDN URL without network",
 )
 replace_once(

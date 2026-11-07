@@ -59,6 +59,8 @@ public final class TianyiCloud {
     private final ScheduledExecutorService keepAlive=Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t=new Thread(r,"nova-tianyi-refresh");t.setDaemon(true);return t;
     });
+    private final TianyiDirectLinkCache directLinkCache=new TianyiDirectLinkCache(keepAlive);
+    private ScheduledFuture<?> directLinkRefresh;
     private volatile String sessionKey="", sessionSecret="";
     private volatile long nextRefresh=0L;
     private volatile boolean started=false;
@@ -225,6 +227,7 @@ public final class TianyiCloud {
             // its previous tokens or local capability in a new QR session.
             store.resetAfterShortcutDeletion();
             directoryCache.clear(); // prevent prior account's file tree surviving a reset
+            directLinkCache.clear(); // never reuse a previous account's signed CDN URLs
             sessionKey="";
             sessionSecret="";
             nextRefresh=0L;
@@ -310,6 +313,10 @@ public final class TianyiCloud {
                     try { startServer(); }
                     catch(Exception failure){TianyiDiag.event("DAV_WATCHDOG","FAIL",-1);}
                 },15,30,TimeUnit.SECONDS);
+                directLinkRefresh=keepAlive.scheduleWithFixedDelay(()->{
+                    if(!serveAllowed || !appForeground)return;
+                    directLinkCache.refreshActive(); // keep remote Seek link hot
+                },7,7,TimeUnit.SECONDS);
                 sessionHeartbeat=keepAlive.scheduleWithFixedDelay(()->{
                     if(!serveAllowed)return;
                     long began=TianyiDiag.tick();
@@ -340,6 +347,11 @@ public final class TianyiCloud {
                 sessionHeartbeat=null;
             }
             keepAliveScheduled=false;
+            if(directLinkRefresh!=null) {
+                directLinkRefresh.cancel(false);
+                directLinkRefresh=null;
+            }
+            directLinkCache.clear(); // stop URL refresh on background; no persistent signed URLs
             ServerSocket socket=activeListener;
             activeListener=null;
             acceptorThread=null;
@@ -444,6 +456,7 @@ public final class TianyiCloud {
                             throw new IOException("Tianyi shortcut already exists");
                         store.saveTokens(access,refresh);
                         directoryCache.clear(); // account identity may have changed
+                        directLinkCache.clear(); // revoke all old signed CDN locations
                         TianyiDiag.event("QR_TOKEN","OK",0,diagStart,0L);
                         setSession(token);
                         ensureSession();
@@ -774,16 +787,29 @@ public final class TianyiCloud {
         TianyiDiag.event("FILE_LINK","OK",0,diagStart,f.size);
         return url;
     }
-    /** OpenList 189pc parity: resolve CDN link headers only; native NOVA
-     * libcurl handles all Range downloading, connection reuse and prefetch. */
+    /** Fast remote-Seek path: repeated Range requests to the same ISO reuse
+     * the same short-lived CDN Location and NOVA's existing native downloader.
+     * Cold misses are singleflight; active links refresh asynchronously. */
     private String resolveDirectFileUrl(FileObj f) throws Exception {
-        long t=TianyiDiag.tick();
+        long started=TianyiDiag.tick();
         try {
-            TianyiDirectLink.Result direct=TianyiDirectLink.resolve(downloadUrl(f));
-            TianyiDiag.event("DIRECT_LINK","OK",direct.code,t,0L);
-            return direct.url;
+            TianyiDirectLinkCache.Result cached=directLinkCache.get(f.id,
+                    ()->fetchFreshDirectFileUrl(f));
+            TianyiDiag.event("DIRECT_CACHE",cached.source,302,started,0L);
+            return cached.url;
         }catch(Exception e) {
-            TianyiDiag.event("DIRECT_LINK","FAIL",-1,t,0L);
+            TianyiDiag.event("DIRECT_CACHE","FAIL",-1,started,0L);
+            throw e;
+        }
+    }
+    private String fetchFreshDirectFileUrl(FileObj f) throws Exception {
+        long started=TianyiDiag.tick();
+        try {
+            TianyiDirectLink.Result link=TianyiDirectLink.resolve(downloadUrl(f));
+            TianyiDiag.event("DIRECT_LINK","OK",link.code,started,0L);
+            return link.url;
+        }catch(Exception e) {
+            TianyiDiag.event("DIRECT_LINK","FAIL",-1,started,0L);
             throw e;
         }
     }

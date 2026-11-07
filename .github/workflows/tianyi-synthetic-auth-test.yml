@@ -23,14 +23,17 @@ jobs:
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectoryCache.java \
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDavPaths.java \
             tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectLink.java \
+            tianyi/src/com/archos/mediacenter/video/cloud189/TianyiDirectLinkCache.java \
             tianyi/tests/TianyiPagingTest.java \
             tianyi/tests/TianyiDirectoryCacheTest.java \
             tianyi/tests/TianyiDavPathsTest.java \
-            tianyi/tests/TianyiDirectLinkTest.java
+            tianyi/tests/TianyiDirectLinkTest.java \
+            tianyi/tests/TianyiDirectLinkCacheTest.java
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiPagingTest
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectoryCacheTest
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDavPathsTest
           java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectLinkTest
+          java -cp work/paging-test com.archos.mediacenter.video.cloud189.TianyiDirectLinkCacheTest
       - name: Check QA script shell syntax before expensive APK/emulator steps
         run: bash -n .github/scripts/tianyi-synthetic-ui.sh
       - name: Download production candidate for QA-only DEX replacement
