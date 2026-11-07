@@ -92,7 +92,7 @@ jobs:
           # inserts Tianyi in second place; never ship a mismatched UI mapping.
           grep -q 'NOVA_TIANYI_UI_PROTOCOL_V2' work/decode/smali*/com/archos/mediacenter/video/leanback/network/NetworkServerCredentialsDialog\$1.smali || true
           java -Xmx5g -jar tools/apktool.jar b work/decode -o work/ui-unsigned.apk
-          unzip -Z1 work/ui-unsigned.apk | grep -q '^assets/tianyi_cloud_shortcut.png
+          unzip -Z1 work/ui-unsigned.apk | grep -Fqx assets/tianyi_cloud_shortcut.png
       - name: Compile Tianyi driver and QR encoder into Android DEX
         run: |
           set -euo pipefail
