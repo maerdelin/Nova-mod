@@ -100,7 +100,10 @@ final class TianyiDirectoryCache<T> {
                     // Always publish an immutable copy, never caller-owned state.
                     List<T> snapshot=java.util.Collections.unmodifiableList(
                             new ArrayList<>(loaded));
-                    if(snapshot.size()<=maxEntries) {
+                    // A verified empty listing is returned to the current caller
+                    // but is never cached: a transient upstream zero count
+                    // must not poison subsequent NOVA navigation.
+                    if(!snapshot.isEmpty() && snapshot.size()<=maxEntries) {
                         Snapshot<T> old=complete.put(folderId,
                                 new Snapshot<>(snapshot,System.currentTimeMillis()));
                         if(old!=null)cachedEntries-=old.entries.size();
