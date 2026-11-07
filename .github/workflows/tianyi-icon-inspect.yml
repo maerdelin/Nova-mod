@@ -1,0 +1,25 @@
+name: NOVA Tianyi shortcut icon binding inspection
+on:
+  push:
+    branches: ['feat/tianyi-cloud-webdav-20261106']
+    paths: ['.github/workflows/tianyi-icon-inspect.yml']
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode pinned NOVA and show TV/phone icon binders
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          curl -fL --retry 3 -o work/nova.apk "https://github.com/maerdelin/Nova-mod/releases/download/nova-mod-granular-433620675-1239-1/Nova_Video_Player_mod_SIGNED.apk"
+          echo 'caf3f34aa0a0dd63ade2c86ffa42880cf449f233155c4303b16c741fdcef62de  work/nova.apk' | sha256sum -c -
+          curl -fL --retry 3 -o work/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  work/apktool.jar' | sha256sum -c -
+          java -Xmx5g -jar work/apktool.jar d -f --no-debug-info work/nova.apk -o work/decode
+          for cls in             com/archos/mediacenter/video/leanback/adapter/object/Shortcut.smali             com/archos/mediacenter/video/leanback/adapter/object/GenericNetworkShortcut.smali             com/archos/mediacenter/video/leanback/presenter/NetworkShortcutPresenter.smali             com/archos/mediacenter/video/browser/filebrowsing/network/ShortcutAdapter\$ShortcutViewHolder.smali             com/archos/mediacenter/video/utils/VideoUtils.smali; do
+            echo "ICON_CLASS_BEGIN $cls"
+            find work/decode -path "*/$cls" -exec cat {} \;
+            echo "ICON_CLASS_END $cls"
+          done
