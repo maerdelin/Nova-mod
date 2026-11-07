@@ -55,6 +55,8 @@ public final class TianyiCloud {
     private volatile Thread acceptorThread;
     private boolean keepAliveScheduled=false;
     private volatile boolean serveAllowed=false;
+    private final Set<Socket> activeClients=
+            Collections.newSetFromMap(new ConcurrentHashMap<Socket,Boolean>());
     private ScheduledFuture<?> listenerWatchdog;
     private ScheduledFuture<?> sessionHeartbeat;
     // Server restore must not compete with 8 long-running video GETs.
@@ -182,9 +184,18 @@ public final class TianyiCloud {
                         try {
                             Socket client=sock.accept();
                             client.setSoTimeout(25000);
+                            // Keep track of active DAV clients so explicit
+                            // NOVA exit closes ongoing streams too.
+                            activeClients.add(client);
+                            if(!serveAllowed) {
+                                activeClients.remove(client);
+                                client.close();
+                                break;
+                            }
                             try {
                                 workers.execute(()->handle(client));
                             }catch(RejectedExecutionException rejected) {
+                                activeClients.remove(client);
                                 try{client.close();}catch(IOException ignored){}
                                 throw rejected;
                             }
@@ -265,6 +276,12 @@ public final class TianyiCloud {
             if(socket!=null) {
                 try{socket.close();}catch(IOException ignored){}
             }
+            // Do not allow already accepted GET/PROPFIND sockets to keep
+            // transferring files after NOVA has explicitly exited.
+            for(Socket client:activeClients) {
+                try{client.close();}catch(IOException ignored){}
+            }
+            activeClients.clear();
             TianyiDiag.event("DAV_STOP","OK",PORT);
         }
     }
@@ -778,6 +795,7 @@ public final class TianyiCloud {
                 try { error(socket.getOutputStream(),503); }catch(Exception ignoredAgain){}
             }
         }finally{
+            activeClients.remove(socket);
             try { socket.close(); }catch(Exception ignoredAgain){}
         }
     }
